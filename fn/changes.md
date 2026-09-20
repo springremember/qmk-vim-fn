@@ -69,7 +69,7 @@
 - **强符号接线**
   - `layer_state_set_user()`：库提供强符号实现，层变化时转调 `myfn_fn_status()`，
     键盘无需自己写。若 keymap 需要自定义，必须自行调用
-    `myfn_fn_status(myfn_active())`（详见 readme §5.6）。
+    `myfn_fn_status(myfn_active())`（详见 readme §5.6·旧版章节，1.0.0 已移除代码库）。
 
 - **弱「父类」占位（键盘覆盖）**
   - `void myfn_fn_status(bool on)`：默认空实现，键盘用于维护自身 Fn 标志
@@ -88,4 +88,4 @@
 
 - 新增层后需同步 `DYNAMIC_KEYMAP_LAYER_COUNT`（启用 VIA 时），否则触发 QMK 静态断言。
 - 若同一 keymap 需要自己的 `layer_state_set_user()`，会与库的强符号冲突；处理方式见
-  readme §5.6。
+  readme §5.6（旧版章节，1.0.0 已移除代码库）。

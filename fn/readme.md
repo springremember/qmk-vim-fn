@@ -96,7 +96,7 @@ bool process_record_user(uint16_t keycode, keyrecord_t *record) {
             }
             return false;                   /* 前置不满足也吞键 */
 
-        /* 唤醒：Fn + 布局右上角键（睡眠中由键盘处理）；
+        /* 唤醒：Fn + 布局右上角键（仅"无物理切换按键"的键盘；睡眠中由键盘处理）；
            其它键不真正唤醒，仅瞬时唤醒后自动重回深睡 */
 
         case KC_SPC:                        /* 电量 */

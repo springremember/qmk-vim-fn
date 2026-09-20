@@ -17,7 +17,8 @@
 - `dd` 行删除重写（见 §5 E1）：`Home×2 → Shift+End → Ctrl+X → Backspace`。
 - `yy` 行复制：`Home×2 → Shift+Down×n → Ctrl+C`（`Home×2` 抵消 smart-home）。
 - 操作符待定遇非法键：**清空 pending 并把该键重新识别**（非 vim 键透传）——取代上游的"中止并吞掉"。
-- 计数：仅前缀、**前后相乘**（`2d3w`=`d6w`）；作用域限移动/缩进/行操作（见 §3 A1）。
+- 计数：仅前缀、**前后相乘**（`2d3w`=`d6w`）；最多 **3 位（≤999）**，达上限忽略后续数字；作用域限移动/缩进/行操作，其余键（含 `G`/`gg`）**丢弃计数**（见 §3 A1）。
+- **丢弃计数的键**：`G`/`gg`（移动例外，任何上下文）、`C D Y S X`、`x s p P J u .`、`v V`、插入键、`ZZ`——计数被吸收但不生效。
 - Visual-Line 首次 `j` 用 `Home` 折叠，避免在 VSCode 中 `Left` 跨行丢行。
 - 插入模式不再无条件 `clear_keyboard()`（见 §3 A3 的目标）。
 
@@ -33,7 +34,7 @@
 | A4 | let-through 取消过宽（误取消） | 仅对**显式 pending** 清空/重新识别 |
 | A5 | 可视文本对象取消卡状态 | 文本对象已**整体剔除** |
 | A6 | 左右混合修饰符打包错 | **不再打包修饰键**（物理影子） |
-| A7 | 计数上限溢出/看门狗 | 上限 **2 位** |
+| A7 | 计数上限溢出/看门狗 | 上限 **3 位（≤999）**，达上限忽略后续数字 |
 | A8 | 直接映射的模键码修饰位 | 不再打包，模键位由物理影子处理 |
 
 ---
@@ -62,6 +63,6 @@
 ## 6. 构建与结构
 
 - 目标为**与 QMK 解耦的核心层** `engine/`（见 [`design.md`](design.md) §4.6），
-  纯 C，可 `make -C engine test` 跑主机单测。
+  纯 C，附 `engine/Makefile`，可 `make -C engine test` 跑主机单测。
 - 接回固件（替换现 `process_func`）属后续阶段，通过 `SRC +=` 编入 keymap。
 - 旧实现目录：`src/{vim,modes,actions,motions,numbered_actions,mac_mode,process_func}.c/.h`。
