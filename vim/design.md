@@ -358,7 +358,7 @@ while (queue_has()) {
 - **OP_PENDING（瞬态）**：移动设区间→emit；非期望键→清空+重新识别；Esc→取消。
 - **INSERT**：普通字符透传；`Esc`=真 Esc 发宿主（不切模式）；离开 Insert 靠 `Caps`。
 - **VISUAL / VISUAL_LINE**：`v/V` 选区，移动扩展；`d/y/c/x/s/p` 复用 Normal 命令表；未列键（如 `i`/`a`）为非法键 → **留在 Visual**（吞键，不退出、不插入）；`Esc`→退出选区。
-- **MOUSE**：键盘层。**右 Alt 短按**在 `Insert`/`Normal`/`Visual` 均可进/出（长按=RAlt 修饰）；模式内 `hjkl`=指针、`Space`=左键、`Enter`=右键、其它键退出并重新识别；RGB 指示为**青**。
+- **MOUSE**：键盘层。**右 Alt 短按**在 `Insert`/`Normal`/`Visual` 均可进/出（长按=RAlt 修饰）；模式内 `hjkl`=指针、`Shift+J`/`Shift+K`=滚轮下/上、`Space`=左键、`Enter`=右键、其它键退出并重新识别；RGB 指示为**青**。
 
 ### 4.10 修饰键、key-up 与输入保真
 - **key-up 一律透传**；唯一例外是按住连发移动 `h/j/k/l`（down `register` 宿主方向键 / up `unregister`）。
