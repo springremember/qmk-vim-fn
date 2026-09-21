@@ -92,9 +92,11 @@ void kv_emit_indent_motion(kv_keycode_t ang, kv_motion_t m, int n) {
 
 void kv_emit_indent_line(kv_keycode_t ang, int n) {
     if (n < 1) n = 1;
-    for (int i = 0; i < n; i++) {
-        kv_emit_tap(ang == KV_C_GT ? KV_TAB : KV_LSFT_KC(KV_TAB));
-    }
+    /* select n lines (Home, Home, Shift+Down x (n-1)) then indent/outdent */
+    kv_emit_tap(KV_HOME);
+    kv_emit_tap(KV_HOME);
+    if (n > 1) kv_emit_taps(KV_LSFT_KC(KV_DOWN), n - 1);
+    kv_emit_tap(ang == KV_C_GT ? KV_TAB : KV_LSFT_KC(KV_TAB));
 }
 
 void kv_emit_visual_motion(kv_keycode_t kc) {

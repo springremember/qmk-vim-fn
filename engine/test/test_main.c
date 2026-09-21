@@ -101,15 +101,17 @@ static void test_op(void) {
 static void test_indent(void) {
     fresh(); key(KV_C_GT); key(KV_J);
     CHECK_SEQ(KV_LSFT_KC(KV_DOWN), KV_TAB);
-    fresh(); key(KV_C_GT); key(KV_C_GT); CHECK_SEQ(KV_TAB);
+    fresh(); key(KV_C_GT); key(KV_C_GT); CHECK_SEQ(KV_HOME, KV_HOME, KV_TAB);
     fresh(); key(KV_3); key(KV_C_LT); key(KV_C_LT);
-    CHECK_SEQ(KV_LSFT_KC(KV_TAB), KV_LSFT_KC(KV_TAB), KV_LSFT_KC(KV_TAB));
+    CHECK_SEQ(KV_HOME, KV_HOME, KV_LSFT_KC(KV_DOWN), KV_LSFT_KC(KV_DOWN), KV_LSFT_KC(KV_TAB));
     fresh(); key(KV_C_GT); key(KV_1); key(KV_0); key(KV_J);
     CHECK(rec_count() == 11); /* 10 x LSFT(DOWN) + TAB */
     fresh(); key(KV_2); key(KV_C_GT); key(KV_3); key(KV_J);
     CHECK(rec_count() == 7); /* 6 x LSFT(DOWN) + TAB */
     fresh(); key(KV_C_GT); key(KV_0); CHECK_SEQ(KV_TAB);
     fresh(); key(KV_C_LT); key(KV_0); CHECK_SEQ(KV_LSFT_KC(KV_TAB));
+    /* > < is not >> : strict clear, < re-identified */
+    fresh(); key(KV_C_GT); key(KV_C_LT); CHECK(rec_count() == 0); /* < starts indent-pending */
 }
 
 static void test_strict_clear(void) {
@@ -168,6 +170,66 @@ static void test_regress(void) {
     fresh(); key(0x3E); CHECK_SEQ(0x3E);
 }
 
+static void test_changes_enter_insert(void) {
+    /* s / C / S / cc / cw / c<0> all enter INSERT */
+    fresh(); key(KV_S); CHECK(kv_get_mode() == KV_MODE_INSERT);
+    fresh(); key(KV_C_C); CHECK(kv_get_mode() == KV_MODE_INSERT);
+    fresh(); key(KV_C_S); CHECK(kv_get_mode() == KV_MODE_INSERT);
+    fresh(); key(KV_C); key(KV_C); CHECK(kv_get_mode() == KV_MODE_INSERT);
+    fresh(); key(KV_C); key(KV_W); CHECK(kv_get_mode() == KV_MODE_INSERT);
+    fresh(); key(KV_C); key(KV_0); CHECK(kv_get_mode() == KV_MODE_INSERT);
+    /* non-change ops keep NORMAL */
+    fresh(); key(KV_D); key(KV_D); CHECK(kv_get_mode() == KV_MODE_NORMAL);
+    fresh(); key(KV_Y); key(KV_Y); CHECK(kv_get_mode() == KV_MODE_NORMAL);
+    fresh(); key(KV_X); CHECK(kv_get_mode() == KV_MODE_NORMAL);
+}
+
+static void test_op_mismatch(void) {
+    /* d y / y d / d c are not line ops: strict clear, second key re-identified */
+    fresh(); key(KV_D); key(KV_Y); CHECK(rec_count() == 0); /* y is a pending operator */
+    fresh(); key(KV_D); key(KV_X); CHECK_SEQ(KV_DEL);       /* d x -> x */
+    fresh(); key(KV_C_GT); key(KV_C_LT); CHECK(rec_count() == 0);
+}
+
+static void test_zero_drops_count(void) {
+    fresh(); key(KV_2); key(KV_D); key(KV_0);
+    CHECK_SEQ(KV_LSFT_KC(KV_HOME), KV_LCTL_KC(KV_X)); /* d0, count 2 dropped */
+    fresh(); key(KV_2); key(KV_C_GT); key(KV_0);
+    CHECK_SEQ(KV_TAB); /* >0, count 2 dropped */
+}
+
+static void test_repeat(void) {
+    /* dd then . replays dd (no recursion) */
+    fresh(); key(KV_D); key(KV_D);
+    rec_start(); key(KV_DOT);
+    CHECK_SEQ(KV_HOME, KV_HOME, KV_LSFT_KC(KV_END), KV_LCTL_KC(KV_X), KV_BSPC);
+    /* a second . replays again, does not crash */
+    rec_start(); key(KV_DOT);
+    CHECK_SEQ(KV_HOME, KV_HOME, KV_LSFT_KC(KV_END), KV_LCTL_KC(KV_X), KV_BSPC);
+    /* x . . does not recurse */
+    fresh(); key(KV_X); key(KV_DOT); key(KV_DOT);
+    CHECK(rec_count() > 0);
+    /* discarded prefix does not pollute repeat: g F5 then gg then . */
+    fresh(); key(KV_G); key(0x3E); key(KV_G); key(KV_G); /* gg */
+    rec_start(); key(KV_DOT);
+    CHECK_SEQ(KV_LCTL_KC(KV_HOME)); /* replays gg, not ggg */
+}
+
+static void test_big_count(void) {
+    fresh(); key(KV_9); key(KV_9); key(KV_W);
+    CHECK(rec_count() == 99); /* 99 motions fit in the emit queue */
+}
+
+static void test_pass_through(void) {
+    /* non-vim key in NORMAL passes through (caller emits it) */
+    fresh(); key(0x3E); CHECK_SEQ(0x3E);
+    /* Tab passes through */
+    fresh(); key(KV_TAB); CHECK_SEQ(KV_TAB);
+    /* Insert passes everything through */
+    fresh(); kv_set_mode(KV_MODE_INSERT); rec_start();
+    key(KV_A); CHECK_SEQ(KV_A);
+}
+
 int main(void) {
     test_single();
     test_count();
@@ -177,6 +239,12 @@ int main(void) {
     test_insert();
     test_visual();
     test_regress();
+    test_changes_enter_insert();
+    test_op_mismatch();
+    test_zero_drops_count();
+    test_repeat();
+    test_big_count();
+    test_pass_through();
     printf("pass=%d fail=%d\n", g_pass, g_fail);
     return g_fail ? 1 : 0;
 }

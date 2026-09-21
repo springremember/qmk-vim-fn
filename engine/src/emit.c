@@ -1,6 +1,6 @@
 #include "emit.h"
 
-#define EMIT_CAP 64
+#define EMIT_CAP 256
 
 static kv_keycode_t s_buf[EMIT_CAP];
 static int          s_head;

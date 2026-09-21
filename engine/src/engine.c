@@ -60,6 +60,20 @@ static void rec_push(kv_keycode_t kc) {
     if (s_rec_len < REC_MAX) s_rec[s_rec_len++] = kc;
 }
 
+/* Only "change-like" commands are worth replaying with '.'.  Insert/visual
+ * entries, prefixes that never complete, and '.' itself are excluded. */
+static bool rec_should_record(kv_token_t t) {
+    switch (t) {
+        case T_COUNT: case T_OP: case T_INDENT: case T_g_LOWER: case T_Z_BIG:
+        case T_MOTION: case T_ZERO: case T_CARET: case T_DOLLAR: case T_G_BIG:
+        case T_S_BIG: case T_X: case T_XUP: case T_s: case T_C_BIG:
+        case T_D_BIG: case T_Y_BIG: case T_P: case T_PUP: case T_JOIN:
+            return true;
+        default:
+            return false;
+    }
+}
+
 static void rec_commit(void) {
     if (s_replaying) return;
     if (s_rec_len > 0) {
@@ -72,6 +86,7 @@ static void rec_commit(void) {
 static void rec_clear(void) { s_rec_len = 0; }
 
 static void rec_replay(void) {
+    if (s_replaying || s_last_len == 0) return; /* never re-enter '.' */
     s_replaying = true;
     for (int i = 0; i < s_last_len; i++) kv_kbd(s_last[i]);
     s_replaying = false;
@@ -83,8 +98,8 @@ static void do_single(kv_token_t t, kv_keycode_t kc) {
     switch (t) {
         case T_X:      kv_emit_delete_char();    break;
         case T_XUP:    kv_emit_backspace_char(); break;
-        case T_s:      kv_emit_substitute();     break;
-        case T_C_BIG:  kv_emit_change_to_eol();  break;
+        case T_s:      kv_emit_substitute();     s_mode = KV_MODE_INSERT; break;
+        case T_C_BIG:  kv_emit_change_to_eol();  s_mode = KV_MODE_INSERT; break;
         case T_D_BIG:  kv_emit_delete_to_eol();  break;
         case T_Y_BIG:  kv_emit_yank_to_eol();    break;
         case T_P:      kv_emit_paste(false);     break;
@@ -118,7 +133,7 @@ static kv_feed_t feed_normal(kv_keycode_t kc) {
                 case T_MOTION: case T_ZERO: case T_CARET: case T_DOLLAR:
                     kv_emit_motion(motion_of(kc), 1); return R_CONSUMED;
                 case T_G_BIG:  kv_emit_motion(M_G_BIG, 1); return R_CONSUMED;
-                case T_S_BIG:  kv_emit_line_op(KV_C, 1); return R_CONSUMED;
+                case T_S_BIG:  kv_emit_line_op(KV_C, 1); s_mode = KV_MODE_INSERT; return R_CONSUMED;
                 case T_INSERT: kv_emit_enter_insert(kc); s_mode = KV_MODE_INSERT; return R_CONSUMED;
                 case T_VISUAL: s_mode = (kc == KV_C_V) ? KV_MODE_VISUAL_LINE : KV_MODE_VISUAL; return R_CONSUMED;
                 case T_X: case T_XUP: case T_s: case T_C_BIG: case T_D_BIG:
@@ -143,7 +158,7 @@ static kv_feed_t feed_normal(kv_keycode_t kc) {
                 case T_G_BIG:  kv_emit_motion(M_G_BIG, 1); reset_pending(); return R_CONSUMED;
                 case T_g_LOWER: s_state = ST_GP; return R_CONSUMED;
                 case T_Z_BIG:  s_state = ST_ZP; return R_CONSUMED;
-                case T_S_BIG:  kv_emit_line_op(KV_C, n); reset_pending(); return R_CONSUMED;
+                case T_S_BIG:  kv_emit_line_op(KV_C, n); s_mode = KV_MODE_INSERT; reset_pending(); return R_CONSUMED;
                 case T_INSERT: kv_emit_enter_insert(kc); s_mode = KV_MODE_INSERT; reset_pending(); return R_CONSUMED;
                 case T_VISUAL: s_mode = (kc == KV_C_V) ? KV_MODE_VISUAL_LINE : KV_MODE_VISUAL; reset_pending(); return R_CONSUMED;
                 default: /* drop count, re-identify */
@@ -155,9 +170,23 @@ static kv_feed_t feed_normal(kv_keycode_t kc) {
         case ST_OP: {
             int n = kv_ctx_n(&s_ctx);
             switch (t) {
-                case T_OP:     kv_emit_line_op(s_ctx.op, n); reset_pending(); return R_CONSUMED;
-                case T_MOTION: case T_ZERO: case T_CARET: case T_DOLLAR:
-                    kv_emit_op_motion(s_ctx.op, motion_of(kc), n); reset_pending(); return R_CONSUMED;
+                case T_OP:
+                    if (kc == s_ctx.op) {
+                        kv_emit_line_op(s_ctx.op, n);
+                        if (s_ctx.op == KV_C) s_mode = KV_MODE_INSERT;
+                        reset_pending();
+                        return R_CONSUMED;
+                    }
+                    reset_pending();
+                    return R_REIDENTIFY; /* operator mismatch: d y is not dy */
+                case T_MOTION: case T_CARET: case T_DOLLAR:
+                    kv_emit_op_motion(s_ctx.op, motion_of(kc), n);
+                    if (s_ctx.op == KV_C) s_mode = KV_MODE_INSERT;
+                    reset_pending(); return R_CONSUMED;
+                case T_ZERO: /* d0: drop count */
+                    kv_emit_op_motion(s_ctx.op, M_ZERO, 1);
+                    if (s_ctx.op == KV_C) s_mode = KV_MODE_INSERT;
+                    reset_pending(); return R_CONSUMED;
                 case T_G_BIG:  kv_emit_op_motion(s_ctx.op, M_G_BIG, 1); reset_pending(); return R_CONSUMED;
                 case T_g_LOWER: s_state = ST_GP; return R_CONSUMED;
                 case T_COUNT:  s_state = ST_OPCNT; s_ctx.count2 = digit_of(kc); return R_CONSUMED;
@@ -172,9 +201,13 @@ static kv_feed_t feed_normal(kv_keycode_t kc) {
                 case T_DIGIT:
                     if (s_ctx.count2 < 10) s_ctx.count2 = s_ctx.count2 * 10 + digit_of(kc);
                     return R_CONSUMED;
-                case T_MOTION: case T_ZERO: case T_CARET: case T_DOLLAR:
+                case T_MOTION: case T_CARET: case T_DOLLAR:
                     kv_emit_op_motion(s_ctx.op, motion_of(kc), kv_ctx_n(&s_ctx) * s_ctx.count2);
+                    if (s_ctx.op == KV_C) s_mode = KV_MODE_INSERT;
                     reset_pending(); return R_CONSUMED;
+                case T_ZERO: /* d20: 0 continues the count; d20 alone is not a command */
+                    if (s_ctx.count2 < 10) s_ctx.count2 = s_ctx.count2 * 10;
+                    return R_CONSUMED;
                 case T_G_BIG:  kv_emit_op_motion(s_ctx.op, M_G_BIG, 1); reset_pending(); return R_CONSUMED;
                 case T_g_LOWER: s_state = ST_GP; return R_CONSUMED;
                 default:
@@ -186,9 +219,14 @@ static kv_feed_t feed_normal(kv_keycode_t kc) {
         case ST_ANG: {
             int n = kv_ctx_n(&s_ctx);
             switch (t) {
-                case T_INDENT: kv_emit_indent_line(s_ctx.ang, n); reset_pending(); return R_CONSUMED;
-                case T_MOTION: case T_ZERO: case T_CARET: case T_DOLLAR:
+                case T_INDENT:
+                    if (kc == s_ctx.ang) { kv_emit_indent_line(s_ctx.ang, n); reset_pending(); return R_CONSUMED; }
+                    reset_pending();
+                    return R_REIDENTIFY; /* > < is not >> */
+                case T_MOTION: case T_CARET: case T_DOLLAR:
                     kv_emit_indent_motion(s_ctx.ang, motion_of(kc), n); reset_pending(); return R_CONSUMED;
+                case T_ZERO: /* >0: drop count */
+                    kv_emit_indent_motion(s_ctx.ang, M_ZERO, 1); reset_pending(); return R_CONSUMED;
                 case T_G_BIG:  kv_emit_indent_motion(s_ctx.ang, M_G_BIG, 1); reset_pending(); return R_CONSUMED;
                 case T_g_LOWER: s_state = ST_GP; return R_CONSUMED;
                 case T_COUNT:  s_state = ST_ANGCnt; s_ctx.count2 = digit_of(kc); return R_CONSUMED;
@@ -203,9 +241,12 @@ static kv_feed_t feed_normal(kv_keycode_t kc) {
                 case T_DIGIT:
                     if (s_ctx.count2 < 10) s_ctx.count2 = s_ctx.count2 * 10 + digit_of(kc);
                     return R_CONSUMED;
-                case T_MOTION: case T_ZERO: case T_CARET: case T_DOLLAR:
+                case T_MOTION: case T_CARET: case T_DOLLAR:
                     kv_emit_indent_motion(s_ctx.ang, motion_of(kc), kv_ctx_n(&s_ctx) * s_ctx.count2);
                     reset_pending(); return R_CONSUMED;
+                case T_ZERO:
+                    if (s_ctx.count2 < 10) s_ctx.count2 = s_ctx.count2 * 10;
+                    return R_CONSUMED;
                 case T_G_BIG:  kv_emit_indent_motion(s_ctx.ang, M_G_BIG, 1); reset_pending(); return R_CONSUMED;
                 case T_g_LOWER: s_state = ST_GP; return R_CONSUMED;
                 default:
@@ -282,17 +323,22 @@ kv_result_t kv_kbd(kv_keycode_t kc) {
         }
 
         kv_feed_t r = feed_normal(kc);
-        if (r == R_REIDENTIFY) continue; /* re-feed in IDLE */
+        if (r == R_REIDENTIFY) {
+            rec_clear(); /* the discarded prefix must not pollute repeat */
+            continue;    /* re-feed in IDLE */
+        }
 
         if (r == R_CONSUMED) {
             if (kc == KV_ESC) {
                 rec_clear();
-            } else if (kv_is_vim_key(kc)) {
+            } else if (kv_is_vim_key(kc) && rec_should_record(kv_classify(kc))) {
                 rec_push(kc);
             }
             if (s_state == ST_IDLE && s_rec_len > 0) rec_commit();
+            if (s_mode == KV_MODE_INSERT) rec_clear(); /* mode left NORMAL */
             return KV_CONSUMED;
         }
+        if (s_rec_len > 0) rec_clear(); /* pass-through abandons a partial prefix */
         return KV_PASSTHROUGH;
     }
 }
