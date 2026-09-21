@@ -1,0 +1,3 @@
+# build artifacts
+engine/test/kv_tests
+*.o

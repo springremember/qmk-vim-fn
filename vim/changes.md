@@ -7,6 +7,9 @@
 
 - **V1.0（冻结）**：引擎代码 commit `62bb338`；固件另存 `output/*_v1.0.*`，避免被后续重构覆盖。
 - 重构目标：见 [`design.md`](design.md)（按模式解耦 + token 队列 + 表驱动 + pending 严格清空）。
+- **V2.0（进行中）**：`engine/` 核心层已落地（与 QMK 解耦的纯 C + 主机单测），
+  里程碑 1–8 对应 `design.md` §6；`make -C engine test` 全绿。
+  接回固件（替换 `process_func`）属后续阶段。
 
 ---
 

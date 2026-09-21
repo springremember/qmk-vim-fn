@@ -305,18 +305,16 @@ engine/
   include/kv.h          // 公共 API：kv_kbd / kv_set_emit / kv_task + 查询/设置（见 §4.7）；类型、模式、keycode
   include/kv_kc.h       // kv_keycode_t 与修饰位（镜像 QMK 16-bit 布局，便于接回）
   src/queue.{h,c}       // 环形队列：push / pop / peek / flush
-  src/classify.{h,c}    // keycode -> token 类别
-  src/ctx.{h,c}         // kv_ctx：count / op / 前缀 / nchar 累积与重置
-  src/emit.{h,c}        // 命令/区间 -> 固定宿主键序列 + 非阻塞发送队列
-  src/repeat.{h,c}      // 命令 token 记录；'.' 回放
-  src/engine.c          // feed() 解析循环；严格清空；kv_task() 排空发送队列；模式调度
-  src/modes/modes.h     // 模式表接口：每模式 kv_rule_t[] + enter/exit
-  src/modes/normal.c
-  src/modes/insert.c
-  src/modes/visual.c
-  test/                 // 主机单测：喂 token -> 捕获 emit -> 断言
+  src/classify.{h,c}    // keycode -> token 类别（含计数态的数字归类）
+  src/ctx.{h,c}         // kv_ctx：count / op / 前缀累积与重置；状态枚举 kv_state_t
+  src/emit.{h,c}        // 非阻塞发送队列（按计时排空，替代 wait_ms）
+  src/command.{h,c}     // 命令/区间 -> 固定宿主键序列（与编辑器无关）
+  src/engine.c          // feed() 解析循环（多键状态机见 §4.4）；严格清空；repeat 记录/回放；模式调度；kv_task()
+  test/                 // 主机单测：喂 token -> 捕获 emit -> 断言（kvtest 记录器）
   Makefile              // 仅主机测试；不参与 QMK 构建
 ```
+> 说明：多键状态机（§4.4 的转移表）实现为 `engine.c` 中的显式转移函数（状态 × token 的 `switch`），
+> 与转移表一一对应；命令→键序列映射集中在 `command.c`，便于逐条对照 §4.8。
 
 ### 4.7 关键接口
 ```c
