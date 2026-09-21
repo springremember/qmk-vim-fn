@@ -4,6 +4,8 @@
 > 借鉴 Vim 源码的语法模型，并针对固件"只能发键序列、不能改缓冲区"的现实设计。
 > 使用说明见 [`readme.md`](readme.md)；变更与历史问题见 [`changes.md`](changes.md)；
 > 测试见 [`testcase.md`](testcase.md)。
+>
+> 注：本文件为重构设计的**唯一权威**，取代 `qmk-vim/docs/REDESIGN_PLAN.md`（历史草案，勿引）。
 
 ---
 
@@ -96,7 +98,7 @@ struct nv_cmd { int cmd_char; nv_func_T cmd_func; short_u cmd_flags; short cmd_a
 - `insert_mode()` **无条件 `clear_keyboard()`**。
 - 操作符：`start_*_action` 设 `action_key`/`action_func` 并切到 `process_vim_action`。
 - `dd`（定稿）：`Home×2 → Shift+End → Ctrl+X → Backspace`（两次主机编辑）。
-- 计数：全局 `motion_counter`（≤2 位），`DO_NUMBERED_ACTION` 循环执行。
+- 计数：全局 `motion_counter`（名义 ≤2 位，但存在越界路径），`DO_NUMBERED_ACTION` 循环执行。
 
 ### 3.3 缺陷（对应 E1–E6 / A1–A8）
 | 编号 | 问题 | 根因 |
@@ -150,7 +152,7 @@ struct nv_cmd { int cmd_char; nv_func_T cmd_func; short_u cmd_flags; short cmd_a
 
 **单键**：`h j k l` `w W b B e E` `0 ^ $` `G` `i I a A o O` `C D Y S X` `x s` `p P` `J` `u` `.` `v` `V`
 
-**多键**：`N`(计数) `d y c`(操作符) `< >`(缩进) `g`(→`gg`) `Z`(→`ZZ`)
+**多键**：计数 `[1-9][0-9]?`（元变量；**字面键 `N` 不作计数**，按普通键透传）、`d y c`(操作符) `< >`(缩进) `g`(→`gg`) `Z`(→`ZZ`)
 
 > `v`/`V` 为 Visual / Visual-Line 入口（模式切换键，非命令）。
 
@@ -163,9 +165,10 @@ MOT = N?(?:[hjkl]|[wWbBeE]|[$^]) | 0 | G | gg
   | N?gg
   | N?[dcy]MOT          # 操作符 + 移动
   | N?(?:dd|cc|yy)       # 行操作（自叠）
+  | N?S                  # S = cc 别名（接受计数）
   | N?[<>]MOT            # 缩进 + 移动
   | N?(?:>>|<<)          # 行缩进（自叠）
-  | [CDYSXxs]
+  | [CDYXxs]
   | [iIaAoO]
   | [pP]
   | [vV]
@@ -176,7 +179,8 @@ MOT = N?(?:[hjkl]|[wWbBeE]|[$^]) | 0 | G | gg
 )
 ```
 > 行操作/行缩进用显式 `dd|cc|yy`、`>>|<<` 表达，避免反向引用歧义。
-> `G`/`gg` 作为独立运动可带计数，但在操作符/缩进上下文**丢弃计数**（见 §4.4）。
+> `G`/`gg` **在任何上下文均丢弃计数**（见 §4.4）。
+> 正则为**简化描述**：`N` 的"第 3 位起忽略"、**`0` 的计数续接**（`20`/`d20`/`>20`）、`G`/`gg` 的丢计数、**计数 + 丢弃计数键**（`x s X C D Y p P i I a A o O v V J u . ZZ`）、以及操作符/缩进后置计数配 `G`/`gg`（`d2G`/`d2gg`/`>2G`/`>2gg`）均由解析层/状态机处理。
 
 ### 4.4 多键状态机（严格清空）
 
@@ -184,12 +188,12 @@ MOT = N?(?:[hjkl]|[wWbBeE]|[$^]) | 0 | G | gg
 
 | 状态 | 含义 | 期望的下个字符 |
 |---|---|---|
-| `S` | NORMAL 空闲 | — |
-| `Cnt` | 已收计数 | 数字 / 操作符 / 缩进 / 移动 / 自命令 / `g` / `G`（`G`/`gg` 丢弃计数） |
-| `Op` | 已收操作符 `d/y/c` | `[1-9]` / `0` / 移动 / 同字符 / `g` |
-| `OpCnt` | 操作符 + 计数 | 数字 / 移动 |
-| `Ang` | 已收 `<`/`>` | `[1-9]` / 移动 / 同字符 |
-| `AngCnt` | 缩进 + 计数 | 数字 / 移动 |
+| `Idle` | NORMAL 空闲 | — |
+| `Cnt` | 已收计数 | 数字 / 操作符 / 缩进 / 移动 / `g` / `G` / `S`（其它 → 丢弃计数后重新识别） |
+| `Op` | 已收操作符 `d/y/c` | `[1-9]` / `0` / 移动 / `G` / 同字符 / `g` |
+| `OpCnt` | 操作符 + 计数 | 数字 / 移动 / `G` / `g` |
+| `Ang` | 已收 `<`/`>` | `[1-9]` / `0` / 移动 / `G` / 同字符 / `g` |
+| `AngCnt` | 缩进 + 计数 | 数字 / 移动 / `G` / `g` |
 | `Gp` | 已收 `g` | `g` |
 | `Zp` | 已收 `Z` | `Z` |
 
@@ -197,40 +201,44 @@ MOT = N?(?:[hjkl]|[wWbBeE]|[$^]) | 0 | G | gg
 
 | 当前 | 事件 | 下一状态 | 动作 |
 |---|---|---|---|
-| `S` | `[1-9]` | `Cnt` | n=digit |
-| `S` | `d/y/c` | `Op` | op=char |
-| `S` | `<`/`>` | `Ang` | ang=char |
-| `S` | `g` | `Gp` | — |
-| `S` | `Z` | `Zp` | — |
-| `S` | 移动 / 自命令 | `S` | **emit** |
-| `S` | `i/I/a/A/o/O` | `INSERT` | 进入插入 |
-| `S` | `v` / `V` | `VISUAL` / `VISUAL_LINE` | 进入可视 |
+| `Idle` | `[1-9]` | `Cnt` | n=digit |
+| `Idle` | `d/y/c` | `Op` | op=char |
+| `Idle` | `<`/`>` | `Ang` | ang=char |
+| `Idle` | `g` | `Gp` | — |
+| `Idle` | `Z` | `Zp` | — |
+| `Idle` | 移动 / 单键命令 | `Idle` | **emit** |
+| `Idle` | `i/I/a/A/o/O` | `INSERT` | 进入插入 |
+| `Idle` | `v` / `V` | `VISUAL` / `VISUAL_LINE` | 进入可视 |
 | `Cnt` | `[0-9]` | `Cnt` | n=n*10+d（最多 2 位；第 3 位起忽略） |
 | `Cnt` | `d/y/c` | `Op` | 携带 n |
 | `Cnt` | `<`/`>` | `Ang` | 携带 n |
-| `Cnt` | 移动 | `S` | **emit**(移动×n) |
+| `Cnt` | 移动（不含 `G`/`gg`/`0`） | `Idle` | **emit**(移动×n) |
+| `Cnt` | `S` | `Idle` | **emit**(cc×n)（`S`≡`cc`，接受计数） |
 | `Cnt` | `g` | `Gp` | 丢弃 n |
-| `Cnt` | `G` | `S` | **emit**(G)（忽略 n） |
-| `Cnt` | 不接受计数的键 | `S` | 丢弃 n 后**交回解析器重新识别** |
-| `Op` | 同字符 `dd/yy/cc` | `S` | **emit**(行操作×n) |
-| `Op` | 移动（不含 `G`/`gg`） | `S` | **emit**(op+移动×n) |
-| `Op` | `G` | `S` | **emit**(op+`G`)（丢弃 n，`2dG`≡`dG`） |
+| `Cnt` | `G` | `Idle` | **emit**(G)（丢弃 n） |
+| `Cnt` | 不接受计数的键 | `Idle` | 丢弃 n 后**交回解析器重新识别** |
+| `Op` | 同字符 `dd/yy/cc` | `Idle` | **emit**(行操作×n) |
+| `Op` | 移动（不含 `G`/`gg`/`0`） | `Idle` | **emit**(op+移动×n) |
+| `Op` | `G` | `Idle` | **emit**(op+`G`)（丢弃 n，`2dG`≡`dG`） |
 | `Op` | `[1-9]` | `OpCnt` | n2=digit |
-| `Op` | `0` | `S` | **emit**(op+`0`) |
-| `Op` | `g` | `Gp`(ctx=operator) | 供 `dgg` |
+| `Op` | `0` | `Idle` | **emit**(op+`0`)（丢弃 n） |
+| `Op` | `g` | `Gp`(ctx=operator) | 丢弃 n（供 `dgg`/`d2gg`） |
 | `OpCnt` | `[0-9]` | `OpCnt` | n2=n2*10+d（最多 2 位） |
-| `OpCnt` | 移动（不含 `G`/`gg`） | `S` | **emit**(op+移动×(n*n2)) |
-| `OpCnt` | `G` | `S` | **emit**(op+`G`)（丢弃计数，`d2G`≡`dG`） |
+| `OpCnt` | 移动（不含 `G`/`gg`/`0`） | `Idle` | **emit**(op+移动×(n*n2)) |
+| `OpCnt` | `G` | `Idle` | **emit**(op+`G`)（丢弃计数，`d2G`≡`dG`） |
 | `OpCnt` | `g` | `Gp`(ctx=operator) | 丢弃计数（`d2gg`≡`dgg`） |
-| `Ang` | 同字符 `>> <<` | `S` | **emit**(行缩进×n) |
-| `Ang` | 移动（不含 `G`/`gg`） | `S` | **emit**(缩进+移动×n) |
-| `Ang` | `G` | `S` | **emit**(缩进+`G`)（丢弃 n，`2>G`≡`>G`） |
+| `Ang` | 同字符 `>> <<` | `Idle` | **emit**(行缩进×n) |
+| `Ang` | 移动（不含 `G`/`gg`/`0`） | `Idle` | **emit**(缩进+移动×n) |
+| `Ang` | `G` | `Idle` | **emit**(缩进+`G`)（丢弃 n，`2>G`≡`>G`） |
+| `Ang` | `g` | `Gp`(ctx=indent) | 丢弃 n（保留缩进） |
+| `Ang` | `0` | `Idle` | **emit**(缩进+`0`)（丢弃 n） |
 | `Ang` | `[1-9]` | `AngCnt` | n2=digit |
 | `AngCnt` | `[0-9]` | `AngCnt` | n2=n2*10+d（最多 2 位） |
-| `AngCnt` | 移动（不含 `G`/`gg`） | `S` | **emit**(缩进+移动×(n*n2)) |
-| `AngCnt` | `G` | `S` | **emit**(缩进+`G`)（丢弃计数） |
-| `Gp` | `g` | `S` | ctx=op→**emit**(op+gg)；否则 **emit**(gg) |
-| `Zp` | `Z` | `S` | **emit**(ZZ) |
+| `AngCnt` | 移动（不含 `G`/`gg`/`0`） | `Idle` | **emit**(缩进+移动×(n*n2)) |
+| `AngCnt` | `G` | `Idle` | **emit**(缩进+`G`)（丢弃计数） |
+| `AngCnt` | `g` | `Gp`(ctx=indent) | 丢弃计数 |
+| `Gp` | `g` | `Idle` | ctx=op→**emit**(op+gg)；ctx=indent→**emit**(缩进+gg)；否则 **emit**(gg) |
+| `Zp` | `Z` | `Idle` | **emit**(ZZ) |
 
 ```
             非期望键: 清空 pending -> 重新识别
@@ -239,7 +247,7 @@ MOT = N?(?:[hjkl]|[wWbBeE]|[$^]) | 0 | G | gg
         ┌────────────────────────────────────────────────────────────┐
         ▼                                                            │
    ┌─────────┐ d/y/c  ┌─────────┐ 移动    ┌──────────────────────────┴┐
-   │    S    ├───────►│   Op    ├────────►│ emit(op+移动×n)           │
+   │  Idle   ├───────►│   Op    ├────────►│ emit(op+移动×n)           │
    └─┬─┬─┬─┬─┘        └──┬──────┘ 同字符  └────────────┬───────────────┘
      │ │ │ │             │ [1-9]        └────────────► emit(行操作×n)
      │ │ │ │             ▼
@@ -248,7 +256,7 @@ MOT = N?(?:[hjkl]|[wWbBeE]|[$^]) | 0 | G | gg
      │ │ │ │          └─────────┘
      │ │ │ │ g
      │ │ │ └──────────────────► ┌─────────┐ g
-     │ │ │                      │   Gp    ├──► emit(gg / op+gg)
+     │ │ │                      │   Gp    ├──► emit(gg / op+gg / 缩进+gg)
      │ │ │                      └─────────┘
      │ │ │ Z                    ┌─────────┐ Z
      │ │ └────────────────────► │   Zp    ├──► emit(ZZ)
@@ -271,8 +279,11 @@ MOT = N?(?:[hjkl]|[wWbBeE]|[$^]) | 0 | G | gg
 
 > **无超时**：所有 pending 态无限期等待下一个键码，不会自行清空。
 > 计数上限 **2 位（≤99）**，第 3 位起忽略；无计数时 `n=1`。
+> **计数态中 `0` 归 `[0-9]`**（续接计数），故移动行排除 `0`（单按 `0` 才是行首）。
 > `OpCnt` / `AngCnt` **不接受同字符**（如 `d2d` 视为非期望 → 清空 + 重新识别）。
-> `G`/`gg` 在操作符/缩进上下文**丢弃计数、保留操作符**（`2dG`≡`dG`、`d2gg`≡`dgg`）。
+> `G`/`gg` **在任何上下文均丢弃计数**（`2dG`≡`dG`、`d2gg`≡`dgg`、`>2gg`≡`>gg`）。
+> `S`≡`cc` **接受计数**（`3S`≡`3cc`）；`C/D/Y` 不接受计数。
+> 单键命令 `x s X C D Y S p P J u .` 见 §4.3；本表只列多键转移。
 
 ### 4.5 严格清空（非期望键处理）
 ```
@@ -340,9 +351,10 @@ while (queue_has()) {
 | `b B` | Ctrl+← |
 | `0` / `^` / `$` | Home / Home / End |
 | `G` / `gg` | Ctrl+End / Ctrl+Home |
-| `x` | Delete |
+| `x` / `X` | Delete / Backspace |
 | `s` | Shift+→, change |
-| `C D Y S` | `c$` / `d$` / `y$` / `cc` |
+| `C D Y` | `c$` / `d$` / `y$` |
+| `S` / `NS` | 同 `cc` / `Ncc`（**×n 行**） |
 | `dd` / `Ndd` | Home, Home, Shift+End, Ctrl+X, Backspace（**×n 行**） |
 | `yy` / `Nyy` | Home, Home, Shift+Down×n, Ctrl+C |
 | `cc` / `Ncc` | Home, Shift+End, change (+Insert)（**×n 行**） |
@@ -352,11 +364,14 @@ while (queue_has()) {
 | `u` | Ctrl+Z（单次） |
 | `ZZ` | Ctrl+S |
 | `i I a A o O` | 见下 |
-| `> <` | 缩进 / 反缩进 |
+| `> <` | 缩进 / 反缩进（`>0`/`<0` = 缩进到行首/行尾） |
 
 - 插入：`i` 原地；`I`=Home 后；`a`=→ 后；`A`=End 后；`o`=End,**Shift+Enter**；`O`=Home,**Shift+Enter**,↑。
 - 粘贴定位：`yanked_line` 为真时 `p` 先 End+→，`P` 先 End+→+↑；否则 `P` 先 ←。
-- **所有 emit 入非阻塞队列**，由 `kv_task()` 按计时发送；**不使用 `wait_ms`**。
+- **多行（`N` 行）统一展开**：`Home×2` → 扩选 `Shift+Down×(n-1)`（行操作 `dd`/`yy`/`cc`/`>>`/`<<` 一致）后执行。
+- **独立移动 ×n**：`N` 个 `w`/`j`/… 即对应基础序列重复 `n` 次。
+- 未列出的 `op+移动` / `缩进+移动` / `op+gg` / `缩进+gg` / `dG`/`>G`/`>0` 等，复用对应基础序列（见 §4.4）。
+- **所有 emit 入非阻塞队列**，由 `kv_task()` 按计时发送；**不使用 `wait_ms`**（`pr_boot_combo` 等保命流程的 `wait_ms` 属键盘层特例，不在此列）。
 
 ### 4.9 模式与转移
 - **NORMAL**：单键立即 emit；数字→`Cnt`；`d/y/c`→`Op`；`<`/`>`→`Ang`；`g`→`Gp`；`Z`→`Zp`；
@@ -365,10 +380,11 @@ while (queue_has()) {
 - **OP_PENDING（瞬态）**：移动设区间→emit；非期望键→清空+重新识别；Esc→取消。
 - **INSERT**：普通字符透传；`Esc`=真 Esc 发宿主（不切模式）；离开 Insert 靠 `Caps`。
 - **VISUAL / VISUAL_LINE**：`v/V` 选区，移动扩展；`d/y/c/x/s/p` 复用 Normal 命令表；未列键（如 `i`/`a`）为非法键 → **留在 Visual**（吞键，不退出、不插入）；`Esc`→退出选区。
-- **MOUSE**：键盘层。**右 Alt 短按**在 `Insert`/`Normal`/`Visual` 均可进/出（长按=RAlt 修饰）；模式内 `hjkl`=指针、`Shift+J`/`Shift+K`=滚轮下/上、`Space`=左键、`Enter`=右键、其它键退出并重新识别；RGB 指示为**青**。
+- **MOUSE**：键盘层。**右 Alt 短按**（阈值 **200ms**，与 Caps 一致）在 `Insert`/`Normal`/`Visual` 均可进/出（长按=RAlt 修饰）；模式内 `hjkl`=指针、`Shift+J`/`Shift+K`=滚轮下/上、`Space`=左键（短按单击/长按拖动）、`Enter`=右键、其它键退出并重新识别；RGB 指示为**青**（详见 [`readme.md`](readme.md) §8）。
 
 ### 4.10 修饰键、key-up 与输入保真
 - **key-up 一律透传**；唯一例外是按住连发移动 `h/j/k/l`（down `register` 宿主方向键 / up `unregister`）。
+- **keymap 层消费 press 的键，其 release 也须一并消费**：keymap 前置分支（如 `Shift+Esc` 组合）在按下时消费了某键，必须记住并**无条件吞掉其抬起**，否则 release 会落到普通路径而多打出一个键。这不违反上一条——上一条管**引擎**侧，keymap 自消费的键由 keymap 自己负责抬起。
 - **非 vim 键码一律透传**。
 - **修饰键影子**：胶水层用物理修饰键影子判断/拼序列，**不打包、不 `clear_mods`/`set_mods`**。
 - **emit 非阻塞**：`kv_task()` 按计时发送；不使用 `wait_ms`。
@@ -407,7 +423,7 @@ while (queue_has()) {
 | E1 dd 编辑器依赖/末行 | 固定键序列 | 继承同序列 | 不变 |
 | E4 dd 双撤销 | 两次主机编辑 | 方案 A：取消双撤销 | 变（一次 u 半恢复） |
 | A5 可视文本对象取消 | 状态耦合 | 文本对象已整体剔除 | 消失 |
-| A7 计数上限 | 4 位/2 位不一 | 上限 2 位（≤99），第 3 位起忽略 | 根治 |
+| A7 计数上限 | 名义 ≤2 位，存在越界路径 | 上限 2 位（≤99），第 3 位起忽略 | 根治 |
 | A8 直接映射模键位 | 打包修饰位 | 不再打包，物理影子 | 消失 |
 
 ---
