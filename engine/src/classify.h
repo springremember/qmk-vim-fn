@@ -2,7 +2,7 @@
 #ifndef KV_CLASSIFY_H
 #define KV_CLASSIFY_H
 
-#include "kv_kc.h"
+#include "../include/kv_kc.h"
 
 typedef enum {
     T_OTHER = 0,  /* not a vim keycode */

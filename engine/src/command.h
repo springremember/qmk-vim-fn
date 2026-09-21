@@ -2,7 +2,7 @@
 #ifndef KV_COMMAND_H
 #define KV_COMMAND_H
 
-#include "kv_kc.h"
+#include "../include/kv_kc.h"
 #include "ctx.h"
 
 /* Motion kinds. */

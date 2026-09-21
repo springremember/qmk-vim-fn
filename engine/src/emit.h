@@ -2,7 +2,7 @@
 #ifndef KV_EMIT_H
 #define KV_EMIT_H
 
-#include "kv_kc.h"
+#include "../include/kv_kc.h"
 
 /* gap between two emitted keys (ms) */
 #define KV_EMIT_GAP_MS 1
