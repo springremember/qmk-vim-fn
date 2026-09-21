@@ -46,7 +46,7 @@
 
 ### 3.1 底排（Space 右侧）约定
 
-Space 右侧的**非方向键**，从左到右依次为 **`Alt` `Fn` `Menu` `Ctrl`**；`Menu` 仅当右侧共 **4** 个键位时存在，`Ctrl` 当右侧 **≥3** 个键位时存在：
+Space **同一行**右侧的**非方向键**，从左到右依次为 **`Alt` `Fn` `Menu` `Ctrl`**；`Menu` 仅当右侧共 **4** 个键位时存在，`Ctrl` 当右侧 **≥3** 个键位时存在（右 `Shift` 通常在上一行，不计入）：
 
 | 右侧（非方向键）数 | 从左到右 |
 | :-- | :-- |
@@ -99,6 +99,18 @@ bool process_record_user(uint16_t keycode, keyrecord_t *record) {
             }
             return false;                   /* 前置不满足也吞键 */
 
+        case KC_W:                          /* 蓝牙 2（同 KC_Q，改 2） */
+            if (支持蓝牙() && 挡位正确()) {
+                切蓝牙(2, record->event.pressed);
+            }
+            return false;
+
+        case KC_E:                          /* 蓝牙 3（同 KC_Q，改 3） */
+            if (支持蓝牙() && 挡位正确()) {
+                切蓝牙(3, record->event.pressed);
+            }
+            return false;
+
         case KC_R:                          /* 2.4G */
             if (支持2.4G() && 挡位正确()) {
                 切2.4G(record->event.pressed);
@@ -132,11 +144,18 @@ bool process_record_user(uint16_t keycode, keyrecord_t *record) {
             }
             return false;
 
-        /* F 区（1..0 = F1..F10；- / = = F11/F12）、音量（[ / ]）、
-           初始化（Esc）同理 */
+        /* 已声明、无前置的键：F 区（1..0=F1..F10、- / = =F11/F12）、音量（[ / ]）
+           —— 直接放行（return true），按 myfn 层的键码正常输出，无需分发代码 */
+        case KC_F1: case KC_F2: case KC_F3: case KC_F4: case KC_F5:
+        case KC_F6: case KC_F7: case KC_F8: case KC_F9: case KC_F10:
+        case KC_F11: case KC_F12: case KC_VOLD: case KC_VOLU:
+            return true;
+
+        /* 初始化（Fn+Esc）：无前置，但通常需键盘专属处理（如计时 / EE_CLR），
+           故不在此统一放行，交由键盘实现（见下方注）。 */
 
         default:
-            return false;                   /* 表中没有的键（含修饰键）→ 吞键（空跑） */
+            return false;                   /* 未声明的键（含修饰键）→ 吞键（空跑） */
     }
 }
 ```
@@ -145,7 +164,9 @@ bool process_record_user(uint16_t keycode, keyrecord_t *record) {
 > 约定只规定“什么时候该做、什么时候不做”，不规定“怎么做”。
 
 > **无前置的功能**（如 Fn+1..0 = F1–F10、Fn+`-`/`Fn+=` = F11/F12、Fn+`[`/`Fn+]` = 音量）
-> 可直接把它们作为 **myfn 层的键码** 放在层里（QMK 正常输出），**无需任何分发代码**；只有带前置条件的功能才需要上面那种拦截。
+> 可直接把它们作为 **myfn 层的键码** 放在层里（QMK 正常输出）；但本示例 `switch` 的 `default` 会兜底吞键，
+> 故这些**已声明的无前置键仍须显式放行**（`return true`），否则会被吞掉。带前置条件的功能需按上面的拦截写法。
+> `Fn+Esc`（初始化）虽无前置，但各键盘实现不同（如长按计时 / `EE_CLR`），**属键盘专属**，不适用"直接放层键码"。
 
 > **原厂 Fn + bootloader 组合键**（§2）由键盘在最高优先级处保留，不属于本约束表的键位。
 

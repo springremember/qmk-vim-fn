@@ -115,7 +115,7 @@ struct nv_cmd { int cmd_char; nv_func_T cmd_func; short_u cmd_flags; short cmd_a
 | A4 | let-through 取消过宽 | `process_func != normal` 误判 |
 | A5 | 可视文本对象取消 | 状态耦合 |
 | A6 | 左右混合修饰符打包错 | 位移打包 |
-| A7/A8 | 计数上限、模键位 | 边角 |
+| A7/A8 | 计数上限、模键码位 | 边角 |
 
 ---
 
@@ -128,7 +128,7 @@ struct nv_cmd { int cmd_char; nv_func_T cmd_func; short_u cmd_flags; short cmd_a
 | 1 | 多键挂起打断 | **严格清空**：遇到非期望键，**立即清空 pending**，再**重新识别**该键——是 vim 键码则当作新命令首键；否则**原样透传宿主** |
 | 1b | 兜底超时 | **无超时** |
 | 2 | 计数 | 仅前缀；操作符前后**相乘**（`2d3w`=`d6w`）；**最多 2 位（≤99），第 3 位起忽略**（`123w`≡`12w`）；首位非 `0`；无计数时 `n=1` |
-| 2b | 计数作用域 | 仅移动、缩进与行操作；其余键丢弃计数。`G`/`gg` 虽属移动，**任何上下文都丢弃计数**（`2dG`≡`dG`、`2dgg`≡`dgg`） |
+| 2b | 计数作用域 | 仅移动、缩进与行操作；其余键丢弃计数。`G`/`gg` 虽属移动，**任何上下文都丢弃计数**（`2dG`≡`dG`、`2dgg`≡`dgg`）；操作符/缩进后的 `0` 亦丢弃 n（`2d0`≡`d0`） |
 | 3 | 模式范围 | NORMAL + INSERT + VISUAL/Visual-Line（含瞬态 OP_PENDING） |
 | 4 | 编辑器适配 | 与编辑器无关；**无 profile 层**；`emit` 单一固定映射 |
 | 5 | 落地方式 | 新核心层 `engine/`（与 QMK 解耦）+ 主机单测；接回固件属后续阶段 |
@@ -150,7 +150,7 @@ struct nv_cmd { int cmd_char; nv_func_T cmd_func; short_u cmd_flags; short cmd_a
 
 ### 4.3 Normal 指令集（冻结）
 
-**单键**：`h j k l` `w W b B e E` `0 ^ $` `G` `i I a A o O` `C D Y S X` `x s` `p P` `J` `u` `.` `v` `V`
+**单键**：`h j k l` `w W b B e E` `0 ^ $` `G` `i I a A o O` `C D Y X` `x s` `p P` `J` `u` `.` `v` `V` `S`(≡`cc`，可带计数)
 
 **多键**：计数 `[1-9][0-9]?`（元变量；**字面键 `N` 不作计数**，按普通键透传）、`d y c`(操作符) `< >`(缩进) `g`(→`gg`) `Z`(→`ZZ`)
 
@@ -158,16 +158,15 @@ struct nv_cmd { int cmd_char; nv_func_T cmd_func; short_u cmd_flags; short cmd_a
 
 ```regex
 N   = [1-9][0-9]?   # 最多 2 位（<=99）；第 3 位起忽略；首位非 0
-# 0 只在"无计数"时作动作（计数里的 0 归 [0-9]）：d20 = 计数20、d0 = 删到行首
-MOT = N?(?:[hjkl]|[wWbBeE]|[$^]) | 0 | G | gg
+# 0 只在"无计数"时作动作（计数里的 0 归 [0-9]）：d20w = 计数20、d0 = 删到行首
+MOT = (?:[hjkl]|[wWbBeE]|[$^]|0|G|gg)   # 不含计数；计数由外层 N? 拼接
 
-(?: N?MOT               # 独立运动（含计数）
-  | N?gg
+(?: N?MOT               # 独立运动（含计数；G/gg 丢计数）
   | N?[dcy]MOT          # 操作符 + 移动
-  | N?(?:dd|cc|yy)       # 行操作（自叠）
-  | N?S                  # S = cc 别名（接受计数）
-  | N?[<>]MOT            # 缩进 + 移动
-  | N?(?:>>|<<)          # 行缩进（自叠）
+  | N?(?:dd|cc|yy)      # 行操作（自叠）
+  | N?S                 # S = cc 别名（接受计数）
+  | N?[<>]MOT           # 缩进 + 移动
+  | N?(?:>>|<<)         # 行缩进（自叠）
   | [CDYXxs]
   | [iIaAoO]
   | [pP]
@@ -180,7 +179,7 @@ MOT = N?(?:[hjkl]|[wWbBeE]|[$^]) | 0 | G | gg
 ```
 > 行操作/行缩进用显式 `dd|cc|yy`、`>>|<<` 表达，避免反向引用歧义。
 > `G`/`gg` **在任何上下文均丢弃计数**（见 §4.4）。
-> 正则为**简化描述**：`N` 的"第 3 位起忽略"、**`0` 的计数续接**（`20`/`d20`/`>20`）、`G`/`gg` 的丢计数、**计数 + 丢弃计数键**（`x s X C D Y p P i I a A o O v V J u . ZZ`）、以及操作符/缩进后置计数配 `G`/`gg`（`d2G`/`d2gg`/`>2G`/`>2gg`）均由解析层/状态机处理。
+> 正则为**简化描述**：`N` 的"第 3 位起忽略"、**`0` 的计数续接**（`20`/`d20`：第 2 位 `0` 续接计数、非"行首"命令）、`G`/`gg` 的丢计数、**计数 + 丢弃计数键**（`x s X C D Y p P i I a A o O v V J u . ZZ`）、以及操作符/缩进后置计数配 `G`/`gg`（`d2G`/`d2gg`/`>2G`/`>2gg`）均由解析层/状态机处理。
 
 ### 4.4 多键状态机（严格清空）
 
@@ -189,7 +188,7 @@ MOT = N?(?:[hjkl]|[wWbBeE]|[$^]) | 0 | G | gg
 | 状态 | 含义 | 期望的下个字符 |
 |---|---|---|
 | `Idle` | NORMAL 空闲 | — |
-| `Cnt` | 已收计数 | 数字 / 操作符 / 缩进 / 移动 / `g` / `G` / `S`（其它 → 丢弃计数后重新识别） |
+| `Cnt` | 已收计数 | 数字 / 操作符 / 缩进 / 移动 / `g` / `G` / `S` / `Z`（其它 → 丢弃计数后重新识别） |
 | `Op` | 已收操作符 `d/y/c` | `[1-9]` / `0` / 移动 / `G` / 同字符 / `g` |
 | `OpCnt` | 操作符 + 计数 | 数字 / 移动 / `G` / `g` |
 | `Ang` | 已收 `<`/`>` | `[1-9]` / `0` / 移动 / `G` / 同字符 / `g` |
@@ -203,6 +202,7 @@ MOT = N?(?:[hjkl]|[wWbBeE]|[$^]) | 0 | G | gg
 |---|---|---|---|
 | `Idle` | `[1-9]` | `Cnt` | n=digit |
 | `Idle` | `d/y/c` | `Op` | op=char |
+| `Idle` | `S` | `Idle` | **emit**(cc)（`S`≡`cc`，单键） |
 | `Idle` | `<`/`>` | `Ang` | ang=char |
 | `Idle` | `g` | `Gp` | — |
 | `Idle` | `Z` | `Zp` | — |
@@ -215,6 +215,7 @@ MOT = N?(?:[hjkl]|[wWbBeE]|[$^]) | 0 | G | gg
 | `Cnt` | 移动（不含 `G`/`gg`/`0`） | `Idle` | **emit**(移动×n) |
 | `Cnt` | `S` | `Idle` | **emit**(cc×n)（`S`≡`cc`，接受计数） |
 | `Cnt` | `g` | `Gp` | 丢弃 n |
+| `Cnt` | `Z` | `Zp` | 丢弃 n（供 `3ZZ`≡`ZZ`） |
 | `Cnt` | `G` | `Idle` | **emit**(G)（丢弃 n） |
 | `Cnt` | 不接受计数的键 | `Idle` | 丢弃 n 后**交回解析器重新识别** |
 | `Op` | 同字符 `dd/yy/cc` | `Idle` | **emit**(行操作×n) |
@@ -280,10 +281,11 @@ MOT = N?(?:[hjkl]|[wWbBeE]|[$^]) | 0 | G | gg
 > **无超时**：所有 pending 态无限期等待下一个键码，不会自行清空。
 > 计数上限 **2 位（≤99）**，第 3 位起忽略；无计数时 `n=1`。
 > **计数态中 `0` 归 `[0-9]`**（续接计数），故移动行排除 `0`（单按 `0` 才是行首）。
-> `OpCnt` / `AngCnt` **不接受同字符**（如 `d2d` 视为非期望 → 清空 + 重新识别）。
+> `OpCnt` / `AngCnt` **不接受同字符**（如 `d2d` 视为非期望 → 清空 + 重新识别；与 Vim 的 `d2d`≡`2dd` 不同，为**有意取舍**）。
+> `Cnt` 态的 `G`/`gg` 属**显式例外**（转移表：`Cnt|G`→emit(G)、`Cnt|g`→`Gp`），不进入"不接受计数的键 → 重新识别"路径。
 > `G`/`gg` **在任何上下文均丢弃计数**（`2dG`≡`dG`、`d2gg`≡`dgg`、`>2gg`≡`>gg`）。
-> `S`≡`cc` **接受计数**（`3S`≡`3cc`）；`C/D/Y` 不接受计数。
-> 单键命令 `x s X C D Y S p P J u .` 见 §4.3；本表只列多键转移。
+> `S`≡`cc` **接受计数**（`3S`≡`3cc`）；`C/D/Y` 不接受计数（`S` 不在 `[CDYXxs]` 字符类中，单独由 `N?S` 表示）。
+> 单键命令 `x s X C D Y S p P J u .` 见 §4.3（`S` 为单键、可带计数，见 `Cnt|S`）；本表只列多键转移。
 
 ### 4.5 严格清空（非期望键处理）
 ```
@@ -300,7 +302,7 @@ pending 态收到非期望键：
 ### 4.6 架构与文件清单（`engine/`，QMK 无关）
 ```
 engine/
-  include/kv.h          // 公共 API：kv_kbd / kv_set_emit / kv_task；类型、模式、keycode
+  include/kv.h          // 公共 API：kv_kbd / kv_set_emit / kv_task + 查询/设置（见 §4.7）；类型、模式、keycode
   include/kv_kc.h       // kv_keycode_t 与修饰位（镜像 QMK 16-bit 布局，便于接回）
   src/queue.{h,c}       // 环形队列：push / pop / peek / flush
   src/classify.{h,c}    // keycode -> token 类别
@@ -327,7 +329,19 @@ void kv_set_emit(kv_emit_fn fn);
 
 /* 由 housekeeping 调用：按计时发送 emit 队列（替代阻塞的 wait_ms） */
 void kv_task(uint32_t now_ms);
+
+/* ---- 查询/设置接口（供键盘层：Caps 恢复、RGB 指示、Fn+Caps 开关、前置分支取消）---- */
+kv_mode_t kv_get_mode(void);        /* 当前模式（含 Visual/Visual-Line） */
+bool      kv_vim_enabled(void);     /* vim 总开关 */
+bool      kv_pending(void);         /* 是否有 pending（计数/操作符/前缀/缩进） */
+void      kv_set_mode(kv_mode_t m); /* 直接设模式（如 Caps 恢复进入前模式） */
+void      kv_enable(void);          /* 开 vim */
+void      kv_disable(void);         /* 关 vim（RGB 红） */
+void      kv_cancel(void);          /* 取消当前 pending（不发键），供 keymap 前置分支 */
 ```
+
+> 上述查询/设置接口为**需新增**（键盘迁移计划依赖，见 `键盘迁移计划.md` §0/§2.1）；
+> 其中 `kv_cancel()` 在 pending 态等价于喂入 `Esc`（仅清 pending，不 emit；Idle 态则无操作）。
 
 解析循环（表驱动，取代 `process_func`）：
 ```c
@@ -355,23 +369,23 @@ while (queue_has()) {
 | `s` | Shift+→, change |
 | `C D Y` | `c$` / `d$` / `y$` |
 | `S` / `NS` | 同 `cc` / `Ncc`（**×n 行**） |
-| `dd` / `Ndd` | Home, Home, Shift+End, Ctrl+X, Backspace（**×n 行**） |
-| `yy` / `Nyy` | Home, Home, Shift+Down×n, Ctrl+C |
-| `cc` / `Ncc` | Home, Shift+End, change (+Insert)（**×n 行**） |
+| `dd` / `Ndd` | Home, Home, Shift+End, Shift+Down×(n-1), Ctrl+X, Backspace（**×n 行**；n=1 时无 `Shift+Down`） |
+| `yy` / `Nyy` | Home, Home, Shift+Down×n, Ctrl+C（**×n 行**） |
+| `cc` / `Ncc` | Home, Home, Shift+End, Shift+Down×(n-1), change (+Insert)（**×n 行**；n=1 时无 `Shift+Down`） |
 | `dw` / `d$` / `d0` | 选词/选到行首尾 → Ctrl+X |
 | `p` / `P` | Ctrl+V（`yanked_line` 定位） |
 | `J` | End, Delete |
 | `u` | Ctrl+Z（单次） |
 | `ZZ` | Ctrl+S |
 | `i I a A o O` | 见下 |
-| `> <` | 缩进 / 反缩进（`>0`/`<0` = 缩进到行首/行尾） |
+| `> <` | 缩进 / 反缩进（`>0`/`<0` = 缩进/反缩进到行首） |
 
 - 插入：`i` 原地；`I`=Home 后；`a`=→ 后；`A`=End 后；`o`=End,**Shift+Enter**；`O`=Home,**Shift+Enter**,↑。
 - 粘贴定位：`yanked_line` 为真时 `p` 先 End+→，`P` 先 End+→+↑；否则 `P` 先 ←。
-- **多行（`N` 行）统一展开**：`Home×2` → 扩选 `Shift+Down×(n-1)`（行操作 `dd`/`yy`/`cc`/`>>`/`<<` 一致）后执行。
+- **多行（`N` 行）展开**：先 `Home×2`；`yy` 扩选 `Shift+Down×n`；`dd`/`cc` 扩选 `Shift+End` + `Shift+Down×(n-1)`（覆盖含换行的 `N` 行）；`>>`/`<<` 同理按行扩选，再执行对应动作。
 - **独立移动 ×n**：`N` 个 `w`/`j`/… 即对应基础序列重复 `n` 次。
 - 未列出的 `op+移动` / `缩进+移动` / `op+gg` / `缩进+gg` / `dG`/`>G`/`>0` 等，复用对应基础序列（见 §4.4）。
-- **所有 emit 入非阻塞队列**，由 `kv_task()` 按计时发送；**不使用 `wait_ms`**（`pr_boot_combo` 等保命流程的 `wait_ms` 属键盘层特例，不在此列）。
+- **所有 emit 入非阻塞队列**，由 `kv_task()` 按计时发送；**不使用 `wait_ms`**（`pr_boot_combo` 等键盘层保命流程的 `wait_ms` 属键盘层特例，不在此列，详见 [`readme.md`](readme.md) §11 注）。
 
 ### 4.9 模式与转移
 - **NORMAL**：单键立即 emit；数字→`Cnt`；`d/y/c`→`Op`；`<`/`>`→`Ang`；`g`→`Gp`；`Z`→`Zp`；
@@ -424,7 +438,7 @@ while (queue_has()) {
 | E4 dd 双撤销 | 两次主机编辑 | 方案 A：取消双撤销 | 变（一次 u 半恢复） |
 | A5 可视文本对象取消 | 状态耦合 | 文本对象已整体剔除 | 消失 |
 | A7 计数上限 | 名义 ≤2 位，存在越界路径 | 上限 2 位（≤99），第 3 位起忽略 | 根治 |
-| A8 直接映射模键位 | 打包修饰位 | 不再打包，物理影子 | 消失 |
+| A8 直接映射模键码 | 打包修饰位 | 不再打包，物理影子 | 消失 |
 
 ---
 
@@ -461,5 +475,5 @@ while (queue_has()) {
 7. VISUAL / VISUAL-LINE
 8. 主机测试全绿（含 E2/E3/A1/A2/A3 回归）
 
-**范围外（后续阶段）**：接回固件替换现 `process_func`、鼠标模式、Caps/Esc 交互、
+**范围外（后续阶段）**：接回固件替换现 `process_func`、鼠标模式的**固件接入**（行为已定稿，见 §4.9 与 [`readme.md`](readme.md) §8）、Caps/Esc 交互、
 合并 qmk-vim + qmk-myfn、去上游依赖。
