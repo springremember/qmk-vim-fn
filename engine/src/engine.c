@@ -35,6 +35,14 @@ static int digit_of(kv_keycode_t kc) {
     return (kc == KV_0) ? 0 : (int)(kc - KV_1 + 1);
 }
 
+/* Fold two counts by multiplication, clamped so the emitted key sequence can
+ * never overflow the non-blocking queue (design #2; 2d3w = d6w). */
+static int fold_counts(int n, int n2) {
+    int r = n * n2;
+    if (r > 99) r = 99;
+    return r;
+}
+
 static kv_motion_t motion_of(kv_keycode_t kc) {
     switch (kc) {
         case KV_H:       return M_H;
@@ -187,7 +195,10 @@ static kv_feed_t feed_normal(kv_keycode_t kc) {
                     kv_emit_op_motion(s_ctx.op, M_ZERO, 1);
                     if (s_ctx.op == KV_C) s_mode = KV_MODE_INSERT;
                     reset_pending(); return R_CONSUMED;
-                case T_G_BIG:  kv_emit_op_motion(s_ctx.op, M_G_BIG, 1); reset_pending(); return R_CONSUMED;
+                case T_G_BIG:
+                    kv_emit_op_motion(s_ctx.op, M_G_BIG, 1);
+                    if (s_ctx.op == KV_C) s_mode = KV_MODE_INSERT;
+                    reset_pending(); return R_CONSUMED;
                 case T_g_LOWER: s_state = ST_GP; return R_CONSUMED;
                 case T_COUNT:  s_state = ST_OPCNT; s_ctx.count2 = digit_of(kc); return R_CONSUMED;
                 default:
@@ -202,13 +213,16 @@ static kv_feed_t feed_normal(kv_keycode_t kc) {
                     if (s_ctx.count2 < 10) s_ctx.count2 = s_ctx.count2 * 10 + digit_of(kc);
                     return R_CONSUMED;
                 case T_MOTION: case T_CARET: case T_DOLLAR:
-                    kv_emit_op_motion(s_ctx.op, motion_of(kc), kv_ctx_n(&s_ctx) * s_ctx.count2);
+                    kv_emit_op_motion(s_ctx.op, motion_of(kc), fold_counts(kv_ctx_n(&s_ctx), s_ctx.count2));
                     if (s_ctx.op == KV_C) s_mode = KV_MODE_INSERT;
                     reset_pending(); return R_CONSUMED;
                 case T_ZERO: /* d20: 0 continues the count; d20 alone is not a command */
                     if (s_ctx.count2 < 10) s_ctx.count2 = s_ctx.count2 * 10;
                     return R_CONSUMED;
-                case T_G_BIG:  kv_emit_op_motion(s_ctx.op, M_G_BIG, 1); reset_pending(); return R_CONSUMED;
+                case T_G_BIG:
+                    kv_emit_op_motion(s_ctx.op, M_G_BIG, 1);
+                    if (s_ctx.op == KV_C) s_mode = KV_MODE_INSERT;
+                    reset_pending(); return R_CONSUMED;
                 case T_g_LOWER: s_state = ST_GP; return R_CONSUMED;
                 default:
                     reset_pending();
@@ -242,7 +256,7 @@ static kv_feed_t feed_normal(kv_keycode_t kc) {
                     if (s_ctx.count2 < 10) s_ctx.count2 = s_ctx.count2 * 10 + digit_of(kc);
                     return R_CONSUMED;
                 case T_MOTION: case T_CARET: case T_DOLLAR:
-                    kv_emit_indent_motion(s_ctx.ang, motion_of(kc), kv_ctx_n(&s_ctx) * s_ctx.count2);
+                    kv_emit_indent_motion(s_ctx.ang, motion_of(kc), fold_counts(kv_ctx_n(&s_ctx), s_ctx.count2));
                     reset_pending(); return R_CONSUMED;
                 case T_ZERO:
                     if (s_ctx.count2 < 10) s_ctx.count2 = s_ctx.count2 * 10;
@@ -257,9 +271,14 @@ static kv_feed_t feed_normal(kv_keycode_t kc) {
 
         case ST_GP:
             if (t == T_g_LOWER) {
-                if (s_ctx.has_op)      kv_emit_op_motion(s_ctx.op, M_GG, 1);
-                else if (s_ctx.has_ang) kv_emit_indent_motion(s_ctx.ang, M_GG, 1);
-                else                    kv_emit_motion(M_GG, 1);
+                if (s_ctx.has_op) {
+                    kv_emit_op_motion(s_ctx.op, M_GG, 1);
+                    if (s_ctx.op == KV_C) s_mode = KV_MODE_INSERT;
+                } else if (s_ctx.has_ang) {
+                    kv_emit_indent_motion(s_ctx.ang, M_GG, 1);
+                } else {
+                    kv_emit_motion(M_GG, 1);
+                }
                 reset_pending();
                 return R_CONSUMED;
             }

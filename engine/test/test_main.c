@@ -178,6 +178,9 @@ static void test_changes_enter_insert(void) {
     fresh(); key(KV_C); key(KV_C); CHECK(kv_get_mode() == KV_MODE_INSERT);
     fresh(); key(KV_C); key(KV_W); CHECK(kv_get_mode() == KV_MODE_INSERT);
     fresh(); key(KV_C); key(KV_0); CHECK(kv_get_mode() == KV_MODE_INSERT);
+    fresh(); key(KV_C); key(KV_C_G); CHECK(kv_get_mode() == KV_MODE_INSERT); /* cG */
+    fresh(); key(KV_C); key(KV_G); key(KV_G); CHECK(kv_get_mode() == KV_MODE_INSERT); /* cgg */
+    fresh(); key(KV_C); key(KV_2); key(KV_C_G); CHECK(kv_get_mode() == KV_MODE_INSERT); /* c2G */
     /* non-change ops keep NORMAL */
     fresh(); key(KV_D); key(KV_D); CHECK(kv_get_mode() == KV_MODE_NORMAL);
     fresh(); key(KV_Y); key(KV_Y); CHECK(kv_get_mode() == KV_MODE_NORMAL);
@@ -218,6 +221,9 @@ static void test_repeat(void) {
 static void test_big_count(void) {
     fresh(); key(KV_9); key(KV_9); key(KV_W);
     CHECK(rec_count() == 99); /* 99 motions fit in the emit queue */
+    /* products are clamped to 99 so the queue cannot overflow */
+    fresh(); key(KV_9); key(KV_9); key(KV_D); key(KV_9); key(KV_9); key(KV_W);
+    CHECK(rec_count() <= 99 + 1);
 }
 
 static void test_pass_through(void) {
