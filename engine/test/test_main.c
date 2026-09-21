@@ -1,10 +1,12 @@
 /* test_main.c — host unit tests for the vim engine. */
 #include "kvtest.h"
+#include "../src/emit.h"
 
 /* helpers ---------------------------------------------------------------- */
-/* feed a key without clearing the recorder (rigorous: catches stray emits) */
+/* Feed a key emulating the glue: pass-through keycodes are emitted by the
+ * caller (QMK), consumed ones are handled by the engine. */
 static void key(kv_keycode_t kc) {
-    kv_kbd(kc);
+    if (kv_kbd(kc) == KV_PASSTHROUGH) kv_emit_tap(kc);
     flush_emit();
 }
 

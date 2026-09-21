@@ -22,10 +22,17 @@ static kv_keycode_t s_last[REC_MAX];
 static int          s_last_len;
 static bool         s_replaying;
 
+/* internal feed result: consumed / pass-through / needs re-identification */
+typedef enum { R_CONSUMED = 0, R_PASSTHROUGH, R_REIDENTIFY } kv_feed_t;
+
 /* ------------------------------------------------------------------ helpers */
 static void reset_pending(void) {
     kv_ctx_reset(&s_ctx);
     s_state = ST_IDLE;
+}
+
+static int digit_of(kv_keycode_t kc) {
+    return (kc == KV_0) ? 0 : (int)(kc - KV_1 + 1);
 }
 
 static kv_motion_t motion_of(kv_keycode_t kc) {
@@ -46,10 +53,6 @@ static kv_motion_t motion_of(kv_keycode_t kc) {
         case KV_C_G:     return M_G_BIG;
         default:         return M_NONE;
     }
-}
-
-static int digit_of(kv_keycode_t kc) {
-    return (kc == KV_0) ? 0 : (int)(kc - KV_1 + 1);
 }
 
 static void rec_push(kv_keycode_t kc) {
@@ -76,6 +79,7 @@ static void rec_replay(void) {
 
 /* ------------------------------------------------------------------ commands */
 static void do_single(kv_token_t t, kv_keycode_t kc) {
+    (void)kc;
     switch (t) {
         case T_X:      kv_emit_delete_char();    break;
         case T_XUP:    kv_emit_backspace_char(); break;
@@ -87,47 +91,43 @@ static void do_single(kv_token_t t, kv_keycode_t kc) {
         case T_PUP:    kv_emit_paste(true);      break;
         case T_JOIN:   kv_emit_join();           break;
         case T_UNDO:   kv_emit_undo();           break;
-        case T_S_BIG:  kv_emit_line_op(KV_C, 1); break;
-        case T_REPEAT:
-            rec_replay();
-            break;
-        default: (void)kc; break;
+        default: break;
     }
 }
 
-/* returns true if the key was consumed (not passed through) */
-static bool feed_normal(kv_keycode_t kc) {
+/* Normal-mode state machine.  Returns R_CONSUMED / R_PASSTHROUGH /
+ * R_REIDENTIFY (strict clear: caller re-feeds the key in IDLE). */
+static kv_feed_t feed_normal(kv_keycode_t kc) {
     kv_token_t t = (s_state == ST_CNT || s_state == ST_OPCNT || s_state == ST_ANGCnt)
                        ? kv_classify_digit(kc)
                        : kv_classify(kc);
 
     if (kc == KV_ESC) {
-        if (s_state != ST_IDLE) { reset_pending(); return true; }
-        kv_emit_tap(KV_ESC);
-        return true;
+        if (s_state != ST_IDLE) { reset_pending(); return R_CONSUMED; }
+        return R_PASSTHROUGH; /* real Esc handled by the caller */
     }
 
     switch (s_state) {
         case ST_IDLE:
             switch (t) {
-                case T_COUNT:  s_state = ST_CNT; s_ctx.count = digit_of(kc); return true;
-                case T_OP:     s_state = ST_OP;  s_ctx.op = kc; s_ctx.has_op = true; return true;
-                case T_INDENT: s_state = ST_ANG; s_ctx.ang = kc; s_ctx.has_ang = true; return true;
-                case T_g_LOWER: s_state = ST_GP; return true;
-                case T_Z_BIG:  s_state = ST_ZP; return true;
+                case T_COUNT:  s_state = ST_CNT; s_ctx.count = digit_of(kc); return R_CONSUMED;
+                case T_OP:     s_state = ST_OP;  s_ctx.op = kc; s_ctx.has_op = true; return R_CONSUMED;
+                case T_INDENT: s_state = ST_ANG; s_ctx.ang = kc; s_ctx.has_ang = true; return R_CONSUMED;
+                case T_g_LOWER: s_state = ST_GP; return R_CONSUMED;
+                case T_Z_BIG:  s_state = ST_ZP; return R_CONSUMED;
                 case T_MOTION: case T_ZERO: case T_CARET: case T_DOLLAR:
-                    kv_emit_motion(motion_of(kc), 1); return true;
-                case T_G_BIG:  kv_emit_motion(M_G_BIG, 1); return true;
-                case T_S_BIG:  kv_emit_line_op(KV_C, 1); return true;
-                case T_INSERT: kv_emit_enter_insert(kc); s_mode = KV_MODE_INSERT; return true;
-                case T_VISUAL: s_mode = (kc == KV_C_V) ? KV_MODE_VISUAL_LINE : KV_MODE_VISUAL; return true;
+                    kv_emit_motion(motion_of(kc), 1); return R_CONSUMED;
+                case T_G_BIG:  kv_emit_motion(M_G_BIG, 1); return R_CONSUMED;
+                case T_S_BIG:  kv_emit_line_op(KV_C, 1); return R_CONSUMED;
+                case T_INSERT: kv_emit_enter_insert(kc); s_mode = KV_MODE_INSERT; return R_CONSUMED;
+                case T_VISUAL: s_mode = (kc == KV_C_V) ? KV_MODE_VISUAL_LINE : KV_MODE_VISUAL; return R_CONSUMED;
                 case T_X: case T_XUP: case T_s: case T_C_BIG: case T_D_BIG:
                 case T_Y_BIG: case T_P: case T_PUP: case T_JOIN: case T_UNDO:
-                    do_single(t, kc); return true;
+                    do_single(t, kc); return R_CONSUMED;
                 case T_REPEAT:
-                    rec_replay(); return true;
+                    rec_replay(); return R_CONSUMED;
                 default:
-                    kv_emit_tap(kc); return true; /* pass-through */
+                    return R_PASSTHROUGH; /* not a vim keycode */
             }
 
         case ST_CNT: {
@@ -135,35 +135,35 @@ static bool feed_normal(kv_keycode_t kc) {
             switch (t) {
                 case T_DIGIT:
                     if (s_ctx.count < 10) s_ctx.count = s_ctx.count * 10 + digit_of(kc);
-                    return true;
-                case T_OP:     s_state = ST_OP; s_ctx.op = kc; s_ctx.has_op = true; return true;
-                case T_INDENT: s_state = ST_ANG; s_ctx.ang = kc; s_ctx.has_ang = true; return true;
+                    return R_CONSUMED;
+                case T_OP:     s_state = ST_OP; s_ctx.op = kc; s_ctx.has_op = true; return R_CONSUMED;
+                case T_INDENT: s_state = ST_ANG; s_ctx.ang = kc; s_ctx.has_ang = true; return R_CONSUMED;
                 case T_MOTION: case T_ZERO: case T_CARET: case T_DOLLAR:
-                    kv_emit_motion(motion_of(kc), n); reset_pending(); return true;
-                case T_G_BIG:  kv_emit_motion(M_G_BIG, 1); reset_pending(); return true;
-                case T_g_LOWER: s_state = ST_GP; return true;
-                case T_Z_BIG:  s_state = ST_ZP; return true;
-                case T_S_BIG:  kv_emit_line_op(KV_C, n); reset_pending(); return true;
-                case T_INSERT: kv_emit_enter_insert(kc); s_mode = KV_MODE_INSERT; reset_pending(); return true;
-                case T_VISUAL: s_mode = (kc == KV_C_V) ? KV_MODE_VISUAL_LINE : KV_MODE_VISUAL; reset_pending(); return true;
+                    kv_emit_motion(motion_of(kc), n); reset_pending(); return R_CONSUMED;
+                case T_G_BIG:  kv_emit_motion(M_G_BIG, 1); reset_pending(); return R_CONSUMED;
+                case T_g_LOWER: s_state = ST_GP; return R_CONSUMED;
+                case T_Z_BIG:  s_state = ST_ZP; return R_CONSUMED;
+                case T_S_BIG:  kv_emit_line_op(KV_C, n); reset_pending(); return R_CONSUMED;
+                case T_INSERT: kv_emit_enter_insert(kc); s_mode = KV_MODE_INSERT; reset_pending(); return R_CONSUMED;
+                case T_VISUAL: s_mode = (kc == KV_C_V) ? KV_MODE_VISUAL_LINE : KV_MODE_VISUAL; reset_pending(); return R_CONSUMED;
                 default: /* drop count, re-identify */
                     reset_pending();
-                    return feed_normal(kc);
+                    return R_REIDENTIFY;
             }
         }
 
         case ST_OP: {
             int n = kv_ctx_n(&s_ctx);
             switch (t) {
-                case T_OP:     kv_emit_line_op(s_ctx.op, n); reset_pending(); return true;
+                case T_OP:     kv_emit_line_op(s_ctx.op, n); reset_pending(); return R_CONSUMED;
                 case T_MOTION: case T_ZERO: case T_CARET: case T_DOLLAR:
-                    kv_emit_op_motion(s_ctx.op, motion_of(kc), n); reset_pending(); return true;
-                case T_G_BIG:  kv_emit_op_motion(s_ctx.op, M_G_BIG, 1); reset_pending(); return true;
-                case T_g_LOWER: s_state = ST_GP; return true;
-                case T_COUNT:  s_state = ST_OPCNT; s_ctx.count2 = digit_of(kc); return true;
+                    kv_emit_op_motion(s_ctx.op, motion_of(kc), n); reset_pending(); return R_CONSUMED;
+                case T_G_BIG:  kv_emit_op_motion(s_ctx.op, M_G_BIG, 1); reset_pending(); return R_CONSUMED;
+                case T_g_LOWER: s_state = ST_GP; return R_CONSUMED;
+                case T_COUNT:  s_state = ST_OPCNT; s_ctx.count2 = digit_of(kc); return R_CONSUMED;
                 default:
                     reset_pending();
-                    return feed_normal(kc);
+                    return R_REIDENTIFY;
             }
         }
 
@@ -171,30 +171,30 @@ static bool feed_normal(kv_keycode_t kc) {
             switch (t) {
                 case T_DIGIT:
                     if (s_ctx.count2 < 10) s_ctx.count2 = s_ctx.count2 * 10 + digit_of(kc);
-                    return true;
+                    return R_CONSUMED;
                 case T_MOTION: case T_ZERO: case T_CARET: case T_DOLLAR:
                     kv_emit_op_motion(s_ctx.op, motion_of(kc), kv_ctx_n(&s_ctx) * s_ctx.count2);
-                    reset_pending(); return true;
-                case T_G_BIG:  kv_emit_op_motion(s_ctx.op, M_G_BIG, 1); reset_pending(); return true;
-                case T_g_LOWER: s_state = ST_GP; return true;
+                    reset_pending(); return R_CONSUMED;
+                case T_G_BIG:  kv_emit_op_motion(s_ctx.op, M_G_BIG, 1); reset_pending(); return R_CONSUMED;
+                case T_g_LOWER: s_state = ST_GP; return R_CONSUMED;
                 default:
                     reset_pending();
-                    return feed_normal(kc);
+                    return R_REIDENTIFY;
             }
         }
 
         case ST_ANG: {
             int n = kv_ctx_n(&s_ctx);
             switch (t) {
-                case T_INDENT: kv_emit_indent_line(s_ctx.ang, n); reset_pending(); return true;
+                case T_INDENT: kv_emit_indent_line(s_ctx.ang, n); reset_pending(); return R_CONSUMED;
                 case T_MOTION: case T_ZERO: case T_CARET: case T_DOLLAR:
-                    kv_emit_indent_motion(s_ctx.ang, motion_of(kc), n); reset_pending(); return true;
-                case T_G_BIG:  kv_emit_indent_motion(s_ctx.ang, M_G_BIG, 1); reset_pending(); return true;
-                case T_g_LOWER: s_state = ST_GP; return true;
-                case T_COUNT:  s_state = ST_ANGCnt; s_ctx.count2 = digit_of(kc); return true;
+                    kv_emit_indent_motion(s_ctx.ang, motion_of(kc), n); reset_pending(); return R_CONSUMED;
+                case T_G_BIG:  kv_emit_indent_motion(s_ctx.ang, M_G_BIG, 1); reset_pending(); return R_CONSUMED;
+                case T_g_LOWER: s_state = ST_GP; return R_CONSUMED;
+                case T_COUNT:  s_state = ST_ANGCnt; s_ctx.count2 = digit_of(kc); return R_CONSUMED;
                 default:
                     reset_pending();
-                    return feed_normal(kc);
+                    return R_REIDENTIFY;
             }
         }
 
@@ -202,15 +202,15 @@ static bool feed_normal(kv_keycode_t kc) {
             switch (t) {
                 case T_DIGIT:
                     if (s_ctx.count2 < 10) s_ctx.count2 = s_ctx.count2 * 10 + digit_of(kc);
-                    return true;
+                    return R_CONSUMED;
                 case T_MOTION: case T_ZERO: case T_CARET: case T_DOLLAR:
                     kv_emit_indent_motion(s_ctx.ang, motion_of(kc), kv_ctx_n(&s_ctx) * s_ctx.count2);
-                    reset_pending(); return true;
-                case T_G_BIG:  kv_emit_indent_motion(s_ctx.ang, M_G_BIG, 1); reset_pending(); return true;
-                case T_g_LOWER: s_state = ST_GP; return true;
+                    reset_pending(); return R_CONSUMED;
+                case T_G_BIG:  kv_emit_indent_motion(s_ctx.ang, M_G_BIG, 1); reset_pending(); return R_CONSUMED;
+                case T_g_LOWER: s_state = ST_GP; return R_CONSUMED;
                 default:
                     reset_pending();
-                    return feed_normal(kc);
+                    return R_REIDENTIFY;
             }
         }
 
@@ -220,36 +220,36 @@ static bool feed_normal(kv_keycode_t kc) {
                 else if (s_ctx.has_ang) kv_emit_indent_motion(s_ctx.ang, M_GG, 1);
                 else                    kv_emit_motion(M_GG, 1);
                 reset_pending();
-                return true;
+                return R_CONSUMED;
             }
             reset_pending();
-            return feed_normal(kc);
+            return R_REIDENTIFY;
 
         case ST_ZP:
-            if (t == T_Z_BIG) { kv_emit_save(); reset_pending(); return true; }
+            if (t == T_Z_BIG) { kv_emit_save(); reset_pending(); return R_CONSUMED; }
             reset_pending();
-            return feed_normal(kc);
+            return R_REIDENTIFY;
 
         default:
             reset_pending();
-            return feed_normal(kc);
+            return R_REIDENTIFY;
     }
 }
 
-static bool feed_visual(kv_keycode_t kc) {
+static kv_feed_t feed_visual(kv_keycode_t kc) {
     kv_token_t t = kv_classify(kc);
-    if (kc == KV_ESC) { s_mode = KV_MODE_NORMAL; return true; }
-    if (kc == KV_D || kc == KV_X) { kv_emit_delete_to_eol(); return true; } /* cut selection */
-    if (kc == KV_Y) { kv_emit_yank_to_eol(); return true; }
-    if (kc == KV_C) { kv_emit_change_to_eol(); s_mode = KV_MODE_INSERT; return true; }
-    if (kc == KV_S) { kv_emit_substitute(); s_mode = KV_MODE_INSERT; return true; }
-    if (kc == KV_P) { kv_emit_paste(false); return true; }
+    if (kc == KV_ESC) { s_mode = KV_MODE_NORMAL; return R_CONSUMED; }
+    if (kc == KV_D || kc == KV_X) { kv_emit_delete_to_eol(); return R_CONSUMED; } /* cut selection */
+    if (kc == KV_Y) { kv_emit_yank_to_eol(); return R_CONSUMED; }
+    if (kc == KV_C) { kv_emit_change_to_eol(); s_mode = KV_MODE_INSERT; return R_CONSUMED; }
+    if (kc == KV_S) { kv_emit_substitute(); s_mode = KV_MODE_INSERT; return R_CONSUMED; }
+    if (kc == KV_P) { kv_emit_paste(false); return R_CONSUMED; }
     switch (t) {
         case T_MOTION: case T_ZERO: case T_CARET: case T_DOLLAR:
             kv_emit_visual_motion(kc);
-            return true;
+            return R_CONSUMED;
         default:
-            return true; /* illegal key: stay in Visual (swallow) */
+            return R_CONSUMED; /* illegal key: stay in Visual (swallow) */
     }
 }
 
@@ -261,6 +261,7 @@ void kv_init(void) {
     kv_queue_init(&s_q);
     rec_clear();
     s_last_len = 0;
+    s_replaying = false;
     kv_emit_clear();
 }
 
@@ -268,25 +269,31 @@ void kv_set_emit(kv_emit_fn fn) {
     kv_emit_set_fn(fn);
 }
 
-void kv_kbd(kv_keycode_t kc) {
-    if (!s_enabled) return;
-    kv_queue_push(&s_q, kc);
-    while (kv_queue_has(&s_q)) {
-        kv_keycode_t cur;
-        kv_queue_pop(&s_q, &cur);
-        if (s_mode == KV_MODE_INSERT) {
-            kv_emit_tap(cur); /* Insert: everything passes through */
-        } else if (s_mode == KV_MODE_VISUAL || s_mode == KV_MODE_VISUAL_LINE) {
-            feed_visual(cur);
-        } else {
-            if (cur == KV_ESC) {
-                rec_clear();
-            } else if (kv_is_vim_key(cur)) {
-                rec_push(cur);
-            }
-            feed_normal(cur);
-            if (s_state == ST_IDLE && s_rec_len > 0) rec_commit();
+kv_result_t kv_kbd(kv_keycode_t kc) {
+    if (!s_enabled) return KV_PASSTHROUGH;
+
+    /* loop instead of recursion for strict-clear re-identification */
+    for (;;) {
+        if (s_mode == KV_MODE_INSERT || s_mode == KV_MODE_MOUSE) return KV_PASSTHROUGH;
+
+        if (s_mode == KV_MODE_VISUAL || s_mode == KV_MODE_VISUAL_LINE) {
+            feed_visual(kc);
+            return KV_CONSUMED;
         }
+
+        kv_feed_t r = feed_normal(kc);
+        if (r == R_REIDENTIFY) continue; /* re-feed in IDLE */
+
+        if (r == R_CONSUMED) {
+            if (kc == KV_ESC) {
+                rec_clear();
+            } else if (kv_is_vim_key(kc)) {
+                rec_push(kc);
+            }
+            if (s_state == ST_IDLE && s_rec_len > 0) rec_commit();
+            return KV_CONSUMED;
+        }
+        return KV_PASSTHROUGH;
     }
 }
 

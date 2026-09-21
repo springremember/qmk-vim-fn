@@ -19,14 +19,20 @@ typedef enum {
     KV_MODE_MOUSE, /* keyboard-layer; the engine only reports/accepts it */
 } kv_mode_t;
 
+/* Result of feeding a key-down. */
+typedef enum {
+    KV_CONSUMED = 0, /* the engine handled it (a vim command or a swallow) */
+    KV_PASSTHROUGH,  /* not a vim keycode: the caller must emit it itself */
+} kv_result_t;
+
 /* Output callback: the engine hands each host keycode to it. */
 typedef void (*kv_emit_fn)(kv_keycode_t kc);
 
 /* Reset all state, start in INSERT with vim disabled. */
 void kv_init(void);
 
-/* Parser entry: feed a key-down.  key-up is handled by the glue layer. */
-void kv_kbd(kv_keycode_t kc);
+/* Parser entry: feed a key-down.  Returns CONSUMED or PASSTHROUGH. */
+kv_result_t kv_kbd(kv_keycode_t kc);
 
 /* Install the emit callback (a recorder in host tests). */
 void kv_set_emit(kv_emit_fn fn);
