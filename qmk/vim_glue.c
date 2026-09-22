@@ -229,6 +229,12 @@ bool vim_glue_engine(uint16_t keycode, keyrecord_t *record) {
     kv_keycode_t kc = (kv_keycode_t)keycode;
     if (m & MOD_MASK_SHIFT) kc |= KV_MOD_LSFT;
 
+    // Non-vim keys (layer keys, F-keys, plain typing, ...) always pass to QMK,
+    // even in Visual/Visual-Line — design §4.10 "非 vim 键码一律透传".
+    // Esc is not a vim keycode but the engine owns it (pending cancel / Visual
+    // exit), so it must still be fed.
+    if (!kv_is_vim_key(kc) && KV_BASIC(kc) != KV_ESC) return true;
+
     if (kv_kbd(kc) == KV_CONSUMED) {
         pair_add(keycode);
         if (mi >= 0 && !was_pending) {

@@ -417,17 +417,16 @@ static void test_visual_esc_and_cag(void) {
     CHECK(pipeline(KC_ESC, false) == false); /* paired: never a host Esc */
 
     /* testcase §9: Shift+Esc inside Visual exits (not swallowed dead).
-     * Note: the LSFT press itself is an "illegal key" in Visual and is
-     * consumed by the engine (shadow still records it), so both edges are
-     * swallowed; the combo must still exit Visual. */
+     * Non-vim keys (here the LSFT modifier) pass through even in Visual
+     * (design §4.10); the engine still sees Esc and exits Visual. */
     reset_engine();
     kv_set_mode(KV_MODE_NORMAL);
     CHECK(pipeline(KC_V, true) == false);
-    CHECK(pipeline(KC_LSFT, true) == false); /* Visual swallows modifiers */
+    CHECK(pipeline(KC_LSFT, true) == true);  /* non-vim: passes to QMK in Visual too */
     CHECK(pipeline(KC_ESC, true) == false);
     CHECK(kv_get_mode() == KV_MODE_NORMAL);
     CHECK(pipeline(KC_ESC, false) == false);
-    CHECK(pipeline(KC_LSFT, false) == false); /* paired release */
+    CHECK(pipeline(KC_LSFT, false) == true); /* passed through */
 
     /* CAG (Ctrl/Alt/Gui) held: engine not fed, key passes through */
     reset_engine();

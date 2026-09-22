@@ -38,6 +38,10 @@ void kv_init(void);
  * returns KV_PASSTHROUGH: those modes belong to the keyboard layer. */
 kv_result_t kv_kbd(kv_keycode_t kc);
 
+/* True if kc is a vim keycode.  Esc is not a vim keycode but the engine owns
+ * it (pending cancel / Visual exit), so callers must feed it explicitly. */
+bool kv_is_vim_key(kv_keycode_t kc);
+
 /* Install the emit callback (a recorder in host tests). */
 void kv_set_emit(kv_emit_fn fn);
 

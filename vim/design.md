@@ -479,7 +479,7 @@ void vim_glue_release_all(void);          /* 反注册 held motion 方向键（�
   ```
   0 影子更新(vim_glue_mod_update)     ← 先于一切吞键（myfn 吞修饰键后 get_mods 失效）
   1 cfg->hook_pre                     ← NUT65: pr_boot_combo(影子判定)/电源组合；QK61: NULL
-  2 myfn 骨架                         ← 层键豁免(fn 1.4.0)+未定义(含修饰键)吞键+已声明分发 cfg->myfn
+  2 myfn 骨架                         ← 层键豁免(fn 1.4.0)+未定义(含修饰键)吞键+已声明调 cfg->myfn(返回 bool:消费/放行)
   3 cfg->hook_post_myfn               ← QK61: 闪灯/Ctrl+Alt+Del/Fn+Esc 复位(3s 用共享 hold helper，
                                          配对走 glue 表)；NUT65: NULL
   4 鼠标模式状态机                     ← 见下 vim_mouse_cfg_t
@@ -508,7 +508,8 @@ void vim_glue_release_all(void);          /* 反注册 held motion 方向键（�
 - **`vim_task(now_ms)`** = `vim_glue_task` + 鼠标长按检查（拖动/长按修饰进入）；
 - **`vim_rgb_state_color(void)`**：六色计算（绿/蓝/黄/紫/青/红、pending 不覆盖 Visual）——
   spec 级；键盘只提供**灯位索引**（`cfg->led_index`）。
-- **myfn 骨架**：层键豁免、未声明吞键、已声明放行/分发（`cfg->myfn(kc, pressed)` 实现各 Fn+X）。
+- **myfn 骨架**：层键豁免；未声明键（含修饰键）press 吞、release 由配对表裁决；**已声明键调 `cfg->myfn(kc,pressed)`**，
+  返回 `true`=消费（press 入配对表、release 交配对表）、`false`=放行给 QMK（F 区/音量、NUT65 厂商 `EE_CLR`/`BT` 等）。
 
 **键盘层保留**（真·键盘专属）：RGB **灯位索引**、vendor 组合键**骨架**（Fn+Esc 复位、bootloader、
 CAD 的触发检测+厂商调用）、底排键位与触发键**定义**、VIA、`vim_mouse_cfg_t` 实例。
