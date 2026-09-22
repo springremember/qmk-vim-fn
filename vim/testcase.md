@@ -143,6 +143,12 @@
 | 计数中非期望(vim键) | `3` `x` | 清空计数，`x` 执行 | A1 |
 | g 前缀不吞键 | `g` `F6` | 发 `F6` | |
 | 无超时 | `d`（久置后再按键） | 仍 pending，等下一键决定 | |
+| **模式切换清空（API）** | `2d` → `kv_set_mode(INSERT)` → `kv_set_mode(NORMAL)` → `w` | `w` 只执行移动（不残留 `dw`）；`kv_pending()==false` | §4.7 |
+| **使能切换清空（API）** | `2d` → `kv_disable()` | `kv_pending()==false`；`kv_kbd(任意)` 全 `KV_PASSTHROUGH` | §4.7 |
+| **重新使能起点** | 任意模式 → `kv_disable()` → `kv_enable()` | `kv_get_mode()==INSERT` | §4.7 |
+| **repeat 不跨模式污染** | `2d` → `kv_set_mode(INSERT)` → `kv_set_mode(NORMAL)` → `w` → `.` | `.` 回放 `w`（不得回放 `2dw`） | §4.7 |
+| **repeat 跨模式保留** | `dd` → `kv_set_mode(INSERT)` → `kv_set_mode(NORMAL)` → `.` | `.` 回放 `dd` | §4.7 |
+| **Shift+Esc（Visual 内）** | `v` `LSFT+Esc` | 退出 Visual 回 Normal（不吞死） | §4.10 |
 
 ## 10. 修饰键 / key-up / held motion
 | 用例 | 输入 | 期望 | 关联 |

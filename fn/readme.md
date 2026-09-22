@@ -32,11 +32,15 @@
 | Fn+右上角键 | 唤醒 | 键盘无物理切换按键；睡眠中 |
 | Fn+Space | 电量 | 有电池 |
 | Fn+Esc | 初始化配置 | 无前置 |
-| Fn+Caps | 退出 / 开关 Vim | 键盘实现了 Vim |
+| Fn+Caps | 关闭 / 开启 Vim（`kv_disable`/`kv_enable`，开=从 Insert 起） | 键盘实现了 Vim |
+| **层键**（myfn 键自身及 `MO`/`LT`/`LM`/`TT`/`OSL` 等 QK 层键） | **放行**（press 与 release 都交回 QMK） | — |
 | 其余键 | **吞键**（空跑，不输出） | — |
 
 > **未定义键吞键**：myfn 层内，除上表显式声明者外，**所有键（含修饰键）一律吞键**，以避免 `Fn+Shift+Esc` 之类泄漏。
 > **唯一例外**：原厂 Fn+bootloader 组合键（§2）在**吞键之前**、用**独立记录的物理修饰键影子**判断（不依赖 `get_mods()`）——因此吞掉修饰键不影响它。
+> **层键豁免（必须）**：QMK 的层键（`MO`/`LT`/`LM`/`TT`/`OSL`…，**含 myfn 键自身**）不适用规则 3，
+> 其 press/release **一律放行**——层键的关层发生在 `process_record` 链返回 QMK 之后，若吞掉其
+> release，**层将永久卡住**（myfn 层关不掉，整键盘失效）。
 
 > **休眠 / 唤醒说明**
 > - 「右上角键」= **键盘布局右上角那个键**（按布局定，如 `Delete` / `Backspace`），**不得替换为其它键**。
@@ -62,7 +66,9 @@ Space **同一行**右侧的**非方向键**，从左到右依次为 **`Alt` `Fn
 
 1. **前置条件满足** → 执行该功能；
 2. **前置条件不满足** → 不执行（吞键 / 空跑，不输出任何东西）；
-3. **未在约束表中声明的键（含修饰键）** → **吞键**（不输出）；唯一例外是 §2 的原厂 Fn+bootloader 组合键（最高优先级、用物理修饰键影子单独判断，不依赖 `get_mods()`）。
+3. **未在约束表中声明的键（含修饰键）** → **吞键**（不输出）；两条例外：
+   - **层键豁免**：QK 层键（`MO`/`LT`/`LM`/`TT`/`OSL`…，含 myfn 键自身）press/release 一律放行——否则关层动作被吞，**层永久卡住**；
+   - 原厂 Fn+bootloader 组合键（最高优先级、用物理修饰键影子单独判断，不依赖 `get_mods()`）。
 
 ## 5. 约束
 
@@ -87,6 +93,12 @@ Space **同一行**右侧的**非方向键**，从左到右依次为 **`Alt` `Fn
 bool process_record_user(uint16_t keycode, keyrecord_t *record) {
     /* 最高优先级：原厂 Fn + bootloader 组合键（见 §2），先于一切映射处理；
        用上面的物理修饰键影子判断（因修饰键随后会被吞，get_mods() 不可靠）。 */
+
+    /* 层键豁免（规则 3 例外）：层键 press/release 一律放行，否则关层被吞、层卡死 */
+    if (IS_QK_MOMENTARY(keycode) || IS_QK_LAYER_TAP(keycode) || IS_QK_LAYER_MOD(keycode) ||
+        IS_QK_LAYER_TAP_TOGGLE(keycode) || IS_QK_ONE_SHOT_LAYER(keycode)) {
+        return true;
+    }
 
     if (!myfn_layer_active()) {
         return true;                       /* 不在 myfn 层 → 透传 */

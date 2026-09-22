@@ -299,27 +299,43 @@ pending 态收到非期望键：
 - 例：`d` 后按 `x` → 清空 `d`，`x` 作为单键命令执行。
 - 例：`d` 后按 `F5` → 清空 `d`，`F5` 原样发宿主。
 
-### 4.6 架构与文件清单（`engine/`，QMK 无关）
+### 4.6 架构与文件清单
 ```
-engine/
-  include/kv.h          // 公共 API：kv_kbd / kv_set_emit / kv_task + 查询/设置（见 §4.7）；类型、模式、keycode
-  include/kv_kc.h       // kv_keycode_t 与修饰位（镜像 QMK 16-bit 布局，便于接回）
-  src/queue.{h,c}       // 环形队列：push / pop / peek / flush
-  src/classify.{h,c}    // keycode -> token 类别（含计数态的数字归类）
-  src/ctx.{h,c}         // kv_ctx：count / op / 前缀累积与重置；状态枚举 kv_state_t
-  src/emit.{h,c}        // 非阻塞发送队列（按计时排空，替代 wait_ms）
-  src/command.{h,c}     // 命令/区间 -> 固定宿主键序列（与编辑器无关）
-  src/engine.c          // feed() 解析循环（多键状态机见 §4.4）；严格清空；repeat 记录/回放；模式调度；kv_task()
-  test/                 // 主机单测：喂 token -> 捕获 emit -> 断言（kvtest 记录器）
-  Makefile              // 仅主机测试；不参与 QMK 构建
+qmk-vim-fn/
+  engine/                    # 与 QMK 解耦的纯 C 核心（可主机单测）
+    include/kv.h             // 公共 API：kv_init / kv_kbd(kv_result_t) / kv_set_emit / kv_task + 查询/设置（见 §4.7）
+    include/kv_kc.h          // kv_keycode_t 与修饰位（镜像 QMK 16-bit 帽子位布局，便于接回）
+    src/classify.{h,c}       // keycode -> token 类别（含计数态的数字归类）
+    src/ctx.{h,c}            // kv_ctx：count / op / 前缀累积与重置；状态枚举 kv_state_t
+    src/emit.{h,c}           // 非阻塞发送队列（按计时排空，替代 wait_ms）
+    src/command.{h,c}        // 命令/区间 -> 固定宿主键序列（与编辑器无关）
+    src/engine.c             // feed() 解析循环（多键状态机见 §4.4）；严格清空；repeat 记录/回放；模式调度；kv_task()
+    test/                    // 主机单测：喂 token -> 捕获 emit -> 断言（kvtest 记录器）
+    Makefile                 // 仅主机测试；不参与 QMK 构建
+  qmk/                       # QMK 适配层（依赖 QMK API；见 §4.12）
+    vim_glue.{h,c}           // 引擎适配：物理修饰键影子(pipeline 第0步更新)、统一 press/release
+                             // 配对表、held motion、Shift 折叠/CAG 透传、emit->register_code、极性封装
+    vim_keymap_common.{h,c}  // 共享 keymap 层：vim_pipeline_process 单源拦截链、鼠标模式状态机、
+                             // Caps tap/hold、Shift+Esc、§2.1 快捷键表、myfn 骨架、
+                             // vim_task、vim_rgb_state_color 六色计算
+  vim/  fn/                  # 本设计文档与 myfn 约定
 ```
 > 说明：多键状态机（§4.4 的转移表）实现为 `engine.c` 中的显式转移函数（状态 × token 的 `switch`），
 > 与转移表一一对应；命令→键序列映射集中在 `command.c`，便于逐条对照 §4.8。
+> 术语统一：**engine**（本目录纯 C 核心）／**glue**（`qmk/` 下的 QMK 适配层）／**键盘层**（各 keymap：
+> RGB、vendor 组合键、myfn 拦截、底排键位、§2.1 快捷键）。
 
 ### 4.7 关键接口
 ```c
-/* 解析器入口：只喂 key-down；key-up 由胶水层一律透传（held motion 例外） */
-void kv_kbd(kv_keycode_t kc);
+/* 复位全部状态：模式=INSERT、vim 关、pending/repeat/emit 队列清空 */
+void kv_init(void);
+
+/* 解析器入口：只喂 key-down（basic keycode + 可选 Shift 帽子位，如 KV_C_G）。
+ * key-up 不进引擎，由 glue 处理（§4.12）。
+ * 返回 CONSUMED（引擎已处理/吞键，glue 须吞掉对应 release）或
+ * PASSTHROUGH（非 vim 键，由调用方自行发给宿主，release 亦由宿主处理）。 */
+typedef enum { KV_CONSUMED = 0, KV_PASSTHROUGH } kv_result_t;
+kv_result_t kv_kbd(kv_keycode_t kc);
 
 /* 输出回调：引擎把宿主键序列交给它；单测里换成记录器 */
 typedef void (*kv_emit_fn)(kv_keycode_t kc);
@@ -329,17 +345,27 @@ void kv_set_emit(kv_emit_fn fn);
 void kv_task(uint32_t now_ms);
 
 /* ---- 查询/设置接口（供键盘层：Caps 恢复、RGB 指示、Fn+Caps 开关、前置分支取消）---- */
-kv_mode_t kv_get_mode(void);        /* 当前模式（含 Visual/Visual-Line） */
+kv_mode_t kv_get_mode(void);        /* 当前模式（含 Visual/Visual-Line/Mouse） */
 bool      kv_vim_enabled(void);     /* vim 总开关 */
 bool      kv_pending(void);         /* 是否有 pending（计数/操作符/前缀/缩进） */
 void      kv_set_mode(kv_mode_t m); /* 直接设模式（如 Caps 恢复进入前模式） */
-void      kv_enable(void);          /* 开 vim */
-void      kv_disable(void);         /* 关 vim（RGB 红） */
-void      kv_cancel(void);          /* 取消当前 pending（不发键），供 keymap 前置分支 */
+void      kv_enable(void);          /* 开 vim：固定从 INSERT 起 */
+void      kv_disable(void);         /* 关 vim（RGB 红），见下方语义 */
+void      kv_cancel(void);          /* 取消当前 pending（不发键），供键盘层前置分支 */
 ```
 
-> 上述查询/设置接口为**需新增**（键盘迁移计划依赖，见 `键盘迁移计划.md` §0/§2.1）；
-> 其中 `kv_cancel()` 在 pending 态等价于喂入 `Esc`（仅清 pending，不 emit；Idle 态则无操作）。
+**模式/使能切换的清空语义（总规则）**：
+- **任何模式切换一律丢弃 pending 状态机**——`kv_set_mode()`、`kv_enable()`、`kv_disable()`、
+  `kv_cancel()`、进出 MOUSE 模式（由键盘层经 `kv_set_mode(MOUSE)` 实现），全部等价于先执行
+  内部 `abort_input()`（清 ctx + 状态回 `Idle` + 清 repeat 录制缓存 s_rec）。
+- **repeat 的 `s_last` 跨模式保留**（`.` 应能回放上一条编辑命令，如 `dd` 后 Caps 去 Insert 再回
+  Normal 按 `.` 仍回放 `dd`）；被丢弃的半途命令不得混入录制（例：`2d` 后切换模式，`s_last`
+  不得残留 `2d`）。
+- **`kv_disable()` 语义**：清 pending + **冲掉**未发送的 emit 队列 + `kv_kbd()` 一律返回
+  `KV_PASSTHROUGH`；已由 held motion `register` 的宿主方向键由 glue 负责反注册（§4.12）。
+- **`kv_enable()` 语义**：固定从 `INSERT` 模式开始（防回到 disable 前的 MOUSE/VISUAL）。
+- **`kv_set_mode(KV_MODE_MOUSE)`**：MOUSE 属键盘层模式，引擎对 MOUSE 及之后新增的键盘层模式
+  **一律返回 `KV_PASSTHROUGH`**，不做任何解析。
 
 解析循环（表驱动，取代 `process_func`）：
 ```c
@@ -391,15 +417,105 @@ while (queue_has()) {
   - 变更类 `s/C/S/c`：进入 Insert（`c` 为操作符，其"改"结果同样进入 Insert）。
 - **OP_PENDING（瞬态）**：移动设区间→emit；非期望键→清空+重新识别；Esc→取消。
 - **INSERT**：普通字符透传；`Esc`=真 Esc 发宿主（不切模式）；离开 Insert 靠 `Caps`。
-- **VISUAL / VISUAL_LINE**：`v/V` 选区，移动扩展；`d/y/c/x/s/p` 复用 Normal 命令表；未列键（如 `i`/`a`）为非法键 → **留在 Visual**（吞键，不退出、不插入）；`Esc`→退出选区。
-- **MOUSE**：键盘层。**右 Alt 短按**（阈值 **200ms**，与 Caps 一致）在 `Insert`/`Normal`/`Visual` 均可进/出（长按=RAlt 修饰）；模式内 `hjkl`=指针、`Shift+J`/`Shift+K`=滚轮下/上、`Space`=左键（短按单击/长按拖动）、`Enter`=右键、其它键退出并重新识别；RGB 指示为**青**（详见 [`readme.md`](readme.md) §8）。
+- **VISUAL / VISUAL_LINE**：键集 = 移动（含计数 `Nm`）+ `d/y/c/x/s/p`。移动按 Shift 变体扩展选区；
+  `d/x`=剪选区、`y`=复制、`c/s`=剪+进 INSERT、`p`=粘贴，完成后回 NORMAL。
+  **未列键（数字、`g`、`Z`、`<`/`>`、`i`/`a` 等）为非法键 → 吞键留在 Visual**（不退出、不插入、
+  不产生 pending）——即 Visual 模式**没有多键 pending**，`kv_pending()` 在 VISUAL 下恒为 false。
+- **MOUSE**：键盘层模式（引擎一律 `KV_PASSTHROUGH`，见 §4.7）。**右 Alt 短按**（阈值 **200ms**，与
+  Caps 一致）在 `Insert`/`Normal`/`Visual` 均可进/出（长按=RAlt 修饰）；**进出 MOUSE 视同模式切换，
+  先清 pending**。模式内：`hjkl`=指针、`Shift+J`/`Shift+K`=滚轮下/上、`Space`=左键（短按单击/长按
+  拖动）、`Enter`=右键；**修饰键（Shift/Ctrl/Alt/GUI）不触发退出**（只记入影子，供滚轮组合等）；
+  **其它非修饰键**退出 MOUSE 并**强制反注册全部按住的鼠标键/轴**（指针四向、左右键、滚轮）后，
+  在进入前模式**重新识别该键**；`Esc` 在 MOUSE 内同此规则（退出+重识别，不直接发真 Esc）。
+  RGB 指示为**青**（详见 [`readme.md`](readme.md) §8）。
 
 ### 4.10 修饰键、key-up 与输入保真
-- **key-up 一律透传**；唯一例外是按住连发移动 `h/j/k/l`（down `register` 宿主方向键 / up `unregister`）。
-- **keymap 层消费 press 的键，其 release 也须一并消费**：keymap 前置分支（如 `Shift+Esc` 组合）在按下时消费了某键，必须记住并**无条件吞掉其抬起**，否则 release 会落到普通路径而多打出一个键。这不违反上一条——上一条管**引擎**侧，keymap 自消费的键由 keymap 自己负责抬起。
+- **key-up 一律透传**；唯一例外是按住连发移动 `h/j/k/l`（down `register` 宿主方向键 / up `unregister`，
+  由 glue 执行，且**与当前模式无关**——切换模式/禁用 vim 时 glue 必须反注册已按住的方向键）。
+- **引擎返回 `KV_CONSUMED` 的 press，由 glue 记账并吞掉对应 release**（held motion 例外）；
+  返回 `KV_PASSTHROUGH` 的 press，其 release 也必须透传给宿主——**press 与 release 的归属必须配对**，
+  否则宿主收到孤立 release（E3 的镜像）。
+- **keymap 层消费 press 的键，其 release 也须一并消费**：keymap 前置分支（如 `Shift+Esc` 组合）在
+  按下时消费了某键，必须记住并**无条件吞掉其抬起**（应经 glue 的统一配对表，见 §4.12）。
 - **非 vim 键码一律透传**。
-- **修饰键影子**：胶水层用物理修饰键影子判断/拼序列，**不打包、不 `clear_mods`/`set_mods`**。
+- **修饰键影子**：glue 维护**物理**修饰键影子（记录每个修饰键的物理 down/up，不依赖 `get_mods()`，
+  免受 oneshot/锁存干扰），用于 bootloader 组合判定与 Shift 折叠；**不打包、不 `clear_mods`/`set_mods`**
+  （键盘层"剥修饰发裸键"属例外，见 §2.1，需临时 clear 并恢复）。
 - **emit 非阻塞**：`kv_task()` 按计时发送；不使用 `wait_ms`。
+
+### 4.12 glue 层（QMK 适配层）职责规格
+位置：`qmk-vim-fn/qmk/vim_glue.{h,c}`（依赖 QMK API；**所有键盘共用，禁止在 keymap 里复制实现**）。
+
+**接口**（`vim_glue.h`）：
+```c
+void vim_glue_init(void);                 /* kv_init + kv_set_emit + 影子/配对表复位 */
+void vim_glue_mod_update(uint16_t keycode, bool pressed); /* 物理修饰键影子更新 —— pipeline 第 0 步，
+                                                             必须先于一切吞键（myfn 会吞修饰键） */
+uint8_t vim_glue_mods(void);              /* 影子（QMK 打包位）只读查询 */
+bool vim_glue_engine(uint16_t keycode, keyrecord_t *record); /* 尾段引擎分发：Shift 折叠/CAG 透传/
+                                                                 kv_kbd/配对/release 处理/held motion；
+                                                                 返回已按 QMK 极性（true=放行） */
+void vim_glue_swallow(uint16_t keycode);  /* 键盘层前置分支消费 press 后调用：release 由 glue 统一吞 */
+void vim_glue_task(uint32_t now_ms);      /* 排空 kv_task */
+void vim_glue_release_all(void);          /* 反注册 held motion 方向键（禁用/切模式/进 MOUSE 时） */
+```
+
+**职责清单**（对 §4.7/§4.10 的落地）：
+1. **key-down 分发**（在 `vim_glue_engine` 内）：纯 Shift → 折叠为 `KV_C_*` 喂引擎；带 Ctrl/Alt/GUI →
+   不喂、放行 QMK；**Esc 不做任何键盘层处理**（引擎已实现 pending 取消/Visual 退出/真 Esc 透传，
+   CONSUMED 自动配对 release——两键盘的 pr_esc 整段删除）。
+2. **统一 press/release 配对表**：引擎 CONSUMED 与键盘层 swallow 的键共用**同一张表**
+   （keymap 禁止再自建 swallow 旗标/数组）；表满策略：最旧条目被覆盖（新键优先）。
+3. **held motion**：`h/j/k/l` 的 register/unregister；切换模式/禁用/进 MOUSE 时强制反注册。
+4. **物理修饰键影子**：`vim_glue_mod_update` 在 pipeline **第 0 步**调用——NUT65 的
+   `Fn+右Shift+Esc` bootloader 组合中 RSFT 会被 myfn 吞键，`get_mods()` 不可靠，影子必须
+   先于吞键更新；供 bootloader 判定、Caps/鼠标的 tap/hold 修饰查询。
+5. **emit→QMK**：`register_mods(转换后 HID 位)+register_code+unregister`，不写回 mods 报告。
+6. **极性封装**：`vim_glue_engine` 返回值已按 QMK 极性（true=放行），keymap 不再手写 `!`。
+
+**共享 keymap 层**（`qmk/vim_keymap_common.{h,c}`；两键盘共用，禁止在 keymap 复制实现——
+历史 bug 全在此段；QK61 现行实现与 NUT65 V1.0 逐行比对确认以下均为 spec 级）：
+- **`vim_pipeline_process(keycode, record, cfg)` — 单源拦截链**（取代两键盘各自手写的十段顺序）：
+  ```
+  0 影子更新(vim_glue_mod_update)     ← 先于一切吞键（myfn 吞修饰键后 get_mods 失效）
+  1 cfg->hook_pre                     ← NUT65: pr_boot_combo(影子判定)/电源组合；QK61: NULL
+  2 myfn 骨架                         ← 层键豁免(fn 1.4.0)+未定义(含修饰键)吞键+已声明分发 cfg->myfn
+  3 cfg->hook_post_myfn               ← QK61: 闪灯/Ctrl+Alt+Del/Fn+Esc 复位(3s 用共享 hold helper，
+                                         配对走 glue 表)；NUT65: NULL
+  4 鼠标模式状态机                     ← 见下 vim_mouse_cfg_t
+  5 Shift+Esc(cfg->shift_esc_enable)  ← LSFT+Esc=~/RSFT+Esc=`(仅 Insert)；NUT65/QK61 同实现
+  6 Caps tap/hold 状态机              ← 短按切换/长按临时 Normal/回原模式/Fn+Caps 开关 vim
+  7 §2.1 快捷键表                     ← 两键盘完全一致(BSPC/Space/-/Shift+=/Ctrl+F/B//)：
+                                         base+mods 匹配+kv_cancel 前置+send_plain_tap
+  8 vim_glue_engine                   ← Esc 直落于此（pr_esc 已删）
+  ```
+  每段显式命名+前置条件注释（消除 A-P1-7 隐式顺序契约）。
+- **鼠标模式状态机**（参数化；enter/exit、200ms 短/长按、`hjkl`/`Shift+J`/`Shift+K`/`Space`/`Enter`
+  的 press/release 按"实际注册键"配对、修饰键不退出、非修饰键退出强制释放全部鼠标键+重识别）：
+  ```c
+  typedef struct {
+      uint16_t trigger_kc;      /* QK61=QK_KB_22；NUT65=右 Alt 位自定义键 */
+      uint16_t mod_win, mod_mac;/* 长按修饰 KC_RALT/KC_RGUI */
+      bool   (*link_ok)(void);  /* NUT65=mouse_link_ok；QK61=NULL 恒真 */
+      uint16_t hold_ms;         /* 200 */
+      bool     shift_esc_enable;/* Shift+Esc 组合开关 */
+  } vim_mouse_cfg_t;            /* cfg 同时携带 hook_pre/hook_post_myfn/myfn 分发 */
+  bool vim_mouse_process(uint16_t kc, keyrecord_t *r, const vim_mouse_cfg_t *cfg);
+  void vim_mouse_release_all(void);
+  ```
+- **tap/hold 计时 helper**（Caps/鼠标触发键/Fn+Esc 3s 等**一切长按判定共用**，含 timer 防零）；
+- **`send_plain_tap(kc)`**："剥修饰发裸键"（§2.1 例外：临时 clear+恢复）；
+- **`vim_task(now_ms)`** = `vim_glue_task` + 鼠标长按检查（拖动/长按修饰进入）；
+- **`vim_rgb_state_color(void)`**：六色计算（绿/蓝/黄/紫/青/红、pending 不覆盖 Visual）——
+  spec 级；键盘只提供**灯位索引**（`cfg->led_index`）。
+- **myfn 骨架**：层键豁免、未声明吞键、已声明放行/分发（`cfg->myfn(kc, pressed)` 实现各 Fn+X）。
+
+**键盘层保留**（真·键盘专属）：RGB **灯位索引**、vendor 组合键**骨架**（Fn+Esc 复位、bootloader、
+CAD 的触发检测+厂商调用）、底排键位与触发键**定义**、VIA、`vim_mouse_cfg_t` 实例。
+> vendor 组合键只留骨架：Fn+Esc 复位在 QK61 属 keymap 自建、在 NUT65 由厂商 `nut65.c` 全权
+> （`_FN[0,0]=EE_CLR` 真键码+厂商 3s 计时，keymap 零行）——两家不在同一层，共享骨架只服务一家故不抽；
+> 但其 **press/release 配对必须走 glue 统一配对表**（禁止自建旗标，A-P0-2）、**长按计时必须用共享
+> tap/hold helper**。bootloader 判定一律读**影子**（`vim_glue_mods()`），不读 `get_mods()`。
 
 ### 4.11 性能与安全评估
 
