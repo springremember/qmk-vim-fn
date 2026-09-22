@@ -218,6 +218,12 @@ bool vim_glue_engine(uint16_t keycode, keyrecord_t *record) {
 
     if (!kv_vim_enabled()) return true;
 
+    // Modifiers never feed the engine and never clear pending: their physical
+    // state is already captured in step 0's shadow.  Clearing here would break
+    // e.g. `d` then Shift then `$` (d$).  (Under Fn, step 2 already handled
+    // them, so this is only reached for the Normal/Insert/Visual case.)
+    if (IS_MODIFIER_KEYCODE(keycode)) return true;
+
     uint8_t m = vim_glue_mods();
     if (m & (MOD_MASK_CTRL | MOD_MASK_ALT | MOD_MASK_GUI)) {
         if (kv_pending()) kv_cancel(); // strict clear: non-vim key abandons pending
@@ -246,7 +252,7 @@ bool vim_glue_engine(uint16_t keycode, keyrecord_t *record) {
 
     if (kv_kbd(kc) == KV_CONSUMED) {
         pair_add(keycode);
-        if (mi >= 0 && !was_pending) {
+        if (mi >= 0 && !was_pending && kv_get_mode() == KV_MODE_NORMAL) {
             s_held_expect[mi] = true; // vim_emit() may now register-hold
         }
         return false;

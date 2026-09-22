@@ -5,6 +5,7 @@ engine/test/glue/test_glue_falsify
 engine/test/glue/test_nut65_sim
 engine/test/glue/test_visual_passthrough
 engine/test/glue/test_pending_clear_probe
+engine/test/glue/test_strict_clear_falsify
 engine/test/glue/glue_tests
 engine/test/glue/glue_falsify
 *.o
