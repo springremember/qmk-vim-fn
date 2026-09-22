@@ -1,5 +1,6 @@
 # build artifacts
 engine/test/kv_tests
+engine/test/glue/test_*
 engine/test/glue/glue_tests
 engine/test/glue/glue_falsify
 *.o

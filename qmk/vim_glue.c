@@ -219,21 +219,30 @@ bool vim_glue_engine(uint16_t keycode, keyrecord_t *record) {
     if (!kv_vim_enabled()) return true;
 
     uint8_t m = vim_glue_mods();
-    if (m & (MOD_MASK_CTRL | MOD_MASK_ALT | MOD_MASK_GUI)) return true; // CAG: QMK handles it
-
-    // Snapshot pending *before* the engine consumes this key.  Only a h/j/k/l
-    // that starts a fresh command (nothing pending) is a bare held motion; a
-    // h/j/k/l completing `3l` / `dl` must tap.  CAG is already excluded above.
-    bool was_pending = kv_pending();
+    if (m & (MOD_MASK_CTRL | MOD_MASK_ALT | MOD_MASK_GUI)) {
+        if (kv_pending()) kv_cancel(); // strict clear: non-vim key abandons pending
+        return true;                   // CAG: QMK handles it
+    }
 
     kv_keycode_t kc = (kv_keycode_t)keycode;
     if (m & MOD_MASK_SHIFT) kc |= KV_MOD_LSFT;
 
     // Non-vim keys (layer keys, F-keys, plain typing, ...) always pass to QMK,
     // even in Visual/Visual-Line — design §4.10 "非 vim 键码一律透传".
-    // Esc is not a vim keycode but the engine owns it (pending cancel / Visual
-    // exit), so it must still be fed.
-    if (!kv_is_vim_key(kc) && KV_BASIC(kc) != KV_ESC) return true;
+    // Strict-clear first so a pending command (d/3/g/Z/>) is abandoned
+    // (design §4.5 / testcase §9).  Esc is not a vim keycode but the engine
+    // owns it (pending cancel / Visual exit), so it must still be fed; match on
+    // the physical keycode (not KV_BASIC, which would catch layer keys whose
+    // low byte happens to be 0x29).
+    if (!kv_is_vim_key(kc) && keycode != KC_ESC) {
+        if (kv_pending()) kv_cancel();
+        return true;
+    }
+
+    // Snapshot pending *before* the engine consumes this key.  Only a h/j/k/l
+    // that starts a fresh command (nothing pending) is a bare held motion; a
+    // h/j/k/l completing `3l` / `dl` must tap.  CAG is already excluded above.
+    bool was_pending = kv_pending();
 
     if (kv_kbd(kc) == KV_CONSUMED) {
         pair_add(keycode);
