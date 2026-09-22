@@ -16,7 +16,9 @@ typedef enum {
     KV_MODE_NORMAL,
     KV_MODE_VISUAL,
     KV_MODE_VISUAL_LINE,
-    KV_MODE_MOUSE, /* keyboard-layer; the engine only reports/accepts it */
+    KV_MODE_MOUSE, /* keyboard-layer mode (and any future mode >= this):
+                    * the engine never parses it; kv_kbd() returns
+                    * KV_PASSTHROUGH for the whole keyboard-layer range. */
 } kv_mode_t;
 
 /* Result of feeding a key-down. */
@@ -31,7 +33,9 @@ typedef void (*kv_emit_fn)(kv_keycode_t kc);
 /* Reset all state, start in INSERT with vim disabled. */
 void kv_init(void);
 
-/* Parser entry: feed a key-down.  Returns CONSUMED or PASSTHROUGH. */
+/* Parser entry: feed a key-down.  Returns CONSUMED or PASSTHROUGH.
+ * MOUSE and any keyboard-layer mode (kv_mode_t >= KV_MODE_MOUSE) always
+ * returns KV_PASSTHROUGH: those modes belong to the keyboard layer. */
 kv_result_t kv_kbd(kv_keycode_t kc);
 
 /* Install the emit callback (a recorder in host tests). */

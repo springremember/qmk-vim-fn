@@ -1,7 +1,6 @@
 /* engine.c — feed() parser loop, strict clear, mode dispatch. */
 #include <string.h>
 #include "../include/kv.h"
-#include "queue.h"
 #include "classify.h"
 #include "ctx.h"
 #include "emit.h"
@@ -12,7 +11,6 @@ static bool       s_enabled;
 static kv_mode_t  s_mode;
 static kv_state_t s_state;
 static kv_ctx_t   s_ctx;
-static kv_queue_t s_q;
 
 /* repeat recording */
 #define REC_MAX 8
@@ -93,6 +91,15 @@ static void rec_commit(void) {
 
 static void rec_clear(void) { s_rec_len = 0; }
 
+/* Shared abort path for every mode/enable transition (design #4.7):
+ * drop the in-progress state machine AND the in-progress repeat recording.
+ * s_last is deliberately preserved so '.' can replay a completed command
+ * across a mode round-trip. */
+static void abort_input(void) {
+    reset_pending();
+    rec_clear();
+}
+
 static void rec_replay(void) {
     if (s_replaying || s_last_len == 0) return; /* never re-enter '.' */
     s_replaying = true;
@@ -125,7 +132,7 @@ static kv_feed_t feed_normal(kv_keycode_t kc) {
                        ? kv_classify_digit(kc)
                        : kv_classify(kc);
 
-    if (kc == KV_ESC) {
+    if (KV_BASIC(kc) == KV_ESC) {
         if (s_state != ST_IDLE) { reset_pending(); return R_CONSUMED; }
         return R_PASSTHROUGH; /* real Esc handled by the caller */
     }
@@ -298,7 +305,7 @@ static kv_feed_t feed_normal(kv_keycode_t kc) {
 
 static kv_feed_t feed_visual(kv_keycode_t kc) {
     kv_token_t t = kv_classify(kc);
-    if (kc == KV_ESC) { s_mode = KV_MODE_NORMAL; return R_CONSUMED; }
+    if (KV_BASIC(kc) == KV_ESC) { s_mode = KV_MODE_NORMAL; return R_CONSUMED; }
     if (kc == KV_D || kc == KV_X) { kv_emit_delete_to_eol(); return R_CONSUMED; } /* cut selection */
     if (kc == KV_Y) { kv_emit_yank_to_eol(); return R_CONSUMED; }
     if (kc == KV_C) { kv_emit_change_to_eol(); s_mode = KV_MODE_INSERT; return R_CONSUMED; }
@@ -318,7 +325,6 @@ void kv_init(void) {
     s_enabled = false;
     s_mode = KV_MODE_INSERT;
     reset_pending();
-    kv_queue_init(&s_q);
     rec_clear();
     s_last_len = 0;
     s_replaying = false;
@@ -334,7 +340,9 @@ kv_result_t kv_kbd(kv_keycode_t kc) {
 
     /* loop instead of recursion for strict-clear re-identification */
     for (;;) {
-        if (s_mode == KV_MODE_INSERT || s_mode == KV_MODE_MOUSE) return KV_PASSTHROUGH;
+        /* INSERT passes through; MOUSE and any keyboard-layer mode
+         * (kv_mode_t >= KV_MODE_MOUSE) is delegated to the keyboard layer. */
+        if (s_mode == KV_MODE_INSERT || s_mode >= KV_MODE_MOUSE) return KV_PASSTHROUGH;
 
         if (s_mode == KV_MODE_VISUAL || s_mode == KV_MODE_VISUAL_LINE) {
             feed_visual(kc);
@@ -348,7 +356,7 @@ kv_result_t kv_kbd(kv_keycode_t kc) {
         }
 
         if (r == R_CONSUMED) {
-            if (kc == KV_ESC) {
+            if (KV_BASIC(kc) == KV_ESC) {
                 rec_clear();
             } else if (kv_is_vim_key(kc) && rec_should_record(kv_classify(kc))) {
                 rec_push(kc);
@@ -370,8 +378,8 @@ kv_mode_t kv_get_mode(void) { return s_mode; }
 bool      kv_vim_enabled(void) { return s_enabled; }
 bool      kv_pending(void) { return s_state != ST_IDLE; }
 
-void kv_set_mode(kv_mode_t m) { s_mode = m; reset_pending(); }
-void kv_enable(void) { s_enabled = true; }
-void kv_disable(void) { s_enabled = false; reset_pending(); }
+void kv_set_mode(kv_mode_t m) { s_mode = m; abort_input(); }
+void kv_enable(void) { s_enabled = true; abort_input(); s_mode = KV_MODE_INSERT; }
+void kv_disable(void) { s_enabled = false; abort_input(); kv_emit_clear(); }
 
-void kv_cancel(void) { reset_pending(); }
+void kv_cancel(void) { abort_input(); }

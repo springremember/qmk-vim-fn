@@ -236,6 +236,155 @@ static void test_pass_through(void) {
     key(KV_A); CHECK_SEQ(KV_A);
 }
 
+/* testcase.md §9 — API mode/enable transitions must drop pending and the
+ * in-progress repeat recording, while preserving a completed s_last. */
+static void test_mode_pending_clear(void) {
+    /* mode switch drops the pending operator */
+    fresh(); key(KV_2); key(KV_D);
+    CHECK(kv_pending() == true);
+    kv_set_mode(KV_MODE_INSERT);
+    kv_set_mode(KV_MODE_NORMAL);
+    rec_start(); key(KV_W);
+    CHECK_SEQ(KV_LCTL_KC(KV_RGHT)); /* w only, no residual dw */
+    CHECK(kv_pending() == false);
+
+    /* disable drops pending and passes every key through */
+    fresh(); key(KV_2); key(KV_D);
+    CHECK(kv_pending() == true);
+    kv_disable();
+    CHECK(kv_pending() == false);
+    CHECK(kv_kbd(KV_W) == KV_PASSTHROUGH);
+    CHECK(kv_kbd(KV_D) == KV_PASSTHROUGH);
+
+    /* enable always restarts in INSERT */
+    kv_disable();
+    kv_enable();
+    CHECK(kv_get_mode() == KV_MODE_INSERT);
+
+    /* a dropped prefix must not pollute repeat: 2d <switch> w . => replay w */
+    fresh(); key(KV_2); key(KV_D);
+    kv_set_mode(KV_MODE_INSERT);
+    kv_set_mode(KV_MODE_NORMAL);
+    key(KV_W);
+    rec_start(); key(KV_DOT);
+    CHECK_SEQ(KV_LCTL_KC(KV_RGHT)); /* w, not 2dw */
+
+    /* a completed command survives a mode round-trip: dd <switch> . => dd */
+    fresh(); key(KV_D); key(KV_D);
+    kv_set_mode(KV_MODE_INSERT);
+    kv_set_mode(KV_MODE_NORMAL);
+    rec_start(); key(KV_DOT);
+    CHECK_SEQ(KV_HOME, KV_HOME, KV_LSFT_KC(KV_END), KV_LCTL_KC(KV_X), KV_BSPC);
+}
+
+/* testcase.md §9 — Shift folds into the modifier bits (LSFT+Esc); the Esc
+ * base keycode must still be recognised inside Visual. */
+static void test_shift_esc_visual(void) {
+    fresh();
+    CHECK(kv_kbd(KV_V) == KV_CONSUMED);
+    CHECK(kv_get_mode() == KV_MODE_VISUAL);
+    CHECK(kv_kbd(KV_LSFT_KC(KV_ESC)) == KV_CONSUMED);
+    CHECK(kv_get_mode() == KV_MODE_NORMAL);
+}
+
+/* testcase.md §9 — independent contract checks: repeat recording is normal,
+ * s_last survives every abort path, modifier-folded Esc cancels a pending
+ * operator, enable/disable is idempotent, keyboard-layer modes pass through,
+ * and a dropped prefix never contaminates a later command or the repeat. */
+static void test_contract_extra(void) {
+    /* recording is normal: dd then . replays dd */
+    fresh(); key(KV_D); key(KV_D);
+    rec_start(); key(KV_DOT);
+    CHECK_SEQ(KV_HOME, KV_HOME, KV_LSFT_KC(KV_END), KV_LCTL_KC(KV_X), KV_BSPC);
+
+    /* recording is normal: dw then . replays dw */
+    fresh(); key(KV_D); key(KV_W);
+    rec_start(); key(KV_DOT);
+    CHECK_SEQ(KV_CS(KV_RGHT), KV_LCTL_KC(KV_X));
+
+    /* s_last survives a mode round-trip: dd <switch> . => dd */
+    fresh(); key(KV_D); key(KV_D);
+    kv_set_mode(KV_MODE_INSERT);
+    kv_set_mode(KV_MODE_NORMAL);
+    rec_start(); key(KV_DOT);
+    CHECK_SEQ(KV_HOME, KV_HOME, KV_LSFT_KC(KV_END), KV_LCTL_KC(KV_X), KV_BSPC);
+
+    /* half command then Esc: in-progress rec dropped, s_last kept
+     * (dd, d, Esc, . => dd, not "d d d") */
+    fresh(); key(KV_D); key(KV_D);
+    key(KV_D);
+    CHECK(kv_pending() == true);
+    key(KV_ESC);
+    CHECK(kv_pending() == false);
+    rec_start(); key(KV_DOT);
+    CHECK_SEQ(KV_HOME, KV_HOME, KV_LSFT_KC(KV_END), KV_LCTL_KC(KV_X), KV_BSPC);
+
+    /* half command then kv_cancel(): in-progress rec dropped, s_last kept */
+    fresh(); key(KV_D); key(KV_D);
+    key(KV_2); key(KV_D);
+    CHECK(kv_pending() == true);
+    kv_cancel();
+    CHECK(kv_pending() == false);
+    rec_start(); key(KV_DOT);
+    CHECK_SEQ(KV_HOME, KV_HOME, KV_LSFT_KC(KV_END), KV_LCTL_KC(KV_X), KV_BSPC);
+
+    /* kv_init() drops s_last too: after dd, re-init, . replays nothing */
+    fresh(); key(KV_D); key(KV_D);
+    kv_init(); kv_enable(); kv_set_mode(KV_MODE_NORMAL); rec_start();
+    key(KV_DOT);
+    CHECK(rec_count() == 0);
+
+    /* NORMAL idle Esc (plain and modifier-folded) passes through, no swallow */
+    fresh();
+    CHECK(kv_kbd(KV_ESC) == KV_PASSTHROUGH);
+    CHECK(kv_kbd(KV_LSFT_KC(KV_ESC)) == KV_PASSTHROUGH);
+    CHECK(kv_pending() == false);
+
+    /* modifier-folded Esc with a pending operator: consumed, emits nothing */
+    fresh(); key(KV_D);
+    CHECK(kv_pending() == true);
+    rec_start();
+    CHECK(kv_kbd(KV_LSFT_KC(KV_ESC)) == KV_CONSUMED);
+    flush_emit();
+    CHECK(rec_count() == 0);
+    CHECK(kv_pending() == false);
+    CHECK(kv_get_mode() == KV_MODE_NORMAL);
+
+    /* double disable / double enable is idempotent */
+    fresh(); key(KV_2); key(KV_D);
+    CHECK(kv_pending() == true);
+    kv_disable(); kv_disable();
+    CHECK(kv_vim_enabled() == false);
+    CHECK(kv_pending() == false);
+    CHECK(kv_kbd(KV_W) == KV_PASSTHROUGH);
+    CHECK(kv_kbd(KV_DOT) == KV_PASSTHROUGH);
+    kv_enable(); kv_enable();
+    CHECK(kv_vim_enabled() == true);
+    CHECK(kv_get_mode() == KV_MODE_INSERT);
+    CHECK(kv_pending() == false);
+    CHECK(kv_kbd(KV_W) == KV_PASSTHROUGH); /* INSERT passes through */
+
+    /* MOUSE and any keyboard-layer mode pass everything through */
+    fresh(); kv_set_mode(KV_MODE_MOUSE); rec_start();
+    CHECK(kv_kbd(KV_H) == KV_PASSTHROUGH);
+    CHECK(kv_kbd(KV_ESC) == KV_PASSTHROUGH);
+    CHECK(kv_kbd(KV_LSFT_KC(KV_ESC)) == KV_PASSTHROUGH);
+    CHECK(kv_kbd((kv_keycode_t)0x3E) == KV_PASSTHROUGH);
+    kv_set_mode((kv_mode_t)(KV_MODE_MOUSE + 1));
+    CHECK(kv_kbd(KV_H) == KV_PASSTHROUGH);
+
+    /* reverse assertion: 2d -> switch mode -> w must NOT emit dw */
+    fresh(); key(KV_2); key(KV_D);
+    kv_set_mode(KV_MODE_INSERT);
+    kv_set_mode(KV_MODE_NORMAL);
+    rec_start();
+    CHECK(kv_kbd(KV_W) == KV_CONSUMED);
+    flush_emit();
+    CHECK_SEQ(KV_LCTL_KC(KV_RGHT)); /* w only */
+    rec_start(); key(KV_DOT);
+    CHECK_SEQ(KV_LCTL_KC(KV_RGHT)); /* replay w, never 2dw */
+}
+
 int main(void) {
     test_single();
     test_count();
@@ -251,6 +400,9 @@ int main(void) {
     test_repeat();
     test_big_count();
     test_pass_through();
+    test_mode_pending_clear();
+    test_shift_esc_visual();
+    test_contract_extra();
     printf("pass=%d fail=%d\n", g_pass, g_fail);
     return g_fail ? 1 : 0;
 }
