@@ -13,7 +13,7 @@
 - **V2.0 架构修订（2026-09-22 全面审查后）**：
   - `kv_kbd` 返回 `kv_result_t`（CONSUMED/PASSTHROUGH），透传责任方=调用方（§4.7）；
   - **任何模式/使能切换一律清 pending 且清 repeat 录制缓存**（`s_last` 保留），`kv_enable` 固定从 INSERT 起（§4.7）；
-  - Visual 明确**无 pending**（非法键吞键）；MOUSE 明确"修饰键不退出+退出强制释放鼠标键"（§4.9）；
+  - Visual 明确**无 pending**（非法键吞键）；MOUSE 明确"`Shift` 不退出；`Ctrl`/`Alt`/`GUI` 按下退出并重识别；其它键退出强制释放鼠标键"（§4.9）；
   - **新增 §4.12 glue 层规格**（`qmk/` 共享适配层：统一配对表、物理修饰键影子、held motion、极性封装），keymap 禁止复制实现。
 
 ---

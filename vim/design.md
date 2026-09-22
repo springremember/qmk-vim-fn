@@ -424,7 +424,8 @@ while (queue_has()) {
 - **MOUSE**：键盘层模式（引擎一律 `KV_PASSTHROUGH`，见 §4.7）。**右 Alt 短按**（阈值 **200ms**，与
   Caps 一致）在 `Insert`/`Normal`/`Visual` 均可进/出（长按=RAlt 修饰）；**进出 MOUSE 视同模式切换，
   先清 pending**。模式内：`hjkl`=指针、`Shift+J`/`Shift+K`=滚轮下/上、`Space`=左键（短按单击/长按
-  拖动）、`Enter`=右键；**修饰键（Shift/Ctrl/Alt/GUI）不触发退出**（只记入影子，供滚轮组合等）；
+  拖动）、`Enter`=右键；**`Shift` 不触发退出**（press 吞、release 透传，供滚轮组合）；**`Ctrl`/`Alt`/`GUI`
+  按下即退出**（强制反注册全部按住的鼠标键/轴后，在进入前模式**重新识别该修饰键**，其 release 随后透传）；
   **其它非修饰键**退出 MOUSE 并**强制反注册全部按住的鼠标键/轴**（指针四向、左右键、滚轮）后，
   在进入前模式**重新识别该键**；`Esc` 在 MOUSE 内同此规则（退出+重识别，不直接发真 Esc）。
   RGB 指示为**青**（详见 [`readme.md`](readme.md) §8）。
@@ -491,7 +492,8 @@ void vim_glue_release_all(void);          /* 反注册 held motion 方向键（�
   ```
   每段显式命名+前置条件注释（消除 A-P1-7 隐式顺序契约）。
 - **鼠标模式状态机**（参数化；enter/exit、200ms 短/长按、`hjkl`/`Shift+J`/`Shift+K`/`Space`/`Enter`
-  的 press/release 按"实际注册键"配对、修饰键不退出、非修饰键退出强制释放全部鼠标键+重识别）：
+  的 press/release 按"实际注册键"配对、`Shift` 不退出、`Ctrl`/`Alt`/`GUI` 按下退出+重识别、
+  非修饰键退出强制释放全部鼠标键+重识别）：
   ```c
   typedef struct {
       uint16_t trigger_kc;      /* QK61=QK_KB_22；NUT65=右 Alt 位自定义键 */

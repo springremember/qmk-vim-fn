@@ -175,14 +175,20 @@ static bool mouse_process(uint16_t keycode, keyrecord_t *record) {
 
     if (!mouse_active()) return false;
 
-    // Modifiers never leave mouse mode and are never blindly consumed: the
-    // press is paired (consumed), the release falls through so that a modifier
-    // QMK registered before entering MOUSE can still be unregistered, while a
-    // press consumed here is removed by the shared pairing table (design §4.9).
+    // Modifier handling (design §4.9).  Shift stays in MOUSE so that Shift+J /
+    // Shift+K can produce wheel-down / wheel-up; its press is paired (consumed)
+    // and its release falls through so a Shift QMK registered before entering
+    // MOUSE can still be unregistered.  Ctrl/Alt/GUI exit MOUSE on press and
+    // are re-identified in the entry mode (the pipeline continues, so QMK
+    // registers the modifier normally); their release then passes through.
     if (IS_MODIFIER_KEYCODE(keycode)) {
         if (pressed) {
-            vim_glue_swallow(keycode);
-            return true;
+            if (keycode == KC_LSFT || keycode == KC_RSFT) {
+                vim_glue_swallow(keycode);
+                return true;
+            }
+            mouse_exit(); // force-release mouse keys/pointer/wheel first
+            return false; // re-identify the modifier in the entry mode
         }
         return false;
     }

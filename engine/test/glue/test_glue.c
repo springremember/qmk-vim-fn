@@ -269,7 +269,7 @@ static void test_mouse(void) {
     CHECK(pipeline(QK_KB_22, false) == false);
     CHECK(kv_get_mode() == KV_MODE_MOUSE);
 
-    /* modifiers do NOT exit MOUSE */
+    /* Shift does NOT exit MOUSE (needed for Shift+J/K wheel) */
     CHECK(pipeline(KC_LSFT, true) == false);
     CHECK(kv_get_mode() == KV_MODE_MOUSE);
 
@@ -291,13 +291,14 @@ static void test_mouse(void) {
     CHECK(kv_get_mode() == KV_MODE_INSERT);
     CHECK(pipeline(KC_A, false) == true);
 
-    /* modifier press/release while mouse active are both consumed */
+    /* Ctrl/Alt/GUI exit MOUSE on press and are re-identified in the entry
+     * mode (pipeline continues -> true); their release then passes through. */
     CHECK(pipeline(QK_KB_22, true) == false);
     CHECK(pipeline(QK_KB_22, false) == false);
     CHECK(kv_get_mode() == KV_MODE_MOUSE);
-    CHECK(pipeline(KC_LCTL, true) == false);
-    CHECK(pipeline(KC_LCTL, false) == false);
-    CHECK(kv_get_mode() == KV_MODE_MOUSE);
+    CHECK(pipeline(KC_LCTL, true) == true);   /* exits + re-identify */
+    CHECK(kv_get_mode() == KV_MODE_INSERT);
+    CHECK(pipeline(KC_LCTL, false) == true);
 
     /* Esc inside MOUSE exits and re-identifies (Insert -> real Esc) */
     CHECK(pipeline(KC_ESC, true) == true);
@@ -314,6 +315,48 @@ static void test_mouse(void) {
     CHECK(pipeline(QK_KB_22, false) == false);
     CHECK(reg_count(KC_RALT) == 0);
     CHECK(kv_get_mode() == KV_MODE_INSERT);
+}
+
+/* Every Ctrl/Alt/GUI (both sides) exits MOUSE on press and is re-identified;
+ * Shift (both sides) never exits.  Shift + a non-J/K key still exits via the
+ * generic "other key" branch. */
+static void test_mouse_modifier_exit(void) {
+    const uint16_t exiting[] = {KC_LCTL, KC_RCTL, KC_LALT, KC_RALT, KC_LGUI, KC_RGUI};
+    for (unsigned i = 0; i < sizeof(exiting) / sizeof(exiting[0]); i++) {
+        reset_engine();
+        kv_set_mode(KV_MODE_NORMAL); /* entry mode to be restored */
+        CHECK(pipeline(QK_KB_22, true) == false);
+        CHECK(pipeline(QK_KB_22, false) == false);
+        CHECK(kv_get_mode() == KV_MODE_MOUSE);
+        CHECK(pipeline(exiting[i], true) == true);   /* exit + re-identify */
+        CHECK(kv_get_mode() == KV_MODE_NORMAL);
+        CHECK(pipeline(exiting[i], false) == true);  /* release passes */
+    }
+
+    const uint16_t staying[] = {KC_LSFT, KC_RSFT};
+    for (unsigned i = 0; i < sizeof(staying) / sizeof(staying[0]); i++) {
+        reset_engine();
+        CHECK(pipeline(QK_KB_22, true) == false);
+        CHECK(pipeline(QK_KB_22, false) == false);
+        CHECK(kv_get_mode() == KV_MODE_MOUSE);
+        CHECK(pipeline(staying[i], true) == false);  /* stays in MOUSE */
+        CHECK(kv_get_mode() == KV_MODE_MOUSE);
+        CHECK(pipeline(staying[i], false) == false);
+        CHECK(kv_get_mode() == KV_MODE_MOUSE);
+    }
+
+    /* Shift held + a non-J/K key: the key is "other" -> exits + re-identifies
+     * (entry mode INSERT, so 'a' passes through); the Shift press was paired
+     * inside MOUSE, so its release is consumed by the pairing table. */
+    reset_engine(); /* entry mode INSERT */
+    CHECK(pipeline(QK_KB_22, true) == false);
+    CHECK(pipeline(QK_KB_22, false) == false);
+    CHECK(pipeline(KC_LSFT, true) == false);         /* Shift stays */
+    CHECK(kv_get_mode() == KV_MODE_MOUSE);
+    CHECK(pipeline(KC_A, true) == true);             /* other key exits */
+    CHECK(kv_get_mode() == KV_MODE_INSERT);
+    CHECK(pipeline(KC_A, false) == true);
+    CHECK(pipeline(KC_LSFT, false) == false);        /* paired release consumed */
 }
 
 static void test_mode_change_releases_motion(void) {
@@ -461,6 +504,7 @@ int main(void) {
     test_caps();
     test_caps_long_from_visual();
     test_mouse();
+    test_mouse_modifier_exit();
     test_mode_change_releases_motion();
     test_shift_esc_vim_off();
     test_cad_pairing_repro();
