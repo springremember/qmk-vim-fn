@@ -68,8 +68,12 @@ static bool test_declared(uint16_t kc) {
     if (kc == KC_T) return true;
     return false;
 }
-static void test_myfn(uint16_t kc, bool pressed) {
-    if (kc == KC_SPC && pressed) s_myfn_calls++;
+static bool test_myfn(uint16_t kc, bool pressed) {
+    if (kc == KC_SPC) {          /* consume (e.g. Fn+Space battery) */
+        if (pressed) s_myfn_calls++;
+        return true;
+    }
+    return false;                /* pass (e.g. F-keys) */
 }
 
 static const vim_cfg_t g_cfg = {
@@ -192,9 +196,9 @@ static void test_myfn_skeleton(void) {
     CHECK(pipeline(KC_F1, false) == true);
     CHECK(pipeline(KC_VOLU, true) == true);
     CHECK(pipeline(KC_VOLU, false) == true);
-    CHECK(pipeline(KC_SPC, true) == false); /* declared + dispatched + consumed */
+    CHECK(pipeline(KC_SPC, true) == false);  /* declared + callback consumes (battery) */
     CHECK(s_myfn_calls == 1);
-    CHECK(pipeline(KC_SPC, false) == false);
+    CHECK(pipeline(KC_SPC, false) == false); /* paired release consumed */
     fn_off();
 }
 

@@ -362,15 +362,14 @@ static bool caps_process(uint16_t keycode, keyrecord_t *record) {
 // ==========================================================================
 // Step 2 — myfn skeleton (fn readme §3)
 // ==========================================================================
-// Declared keys that must reach later pipeline steps / QMK unchanged.
-static bool myfn_passthrough(uint16_t keycode) {
-    if (keycode >= KC_F1 && keycode <= KC_F12) return true;
-    if (keycode == KC_VOLD || keycode == KC_VOLU) return true;
-    if (keycode == KC_CAPS || keycode == KC_ESC) return true; // steps 5/6/3/8
-    return false;
-}
-
 // Returns true when the key is consumed here.
+//
+// Declared keys are passed back to QMK unchanged (design §4.12 "已声明放行/
+// 分发"): cfg->myfn() still runs on both edges for any per-key keyboard action,
+// but ownership stays with QMK, so later pipeline steps and the vendor
+// process_record_kb tail (e.g. NUT65's process_record_wls / EE_CLR / HS_BATQ)
+// still see the key.  Undeclared keys (incl. modifiers) are swallowed on press
+// (fn readme rule 3).
 static bool myfn_process(uint16_t keycode, keyrecord_t *record) {
     if (vim_is_layer_key(keycode)) return false; // exempt: always pass to QMK
 
@@ -392,18 +391,18 @@ static bool myfn_process(uint16_t keycode, keyrecord_t *record) {
         return false;
     }
 
-    // Declared key: dispatch on both edges, then decide ownership.
-    if (s_cfg->myfn) s_cfg->myfn(keycode, record->event.pressed);
-
-    if (myfn_passthrough(keycode)) return false; // later steps / QMK own it
-
-    // Consume-only declared key (Fn+Space / Fn+T ...): pair the press and let
-    // the release fall to the shared pairing table (design §4.10).
-    if (record->event.pressed) {
-        vim_glue_swallow(keycode);
-        return true;
+    // Declared key: the keyboard decides per edge.  Returning true consumes
+    // it (paired release swallowed via the shared table); false passes it to
+    // QMK (e.g. F-keys, NUT65 vendor EE_CLR/BT processed in the kb tail).
+    bool consume = s_cfg->myfn ? s_cfg->myfn(keycode, record->event.pressed) : false;
+    if (consume) {
+        if (record->event.pressed) {
+            vim_glue_swallow(keycode);
+            return true;
+        }
+        return false; // release consumed by step 8's pairing table
     }
-    return false;
+    return false; // pass to QMK
 }
 
 // ==========================================================================

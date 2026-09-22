@@ -55,7 +55,7 @@ typedef struct {
     bool (*hook_pre)(uint16_t keycode, keyrecord_t *record);      /* true = consumed */
     bool (*hook_post_myfn)(uint16_t keycode, keyrecord_t *record);/* true = consumed */
     bool (*myfn_declared)(uint16_t keycode);                      /* myfn table membership */
-    void (*myfn)(uint16_t keycode, bool pressed);
+    bool (*myfn)(uint16_t keycode, bool pressed);                  /* true = consume (do not pass to QMK); false = pass */
     void (*vim_set_enabled)(bool enabled);                        /* NULL -> kv_enable/disable */
 
     /* §2.1 shortcut table (base + mods), terminated by base == 0. */

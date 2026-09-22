@@ -92,8 +92,12 @@ static bool test_declared(uint16_t kc) {
     return false;
 }
 static int  s_myfn_calls;
-static void test_myfn(uint16_t kc, bool pressed) {
-    if (kc == KC_SPC && pressed) s_myfn_calls++;
+static bool test_myfn(uint16_t kc, bool pressed) {
+    if (kc == KC_SPC) {
+        if (pressed) s_myfn_calls++;
+        return true;
+    }
+    return false;
 }
 
 /* Mutable platform selector used by the mouse trigger long-press test (P2). */
