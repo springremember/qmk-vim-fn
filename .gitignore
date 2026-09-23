@@ -8,6 +8,7 @@ engine/test/glue/test_pending_clear_probe
 engine/test/glue/test_strict_clear_falsify
 engine/test/glue/test_modifiers
 engine/test/glue/test_rgb
+engine/test/glue/test_modifier_falsify
 engine/test/glue/glue_tests
 engine/test/glue/glue_falsify
 *.o
