@@ -168,14 +168,21 @@ static void vim_emit(kv_keycode_t kc) {
         return;
     }
 
-    // Register only the modifier bits that are not already held, then remove
-    // exactly those again.  This never writes back the modifier report and
-    // never drops a physically held modifier (design §4.10 / E2).
-    uint8_t add = (uint8_t)(mods & ~get_mods());
-    if (add) register_mods(add);
+    // The tap must carry exactly `mods` and nothing else: register the bits the
+    // command needs but the report lacks (add), and temporarily lift the bits
+    // the report holds but this key does not want (drop) — e.g. the physical
+    // Shift that folded `A`/`I` into End/Home must not leak out as Shift+End.
+    // Both are restored afterwards; the modifier report is never written back
+    // (design §4.10 / E2).
+    uint8_t cur  = get_mods();
+    uint8_t add  = (uint8_t)(mods & ~cur);
+    uint8_t drop = (uint8_t)(cur & ~mods);
+    if (add)  register_mods(add);
+    if (drop) unregister_mods(drop);
     register_code(basic);
     unregister_code(basic);
-    if (add) unregister_mods(add);
+    if (drop) register_mods(drop);
+    if (add)  unregister_mods(add);
 }
 
 // --------------------------------------------------------------------------

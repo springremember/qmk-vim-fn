@@ -2,8 +2,8 @@
 
 > 主机侧单测：喂 token 序列 → 捕获 emit 序列/状态 → 断言。
 > "关联"列指向 [`changes.md`](changes.md) 的问题编号（`E*`/`A*`）或 [`design.md`](design.md) 的决策号（`#N`）；空白为覆盖性用例。
-> 鼠标模式为**键盘层行为**（见 [`readme.md`](readme.md) §8），不在本主机单测范围（如需可另做 e2e 冒烟）。
-> release-swallow 通用规则（[`design.md`](design.md) §4.10）属 **keymap 层**行为（如 `Shift+Esc`），亦不在本主机单测范围。
+> 鼠标模式为**键盘层行为**（见 [`readme.md`](readme.md) §8），由 glue 主机单测覆盖（`engine/test/glue/`），不在 engine 纯核心单测范围（如需可另做 e2e 冒烟）。
+> release-swallow 通用规则（[`design.md`](design.md) §4.10）属 **keymap 层**行为（如 `Shift+Esc`），同样由 glue 主机单测覆盖。
 
 ## 1. 单键
 | 用例 | 输入 | 期望 | 关联 |

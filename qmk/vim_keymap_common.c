@@ -421,7 +421,16 @@ static bool shortcuts_process(uint16_t keycode, keyrecord_t *record) {
 
     uint8_t mods = vim_glue_mods(); // physical shadow, not get_mods() (design §4.10)
     for (const vim_shortcut_t *s = s_cfg->shortcuts; s->base; s++) {
-        if (keycode == s->base && (uint8_t)(mods & s->mods_mask) == s->mods_req) {
+        if (keycode != s->base) continue;
+        // `mods_req` names a *side-agnostic* mask (e.g. MOD_MASK_CTRL = LCTL|RCTL),
+        // so compare on the masked, physically-held set: no requirement means no
+        // masked modifier may be down, otherwise the held set must be a non-empty
+        // subset of the requirement (either Ctrl / either Shift qualifies).
+        uint8_t held = (uint8_t)(mods & s->mods_mask);
+        bool    hit  = (s->mods_req == 0)
+                           ? (held == 0)
+                           : ((held & s->mods_req) != 0 && (held & (uint8_t)~s->mods_req) == 0);
+        if (hit) {
             kv_cancel(); // drop any half-typed command first
             s->action();
             vim_glue_swallow(keycode); // consume the matching release too

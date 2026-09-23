@@ -2,10 +2,8 @@
  * 严格清空" fix (commit d9ad1c8) plus the Esc-by-physical-keycode regression
  * (MO(9) low byte 0x29 must NOT be mistaken for Esc).
  *
- * Test-only, separate TU: the frozen regression counts (test_glue 125 /
- * test_glue_falsify 242 / test_nut65_sim 90 / test_visual_passthrough 63 /
- * test_pending_clear_probe 24) are untouched.  Not in the Makefile's explicit
- * GLUE_TESTS list; compile/run it with the same flags (see report).
+ * Test-only, separate TU.  It IS listed in the Makefile's GLUE_TESTS (see
+ * engine/Makefile), so `make glue-test` builds and runs it alongside the rest.
  *
  * Contract:
  *   design §4.5 "严格清空": pending + non-vim -> clear pending, pass through.

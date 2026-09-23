@@ -142,11 +142,35 @@ typedef struct { keyevent_t event; } keyrecord_t;
 #define TT(layer) (uint16_t)(QK_LAYER_TAP_TOGGLE | (layer))
 #define OSL(layer) (uint16_t)(QK_ONE_SHOT_LAYER | (layer))
 
-#define IS_QK_MOMENTARY(kc) (((kc) & 0xFF00) == QK_MOMENTARY)
+/* MO(layer) = QK_MOMENTARY | layer, layer in bits 0..4, so the range is
+ * 0x5200..0x521F and the discriminating mask is 0xFFE0.  The old byte mask
+ * 0xFF00 wrongly claimed OSL(l) too: OSL(1) = 0x5281, 0x5281 & 0xFF00 ==
+ * 0x5200, so vim_is_layer_key() returned true via the MOMENTARY arm and its
+ * ONE_SHOT_LAYER arm was dead. */
+#define IS_QK_MOMENTARY(kc) (((kc) & 0xFFE0) == QK_MOMENTARY)
 #define IS_QK_LAYER_TAP(kc) (((kc) & 0xF000) == QK_LAYER_TAP)
-#define IS_QK_LAYER_MOD(kc) (((kc) & 0xF000) == QK_LAYER_MOD)
+/* The layer-MOD range occupies the 0x5000..0x51FF window, so mask bits 9..15
+ * (0xFE00).  The old 0xF800 mask also claimed OSL(l): OSL(1) = 0x5281,
+ * 0x5281 & 0xF800 == 0x5000, short-circuiting the OSL arm of
+ * vim_is_layer_key().  0xFE00 leaves QK_ONE_SHOT_LAYER (0x5280) alone. */
+#define IS_QK_LAYER_MOD(kc) (((kc) & 0xFE00) == QK_LAYER_MOD)
 #define IS_QK_LAYER_TAP_TOGGLE(kc) (((kc) & 0xFF00) == QK_LAYER_TAP_TOGGLE)
-#define IS_QK_ONE_SHOT_LAYER(kc) (((kc) & 0xFF00) == QK_ONE_SHOT_LAYER)
+/* QK_ONE_SHOT_LAYER (0x5280) carries the layer in its low 5 bits, so the byte
+ * mask 0xFF00 never matched any OSL(l): mask 0xFFF0 instead. */
+#define IS_QK_ONE_SHOT_LAYER(kc) (((kc) & 0xFFF0) == QK_ONE_SHOT_LAYER)
+
+/* TO/TG/DF layer keycodes (G8).  The values sit above the QK_* ranges above so
+ * the earlier IS_QK_* predicates cannot claim them first; vim_is_layer_key()
+ * must therefore reach its TO/TG/DF arms. */
+#define QK_TO 0x6000
+#define QK_TOGGLE_LAYER 0x6200
+#define QK_DEF_LAYER 0x6400
+#define TO(layer) (uint16_t)(QK_TO | (layer))
+#define TG(layer) (uint16_t)(QK_TOGGLE_LAYER | (layer))
+#define DF(layer) (uint16_t)(QK_DEF_LAYER | (layer))
+#define IS_QK_TO(kc) (((kc) & 0xFF00) == QK_TO)
+#define IS_QK_TOGGLE_LAYER(kc) (((kc) & 0xFF00) == QK_TOGGLE_LAYER)
+#define IS_QK_DEF_LAYER(kc) (((kc) & 0xFF00) == QK_DEF_LAYER)
 
 /* mod-wrap constructors */
 #define LSFT(kc) (uint16_t)((kc) | MOD_BIT_LSHIFT << 8)

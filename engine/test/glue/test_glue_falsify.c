@@ -1,7 +1,7 @@
 /* test_glue_falsify.c — focused falsification of the shared-layer fixes.
  *
- * Test-only.  Deliberately kept separate from test_glue.c so the 125-count
- * regression command is unchanged.  Each test below is a minimal, faithful
+ * Test-only.  Deliberately kept separate from test_glue.c so its file/line
+ * regression diagnostics stay stable.  Each test below is a minimal, faithful
  * reproduction of one scenario from the review checklist; assertions are on
  * observable host effects (register/unregister bookkeeping) and on the
  * pipeline polarity (true = QMK let-through, false = consumed).

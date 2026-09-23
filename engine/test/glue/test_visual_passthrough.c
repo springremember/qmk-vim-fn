@@ -3,7 +3,7 @@
  * design.md §4.10 "非 vim 键码一律透传").
  *
  * Test-only; kept in its own translation unit so the frozen regression counts
- * (test_glue.c -> 125, test_glue_falsify.c -> 242, test_nut65_sim.c -> 90) are
+ * (test_glue.c -> 393, test_glue_falsify.c -> 242, test_nut65_sim.c -> 90) are
  * untouched.
  *
  * Contract under test, per mode (NORMAL / VISUAL / VISUAL_LINE):
@@ -17,6 +17,7 @@
  * by the vim_glue_engine() guard rather than by the engine itself.
  */
 #include "qmk_stub.h"
+#include "emit.h" /* test helper: kv_emit_flush_now() */
 #include "qmk-vim-fn/engine/include/kv.h"
 #include "qmk-vim-fn/qmk/vim_glue.h"
 #include "qmk-vim-fn/qmk/vim_keymap_common.h"
@@ -35,8 +36,16 @@ void    unregister_mods(uint8_t m) { s_mods &= (uint8_t)~m; }
 #define REG_CAP 64
 static uint16_t s_reg[REG_CAP];
 static int      s_reg_n;
+
+/* Cumulative register_code() calls per keycode (< 256).  A "tap" is
+ * register+unregister, which leaves reg_count() unchanged; this counter lets a
+ * test tell a real tap apart from a silently dropped emit (mirrors test_glue.c). */
+#define HIT_CAP 256
+static int s_hits[HIT_CAP];
+
 void register_code(uint16_t kc) {
     if (IS_MODIFIER_KEYCODE(kc)) s_mods |= (uint8_t)(1u << (kc - KC_LCTL));
+    if (kc < HIT_CAP) s_hits[kc]++;
     if (s_reg_n < REG_CAP) s_reg[s_reg_n++] = kc;
 }
 void unregister_code(uint16_t kc) {
@@ -47,6 +56,12 @@ void unregister_code(uint16_t kc) {
 }
 void tap_code(uint16_t kc) { register_code(kc); unregister_code(kc); }
 void tap_code16(uint16_t kc) { tap_code((uint16_t)(kc & 0xFF)); }
+
+static int reg_count(uint16_t kc) {
+    int n = 0;
+    for (int i = 0; i < s_reg_n; i++) if (s_reg[i] == kc) n++;
+    return n;
+}
 
 static uint16_t g_now;
 uint16_t timer_read(void) { return g_now; }
@@ -102,6 +117,7 @@ static void reset_engine(void) {
     g_now = 1000;
     s_mods = 0;
     s_reg_n = 0;
+    for (int i = 0; i < HIT_CAP; i++) s_hits[i] = 0;
     layer_state = 0;
     default_layer_state = 0;
     vim_glue_init(); /* kv_init + enable + INSERT */
@@ -206,6 +222,26 @@ static void test_engine_alone_would_swallow(void) {
     CHECK(pipeline(KC_F5, false) == true);
 }
 
+/* ======================================================================
+ * G4: a bare h/j/k/l in VISUAL must TAP its (Shift+)host arrow (extending the
+ * selection) — it must NEVER register-hold the host arrow.  vim_glue.c:262
+ * only announces a held motion when the mode is NORMAL
+ * (`mi >= 0 && !was_pending && kv_get_mode() == KV_MODE_NORMAL`); in VISUAL
+ * that guard's mode test is false, so the "expected hold" slot stays clear and
+ * vim_emit() falls through to the tap path.  (design §4.10 held-motion; the
+ * Visual Shift+arrow extension is why a tap — not a hold — is correct here.)
+ * ====================================================================== */
+static void test_visual_motion_taps(void) {
+    reset_engine();
+    kv_set_mode(KV_MODE_VISUAL);
+    CHECK(pipeline(KC_H, true) == false);   /* consumed by the engine */
+    kv_emit_flush_now();                    /* drain emit -> host arrow */
+    CHECK(s_hits[KC_LEFT] == 1);            /* tapped exactly once */
+    CHECK(reg_count(KC_LEFT) == 0);         /* NOT register-held */
+    CHECK(kv_get_mode() == KV_MODE_VISUAL); /* stays in Visual */
+    CHECK(pipeline(KC_H, false) == false);  /* paired release consumed */
+}
+
 int main(void) {
     const kv_mode_t modes[] = {KV_MODE_NORMAL, KV_MODE_VISUAL, KV_MODE_VISUAL_LINE};
     for (unsigned i = 0; i < sizeof(modes) / sizeof(modes[0]); i++) {
@@ -224,6 +260,7 @@ int main(void) {
     test_visual_esc_exit(KV_MODE_VISUAL_LINE);
 
     test_engine_alone_would_swallow();
+    test_visual_motion_taps();
 
     printf("visual-passthrough: pass=%d fail=%d\n", g_pass, g_fail);
     return g_fail ? 1 : 0;

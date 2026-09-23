@@ -3,7 +3,7 @@
  * keyboards/leku/nut65/keymaps/vim/keymap.c on branch `nut65`).
  *
  * Test-only.  Kept in its own translation unit so the frozen regression
- * commands (test_glue.c -> 125, test_glue_falsify.c -> 242) are untouched.
+ * commands (test_glue.c -> 435, test_glue_falsify.c -> 242) are untouched.
  *
  * Why: NUT65 uses a different myfn contract than QK61 — every real _FN key is
  * in myfn_declared and cfg->myfn == NULL (all declared keys are passed through

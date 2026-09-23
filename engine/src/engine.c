@@ -312,7 +312,7 @@ static kv_feed_t feed_visual(kv_keycode_t kc) {
     if (kc == KV_S) { kv_emit_substitute(); s_mode = KV_MODE_INSERT; return R_CONSUMED; }
     if (kc == KV_P) { kv_emit_paste(false); return R_CONSUMED; }
     switch (t) {
-        case T_MOTION: case T_ZERO: case T_CARET: case T_DOLLAR:
+        case T_MOTION: case T_ZERO: case T_CARET: case T_DOLLAR: case T_G_BIG:
             kv_emit_visual_motion(kc);
             return R_CONSUMED;
         default:

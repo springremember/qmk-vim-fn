@@ -20,9 +20,11 @@
 extern "C" {
 #endif
 
-/* A §2.1 keyboard-layer shortcut: matched on the base keycode plus a subset of
- * the held modifiers, then emitted with the physical modifiers stripped.
- * (get_mods() & mods_mask) == mods_req. */
+/* A §2.1 keyboard-layer shortcut: matched on the base keycode plus the
+ * physically-held modifier set, then emitted with the physical modifiers
+ * stripped.  Comparison is side-agnostic and subset-shaped: `mods_req` names a
+ * mask (e.g. MOD_MASK_CTRL = LCTL|RCTL); no requirement means no masked
+ * modifier may be down, otherwise the held set must be a non-empty subset. */
 typedef void (*vim_shortcut_fn)(void);
 
 typedef struct {
