@@ -15,7 +15,7 @@
 // survives myfn swallowing a modifier and is immune to oneshot / locked mods.
 //
 // Known exception: a keyboard's vendor layer may rewrite `record->event.pressed`
-// to false before forwarding to process_record_user (e.g. a Win-lock feature on
+// to false before forwarding to process_record_user (e.g. a vendor lock feature on
 // LGUI/RGUI/APP, or an init key).  The shadow faithfully records what it is
 // given, so those modifier edges are intentionally not seen while such a lock
 // is active.

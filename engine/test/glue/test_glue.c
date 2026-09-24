@@ -349,10 +349,21 @@ static void test_caps(void) {
     CHECK(pipeline(KC_CAPS, false) == false);
     CHECK(kv_get_mode() == KV_MODE_NORMAL);
 
-    /* short press Normal -> stays Normal (no-op; Normal is the resting mode) */
+    /* short press Normal -> stays Normal (no vim effect; Normal is the resting
+     * mode).  A pending prefix is still dropped (mode-switch strict clear). */
     CHECK(pipeline(KC_CAPS, true) == false);
     CHECK(pipeline(KC_CAPS, false) == false);
     CHECK(kv_get_mode() == KV_MODE_NORMAL);
+
+    /* Normal + pending `d` then Caps: stays Normal and cancels the pending. */
+    reset_engine();
+    kv_set_mode(KV_MODE_NORMAL);
+    CHECK(pipeline(KC_D, true) == false);      /* operator pending */
+    CHECK(kv_pending() == true);
+    CHECK(pipeline(KC_CAPS, true) == false);
+    CHECK(pipeline(KC_CAPS, false) == false);
+    CHECK(kv_get_mode() == KV_MODE_NORMAL);
+    CHECK(kv_pending() == false);
 
     /* long press Insert -> momentary, returns to Insert */
     reset_engine();

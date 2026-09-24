@@ -465,13 +465,13 @@ bool vim_pipeline_process(uint16_t keycode, keyrecord_t *record, const vim_cfg_t
     // 0 — physical modifier shadow (must precede every swallow).
     vim_glue_mod_update(keycode, record->event.pressed);
 
-    // 1 — keyboard pre-hook (bootloader / power combos).
+    // 1 — keyboard pre-hook (high-priority keyboard combos).
     if (hook_process(keycode, record, cfg->hook_pre)) return false;
 
     // 2 — myfn skeleton.
     if (myfn_process(keycode, record)) return false;
 
-    // 3 — keyboard post-myfn hook (flash / CAD / Fn+Esc reset).
+    // 3 — keyboard post-myfn hook (per-key keyboard actions).
     if (hook_process(keycode, record, cfg->hook_post_myfn)) return false;
 
     // 4 — mouse mode.
@@ -486,7 +486,7 @@ bool vim_pipeline_process(uint16_t keycode, keyrecord_t *record, const vim_cfg_t
     // 7 — §2.1 shortcuts.
     if (shortcuts_process(keycode, record)) return false;
 
-    // 8 — engine (Esc falls straight through here; the legacy pr_esc is gone).
+    // 8 — engine (Esc falls straight through here; no keyboard Esc branch).
     return vim_glue_engine(keycode, record);
 }
 

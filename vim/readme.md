@@ -18,7 +18,7 @@
 
 | 操作 | 效果 |
 |---|---|
-| `Caps` 短按 | 进入 Normal（Visual 下=回到 Normal）；**已在 Normal 时再按无作用** |
+| `Caps` 短按 | 进入 Normal（Visual 下=回到 Normal）；**已在 Normal 时不再切换模式**（无 vim 编辑效果，仅丢弃未完成的多键命令）|
 | `Caps` 长按（≥200ms） | 临时进入 Normal，松手回到原模式 |
 | `Esc`（Insert） | 向宿主发送真实 `Esc`，**并进入 Normal** |
 | `Esc`（Normal） | 向宿主发送真实 `Esc` |
