@@ -111,7 +111,9 @@ typedef struct { keyevent_t event; } keyrecord_t;
 #define MS_WHLD 0xF7
 
 /* custom keyboard keycode used as the mouse trigger */
-#define QK_KB_22 0x7E16
+/* Neutral test trigger keycode (no keyboard-specific meaning); used in place
+ * of any real keyboard's custom keycode.  Sits above the QK_* layer ranges. */
+#define TEST_TRIGGER_KC 0x7E00
 
 /* ---- modifier bits ---- */
 #define MOD_BIT_LCTRL 0x01

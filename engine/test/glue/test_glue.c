@@ -93,7 +93,7 @@ static int g_pass, g_fail;
     } while (0)
 #define NOTE(...) do { printf("NOTE " __VA_ARGS__); } while (0)
 
-/* ---------------- keyboard cfg (mirrors QK61) ---------------- */
+/* ---------------- generic test cfg ---------------- */
 static int  s_myfn_calls;
 static bool s_fn_active;
 
@@ -190,7 +190,7 @@ static bool order_post(uint16_t kc, keyrecord_t *r) {
 
 static const vim_cfg_t g_cfg = {
     .fn_layer         = 4,
-    .trigger_kc       = QK_KB_22,
+    .trigger_kc       = TEST_TRIGGER_KC,
     .mod_win          = KC_RALT,
     .mod_mac          = KC_RGUI,
     .is_mac           = NULL,
@@ -199,7 +199,7 @@ static const vim_cfg_t g_cfg = {
     .shift_esc_enable = true,
     .led_index        = 0,
     .hook_pre         = NULL,
-    .hook_post_myfn   = NULL, /* QK61 CAD/reset are keyboard-specific */
+    .hook_post_myfn   = NULL, /* keyboard-specific post-myfn hooks are added per keyboard */
     .myfn_declared    = test_declared,
     .myfn             = test_myfn,
     .vim_set_enabled  = NULL,
@@ -293,10 +293,10 @@ static void test_polarity_pairing(void) {
     CHECK(pipeline(KC_ESC, false) == false);
     CHECK(pipeline(KC_D, false) == false);
 
-    /* Insert Esc: real Esc both edges (engine never switches mode) */
+    /* Insert Esc: real Esc both edges, and it leaves INSERT for NORMAL */
     reset_engine();
     CHECK(pipeline(KC_ESC, true) == true);
-    CHECK(kv_get_mode() == KV_MODE_INSERT);
+    CHECK(kv_get_mode() == KV_MODE_NORMAL);
     CHECK(pipeline(KC_ESC, false) == true);
 
     /* keymap-layer shortcut (Space => Right) consumes press AND release */
@@ -349,10 +349,10 @@ static void test_caps(void) {
     CHECK(pipeline(KC_CAPS, false) == false);
     CHECK(kv_get_mode() == KV_MODE_NORMAL);
 
-    /* short press Normal -> Insert */
+    /* short press Normal -> stays Normal (no-op; Normal is the resting mode) */
     CHECK(pipeline(KC_CAPS, true) == false);
     CHECK(pipeline(KC_CAPS, false) == false);
-    CHECK(kv_get_mode() == KV_MODE_INSERT);
+    CHECK(kv_get_mode() == KV_MODE_NORMAL);
 
     /* long press Insert -> momentary, returns to Insert */
     reset_engine();
@@ -404,8 +404,8 @@ static void test_mouse(void) {
     /* trigger tap enters MOUSE */
     reset_engine();
     g_now = 1000;
-    CHECK(pipeline(QK_KB_22, true) == false);
-    CHECK(pipeline(QK_KB_22, false) == false);
+    CHECK(pipeline(TEST_TRIGGER_KC, true) == false);
+    CHECK(pipeline(TEST_TRIGGER_KC, false) == false);
     CHECK(kv_get_mode() == KV_MODE_MOUSE);
 
     /* Shift does NOT exit MOUSE (needed for Shift+J/K wheel) */
@@ -432,26 +432,27 @@ static void test_mouse(void) {
 
     /* Ctrl/Alt/GUI exit MOUSE on press and are re-identified in the entry
      * mode (pipeline continues -> true); their release then passes through. */
-    CHECK(pipeline(QK_KB_22, true) == false);
-    CHECK(pipeline(QK_KB_22, false) == false);
+    CHECK(pipeline(TEST_TRIGGER_KC, true) == false);
+    CHECK(pipeline(TEST_TRIGGER_KC, false) == false);
     CHECK(kv_get_mode() == KV_MODE_MOUSE);
     CHECK(pipeline(KC_LCTL, true) == true);   /* exits + re-identify */
     CHECK(kv_get_mode() == KV_MODE_INSERT);
     CHECK(pipeline(KC_LCTL, false) == true);
 
-    /* Esc inside MOUSE exits and re-identifies (Insert -> real Esc) */
+    /* Esc inside MOUSE exits (restores entry mode INSERT) and re-identifies;
+     * re-fed in INSERT, Esc emits the real Esc and now leaves for NORMAL. */
     CHECK(pipeline(KC_ESC, true) == true);
-    CHECK(kv_get_mode() == KV_MODE_INSERT);
+    CHECK(kv_get_mode() == KV_MODE_NORMAL);
     CHECK(pipeline(KC_ESC, false) == true);
 
     /* trigger long press registers the Win/Mac modifier, does not toggle */
     reset_engine();
     g_now = 5000;
-    CHECK(pipeline(QK_KB_22, true) == false);
+    CHECK(pipeline(TEST_TRIGGER_KC, true) == false);
     g_now += 250;
     vim_keymap_common_task(g_now);
     CHECK(reg_count(KC_RALT) == 1);
-    CHECK(pipeline(QK_KB_22, false) == false);
+    CHECK(pipeline(TEST_TRIGGER_KC, false) == false);
     CHECK(reg_count(KC_RALT) == 0);
     CHECK(kv_get_mode() == KV_MODE_INSERT);
 }
@@ -464,8 +465,8 @@ static void test_mouse_modifier_exit(void) {
     for (unsigned i = 0; i < sizeof(exiting) / sizeof(exiting[0]); i++) {
         reset_engine();
         kv_set_mode(KV_MODE_NORMAL); /* entry mode to be restored */
-        CHECK(pipeline(QK_KB_22, true) == false);
-        CHECK(pipeline(QK_KB_22, false) == false);
+        CHECK(pipeline(TEST_TRIGGER_KC, true) == false);
+        CHECK(pipeline(TEST_TRIGGER_KC, false) == false);
         CHECK(kv_get_mode() == KV_MODE_MOUSE);
         CHECK(pipeline(exiting[i], true) == true);   /* exit + re-identify */
         CHECK(kv_get_mode() == KV_MODE_NORMAL);
@@ -475,8 +476,8 @@ static void test_mouse_modifier_exit(void) {
     const uint16_t staying[] = {KC_LSFT, KC_RSFT};
     for (unsigned i = 0; i < sizeof(staying) / sizeof(staying[0]); i++) {
         reset_engine();
-        CHECK(pipeline(QK_KB_22, true) == false);
-        CHECK(pipeline(QK_KB_22, false) == false);
+        CHECK(pipeline(TEST_TRIGGER_KC, true) == false);
+        CHECK(pipeline(TEST_TRIGGER_KC, false) == false);
         CHECK(kv_get_mode() == KV_MODE_MOUSE);
         CHECK(pipeline(staying[i], true) == false);  /* stays in MOUSE */
         CHECK(kv_get_mode() == KV_MODE_MOUSE);
@@ -488,8 +489,8 @@ static void test_mouse_modifier_exit(void) {
      * (entry mode INSERT, so 'a' passes through); the Shift press was paired
      * inside MOUSE, so its release is consumed by the pairing table. */
     reset_engine(); /* entry mode INSERT */
-    CHECK(pipeline(QK_KB_22, true) == false);
-    CHECK(pipeline(QK_KB_22, false) == false);
+    CHECK(pipeline(TEST_TRIGGER_KC, true) == false);
+    CHECK(pipeline(TEST_TRIGGER_KC, false) == false);
     CHECK(pipeline(KC_LSFT, true) == false);         /* Shift stays */
     CHECK(kv_get_mode() == KV_MODE_MOUSE);
     CHECK(pipeline(KC_A, true) == true);             /* other key exits */
@@ -528,10 +529,10 @@ static void test_shift_esc_vim_off(void) {
     CHECK(pipeline(KC_LSFT, false) == true);
 }
 
-/* Faithful transcription of the QK61 CAD block (keymap.c:190-193) used as
- * cfg->hook_post_myfn, to reproduce the press/release pairing defect through
- * the real vim_pipeline_process(). */
-static bool cad_hook(uint16_t keycode, keyrecord_t *record) {
+/* Sample post-myfn hook: a chord (Ctrl+Alt+BSPC) consumes its press and (on
+ * the release edge) its release, used as cfg->hook_post_myfn to reproduce the
+ * press/release pairing contract through the real vim_pipeline_process(). */
+static bool chord_hook(uint16_t keycode, keyrecord_t *record) {
     if (keycode == KC_BSPC && (get_mods() & MOD_BIT(KC_LCTL)) && (get_mods() & MOD_BIT(KC_LALT))) {
         if (record->event.pressed) tap_code(KC_DEL);
         return true;
@@ -539,9 +540,9 @@ static bool cad_hook(uint16_t keycode, keyrecord_t *record) {
     return false;
 }
 
-static void test_cad_pairing_repro(void) {
+static void test_hook_pairing_repro(void) {
     vim_cfg_t cfg = g_cfg;
-    cfg.hook_post_myfn = cad_hook;
+    cfg.hook_post_myfn = chord_hook;
 
     /* (1) BSPC pressed plain, then Ctrl+Alt pressed while BSPC is still held,
      * then BSPC released: the release predicate now matches and swallows the
@@ -555,7 +556,7 @@ static void test_cad_pairing_repro(void) {
     register_code(KC_LALT);
     if (pipeline_cfg(KC_BSPC, false, &cfg) != true) {
         g_fail++;
-        printf("FAIL %s:%d  CAD: BSPC release swallowed while Ctrl+Alt held -> "
+        printf("FAIL %s:%d  chord hook: BSPC release swallowed while Ctrl+Alt held -> "
                "host Backspace stuck down (registered=%d)\n",
                __FILE__, __LINE__, reg_count(KC_BSPC));
     } else {
@@ -565,7 +566,7 @@ static void test_cad_pairing_repro(void) {
     unregister_code(KC_LALT);
     unregister_code(KC_BSPC); /* clean up the stuck stub state */
 
-    /* (2) Ctrl+Alt held, BSPC press consumed by CAD; if Ctrl/Alt are released
+    /* (2) Ctrl+Alt held, BSPC press consumed by the chord hook; if Ctrl/Alt are released
      * before BSPC, the BSPC release is let through as an orphan key-up. */
     reset_engine();
     register_code(KC_LCTL);
@@ -576,7 +577,7 @@ static void test_cad_pairing_repro(void) {
     unregister_code(KC_LALT);
     if (pipeline_cfg(KC_BSPC, false, &cfg) != false) {
         g_fail++;
-        printf("FAIL %s:%d  CAD: consumed BSPC press leaked an orphan release\n",
+        printf("FAIL %s:%d  chord hook: consumed BSPC press leaked an orphan release\n",
                __FILE__, __LINE__);
     } else {
         g_pass++;
@@ -637,12 +638,69 @@ static void test_held_motion(void) {
     CHECK(reg_count(KC_LEFT) == 0);
 }
 
+/* Exception: in NORMAL a *bare* h/j/k/l keeps acting as a held direction key
+ * even while Ctrl/Alt/GUI is physically held (combined with that modifier),
+ * instead of passing the chord through to the host.  A pending count/operator/
+ * prefix still takes the old strict-clear passthrough path. */
+static void test_held_motion_with_cag(void) {
+    /* Win+h (GUI held): KC_LEFT is register-held, host does NOT get Win+h. */
+    reset_engine();
+    kv_set_mode(KV_MODE_NORMAL);
+    CHECK(pipeline(KC_LGUI, true) == true);   /* shadow: GUI down */
+    CHECK(pipeline(KC_H, true) == false);     /* consumed by the exception */
+    kv_emit_flush_now();
+    CHECK(reg_count(KC_LEFT) == 1);
+    CHECK(pipeline(KC_H, false) == false);    /* tail unregisters the arrow */
+    CHECK(reg_count(KC_LEFT) == 0);
+    CHECK(pipeline(KC_LGUI, false) == true);
+
+    /* Ctrl+l -> KC_RGHT held. */
+    reset_engine();
+    kv_set_mode(KV_MODE_NORMAL);
+    CHECK(pipeline(KC_LCTL, true) == true);
+    CHECK(pipeline(KC_L, true) == false);
+    kv_emit_flush_now();
+    CHECK(reg_count(KC_RGHT) == 1);
+    CHECK(pipeline(KC_L, false) == false);
+    CHECK(reg_count(KC_RGHT) == 0);
+    CHECK(pipeline(KC_LCTL, false) == true);
+
+    /* A pending prefix still wins: `d` then Ctrl+h abandons the operator and
+     * passes the chord to the host (no arrow held). */
+    reset_engine();
+    kv_set_mode(KV_MODE_NORMAL);
+    CHECK(pipeline(KC_D, true) == false);     /* operator pending */
+    CHECK(pipeline(KC_LCTL, true) == true);
+    CHECK(pipeline(KC_H, true) == true);      /* passthrough, not a motion */
+    CHECK(reg_count(KC_LEFT) == 0);
+    CHECK(kv_pending() == false);             /* strict clear dropped `d` */
+    CHECK(pipeline(KC_H, false) == true);
+    CHECK(pipeline(KC_LCTL, false) == true);
+
+    /* Insert + Ctrl is untouched: h is a plain letter, passes through. */
+    reset_engine(); /* INSERT */
+    CHECK(pipeline(KC_LCTL, true) == true);
+    CHECK(pipeline(KC_H, true) == true);
+    CHECK(reg_count(KC_LEFT) == 0);
+    CHECK(pipeline(KC_H, false) == true);
+    CHECK(pipeline(KC_LCTL, false) == true);
+
+    /* Visual + GUI: not the bare-NORMAL case -> chord still passes through. */
+    reset_engine();
+    kv_set_mode(KV_MODE_VISUAL);
+    CHECK(pipeline(KC_LGUI, true) == true);
+    CHECK(pipeline(KC_H, true) == true);
+    CHECK(reg_count(KC_LEFT) == 0);
+    CHECK(pipeline(KC_H, false) == true);
+    CHECK(pipeline(KC_LGUI, false) == true);
+}
+
 /* ================= added coverage ================= */
 
 /* Tap the mouse trigger key and report whether MOUSE was entered. */
 static bool mouse_tap(void) {
-    bool a = pipeline(QK_KB_22, true);
-    bool b = pipeline(QK_KB_22, false);
+    bool a = pipeline(TEST_TRIGGER_KC, true);
+    bool b = pipeline(TEST_TRIGGER_KC, false);
     return a == false && b == false && kv_get_mode() == KV_MODE_MOUSE;
 }
 
@@ -754,15 +812,15 @@ static void test_mouse_link_gate(void) {
 
     reset_engine();
     s_link_ok = false;
-    CHECK(pipeline_cfg(QK_KB_22, true, &cfg) == false);
-    CHECK(pipeline_cfg(QK_KB_22, false, &cfg) == false);
+    CHECK(pipeline_cfg(TEST_TRIGGER_KC, true, &cfg) == false);
+    CHECK(pipeline_cfg(TEST_TRIGGER_KC, false, &cfg) == false);
     CHECK(s_link_ok == false);
     CHECK(kv_get_mode() == KV_MODE_INSERT);      /* gate refused entry */
 
     reset_engine();
     s_link_ok = true;
-    CHECK(pipeline_cfg(QK_KB_22, true, &cfg) == false);
-    CHECK(pipeline_cfg(QK_KB_22, false, &cfg) == false);
+    CHECK(pipeline_cfg(TEST_TRIGGER_KC, true, &cfg) == false);
+    CHECK(pipeline_cfg(TEST_TRIGGER_KC, false, &cfg) == false);
     CHECK(kv_get_mode() == KV_MODE_MOUSE);       /* gate allowed entry */
 }
 
@@ -772,8 +830,8 @@ static void test_mouse_link_gate(void) {
 static void test_mouse_trigger_vim_off(void) {
     reset_engine();
     kv_disable();
-    CHECK(pipeline(QK_KB_22, true) == false);    /* consumed, not passed */
-    CHECK(pipeline(QK_KB_22, false) == false);   /* consumed, not passed */
+    CHECK(pipeline(TEST_TRIGGER_KC, true) == false);    /* consumed, not passed */
+    CHECK(pipeline(TEST_TRIGGER_KC, false) == false);   /* consumed, not passed */
     CHECK(kv_get_mode() == KV_MODE_INSERT);      /* never entered MOUSE */
 }
 
@@ -800,7 +858,7 @@ static void test_mouse_entry_mode_restore(void) {
 static void test_mouse_trigger_release_no_timer(void) {
     reset_engine();
     CHECK(mouse_tap());                          /* tap leaves s_mouse_timer == 0 */
-    CHECK(pipeline(QK_KB_22, false) == false);   /* timer==0 branch: consumed no-op */
+    CHECK(pipeline(TEST_TRIGGER_KC, false) == false);   /* timer==0 branch: consumed no-op */
     CHECK(kv_get_mode() == KV_MODE_MOUSE);
 }
 
@@ -983,7 +1041,7 @@ static void test_caps_hold_boundary(void) {
 static void test_mouse_task_threshold(void) {
     reset_engine();
     g_now = 5000;
-    CHECK(pipeline(QK_KB_22, true) == false);
+    CHECK(pipeline(TEST_TRIGGER_KC, true) == false);
     g_now += 100;                                /* below hold_ms */
     vim_keymap_common_task(g_now);
     CHECK(reg_count(KC_RALT) == 0);
@@ -992,7 +1050,7 @@ static void test_mouse_task_threshold(void) {
     CHECK(reg_count(KC_RALT) == 1);
     vim_keymap_common_task(g_now);               /* still held: no re-register */
     CHECK(reg_count(KC_RALT) == 1);
-    CHECK(pipeline(QK_KB_22, false) == false);
+    CHECK(pipeline(TEST_TRIGGER_KC, false) == false);
     CHECK(reg_count(KC_RALT) == 0);
     CHECK(kv_get_mode() == KV_MODE_INSERT);
 }
@@ -1178,8 +1236,8 @@ static void test_mouse_move_release_unset(void) {
     const uint16_t axis[] = {MS_LEFT, MS_DOWN, MS_UP, MS_RGHT};
     for (unsigned i = 0; i < sizeof(move) / sizeof(move[0]); i++) {
         reset_engine();
-        CHECK(pipeline_cfg(QK_KB_22, true, &cfg) == false);   /* enter MOUSE */
-        CHECK(pipeline_cfg(QK_KB_22, false, &cfg) == false);
+        CHECK(pipeline_cfg(TEST_TRIGGER_KC, true, &cfg) == false);   /* enter MOUSE */
+        CHECK(pipeline_cfg(TEST_TRIGGER_KC, false, &cfg) == false);
         CHECK(kv_get_mode() == KV_MODE_MOUSE);
         CHECK(feed_cfg(move[i], true, &cfg) == false);        /* hook eats the press */
         CHECK(kv_get_mode() == KV_MODE_MOUSE);                /* MOUSE untouched */
@@ -1198,8 +1256,8 @@ static void test_mouse_space_release_no_timer(void) {
     cfg.hook_pre = hook_pre_mouse_own;
 
     reset_engine();
-    CHECK(pipeline_cfg(QK_KB_22, true, &cfg) == false);
-    CHECK(pipeline_cfg(QK_KB_22, false, &cfg) == false);
+    CHECK(pipeline_cfg(TEST_TRIGGER_KC, true, &cfg) == false);
+    CHECK(pipeline_cfg(TEST_TRIGGER_KC, false, &cfg) == false);
     CHECK(kv_get_mode() == KV_MODE_MOUSE);
 
     int hits_before = s_hits[MS_BTN1];
@@ -1222,11 +1280,11 @@ static void test_mouse_trigger_mod_zero(void) {
 
     reset_engine();
     g_now = 7100;
-    CHECK(pipeline_cfg(QK_KB_22, true, &cfg) == false);
+    CHECK(pipeline_cfg(TEST_TRIGGER_KC, true, &cfg) == false);
     g_now += 250;
     vim_keymap_common_task(g_now);                    /* s_mouse_held, s_mouse_mod_reg = 0 */
     CHECK(kv_get_mode() == KV_MODE_INSERT);           /* long press does not enter MOUSE */
-    CHECK(pipeline_cfg(QK_KB_22, false, &cfg) == false); /* s_mouse_mod_reg == 0 arm */
+    CHECK(pipeline_cfg(TEST_TRIGGER_KC, false, &cfg) == false); /* s_mouse_mod_reg == 0 arm */
     CHECK(reg_count(KC_RALT) == 0);
     CHECK(kv_get_mode() == KV_MODE_INSERT);
 }
@@ -1375,8 +1433,9 @@ int main(void) {
     test_mouse_modifier_exit();
     test_mode_change_releases_motion();
     test_shift_esc_vim_off();
-    test_cad_pairing_repro();
+    test_hook_pairing_repro();
     test_held_motion();
+    test_held_motion_with_cag();
     test_visual_esc_and_cag();
     /* added coverage */
     test_mouse_fsm_axes();

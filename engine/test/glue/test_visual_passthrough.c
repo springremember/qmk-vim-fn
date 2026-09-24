@@ -3,8 +3,7 @@
  * design.md §4.10 "非 vim 键码一律透传").
  *
  * Test-only; kept in its own translation unit so the frozen regression counts
- * (test_glue.c -> 393, test_glue_falsify.c -> 242, test_nut65_sim.c -> 90) are
- * untouched.
+ * (test_glue.c -> 393, test_glue_falsify.c -> 242) are untouched.
  *
  * Contract under test, per mode (NORMAL / VISUAL / VISUAL_LINE):
  *   - KC_F5 / KC_F1 / KC_LSFT / MO(4) (non-vim): pipeline passes BOTH edges;
@@ -76,7 +75,7 @@ static int g_pass, g_fail;
     } while (0)
 #define NOTE(...) do { printf("NOTE " __VA_ARGS__); } while (0)
 
-/* ---------------- keyboard cfg (mirrors QK61) ---------------- */
+/* ---------------- generic test cfg ---------------- */
 static bool test_declared(uint16_t kc) {
     if (kc >= KC_F1 && kc <= KC_F12) return true;
     if (kc == KC_VOLD || kc == KC_VOLU) return true;
@@ -91,7 +90,7 @@ static bool test_myfn(uint16_t kc, bool pressed) {
 
 static const vim_cfg_t g_cfg = {
     .fn_layer         = 4,
-    .trigger_kc       = QK_KB_22,
+    .trigger_kc       = TEST_TRIGGER_KC,
     .mod_win          = KC_RALT,
     .mod_mac          = KC_RGUI,
     .is_mac           = NULL,

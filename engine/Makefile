@@ -8,7 +8,7 @@ TEST_SRC = $(wildcard test/*.c)
 # The qmk/ sources include "qmk-vim-fn/...", so -I must point at the repo's
 # parent directory.
 GLUE_ROOT  = $(abspath $(CURDIR)/../..)
-GLUE_TESTS = test_glue test_glue_falsify test_nut65_sim test_visual_passthrough test_pending_clear_probe test_strict_clear_falsify test_modifiers test_rgb test_modifier_falsify
+GLUE_TESTS = test_glue test_glue_falsify test_visual_passthrough test_pending_clear_probe test_strict_clear_falsify test_modifiers test_rgb test_modifier_falsify
 
 .PHONY: all test glue-test clean
 
@@ -27,4 +27,4 @@ glue-test: $(SRC) ../qmk/vim_glue.c ../qmk/vim_keymap_common.c
 	done
 
 clean:
-	rm -f test/kv_tests test/glue/test_glue test/glue/test_glue_falsify test/glue/test_nut65_sim test/glue/test_visual_passthrough test/glue/test_pending_clear_probe test/glue/test_strict_clear_falsify test/glue/test_modifiers test/glue/test_rgb test/glue/test_modifier_falsify
+	rm -f test/kv_tests test/glue/test_glue test/glue/test_glue_falsify test/glue/test_visual_passthrough test/glue/test_pending_clear_probe test/glue/test_strict_clear_falsify test/glue/test_modifiers test/glue/test_rgb test/glue/test_modifier_falsify

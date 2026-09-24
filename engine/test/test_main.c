@@ -149,7 +149,7 @@ static void test_insert(void) {
     fresh(); kv_set_mode(KV_MODE_INSERT); rec_start();
     key(KV_A); CHECK_SEQ(KV_A);
     rec_start(); key(KV_ESC); CHECK_SEQ(KV_ESC);
-    CHECK(kv_get_mode() == KV_MODE_INSERT); /* Esc does not switch mode */
+    CHECK(kv_get_mode() == KV_MODE_NORMAL); /* Esc still emits, and leaves INSERT */
     fresh(); key(KV_I); CHECK(rec_count() == 0); CHECK(kv_get_mode() == KV_MODE_INSERT);
     fresh(); key(KV_C_I); CHECK_SEQ(KV_HOME); CHECK(kv_get_mode() == KV_MODE_INSERT);
     fresh(); key(KV_A); CHECK_SEQ(KV_RGHT);

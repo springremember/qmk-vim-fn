@@ -83,7 +83,7 @@ static int g_pass, g_fail;
         else { g_fail++; printf("FAIL %s:%d  %s\n", __FILE__, __LINE__, #cond); } \
     } while (0)
 
-/* ---------------- keyboard cfg (mirrors QK61) ---------------- */
+/* ---------------- generic test cfg ---------------- */
 static bool test_declared(uint16_t kc) {
     if (kc >= KC_F1 && kc <= KC_F12) return true;
     if (kc == KC_VOLD || kc == KC_VOLU) return true;
@@ -106,7 +106,7 @@ static bool test_is_mac(void) { return s_is_mac; }
 
 static const vim_cfg_t g_cfg = {
     .fn_layer         = 4,
-    .trigger_kc       = QK_KB_22,
+    .trigger_kc       = TEST_TRIGGER_KC,
     .mod_win          = KC_RALT,
     .mod_mac          = KC_RGUI,
     .is_mac           = NULL,
@@ -225,8 +225,8 @@ static void test_falsify_shift_before_fn(void) {
  * C. MOUSE: a modifier already held before entering MOUSE is unregistered
  * ====================================================================== */
 static bool enter_mouse(void) {
-    bool a = feed(QK_KB_22, true);
-    bool b = feed(QK_KB_22, false);
+    bool a = feed(TEST_TRIGGER_KC, true);
+    bool b = feed(TEST_TRIGGER_KC, false);
     CHECK(a == false && b == false);
     CHECK(kv_get_mode() == KV_MODE_MOUSE);
     return a == false && b == false;
@@ -296,9 +296,9 @@ static void test_falsify_mouse_consume_exit(void) {
 }
 
 /* ======================================================================
- * E. CAD (Ctrl+Alt+BSPC): consume press+release with no orphan / stuck BSPC
+ * E. chord hook (Ctrl+Alt+BSPC): consume press+release with no orphan / stuck BSPC
  * ====================================================================== */
-static bool cad_hook(uint16_t keycode, keyrecord_t *record) {
+static bool chord_hook(uint16_t keycode, keyrecord_t *record) {
     if (keycode == KC_BSPC && record->event.pressed &&
         (get_mods() & MOD_BIT(KC_LCTL)) && (get_mods() & MOD_BIT(KC_LALT))) {
         vim_glue_swallow(KC_BSPC);
@@ -308,51 +308,51 @@ static bool cad_hook(uint16_t keycode, keyrecord_t *record) {
     return false;
 }
 
-static bool cad_pipeline(uint16_t kc, bool pressed) {
+static bool chord_pipeline(uint16_t kc, bool pressed) {
     keyrecord_t r = {0};
     r.event.pressed = pressed;
     vim_cfg_t cfg = g_cfg;
-    cfg.hook_post_myfn = cad_hook;
+    cfg.hook_post_myfn = chord_hook;
     return vim_pipeline_process(kc, &r, &cfg);
 }
-static bool cad_feed(uint16_t kc, bool pressed) {
-    bool pass = cad_pipeline(kc, pressed);
+static bool chord_feed(uint16_t kc, bool pressed) {
+    bool pass = chord_pipeline(kc, pressed);
     if (pressed) { if (pass) host_press(kc); } else { if (pass) host_release(kc); }
     return pass;
 }
 
-static void test_falsify_cad(void) {
+static void test_falsify_hook_pairing(void) {
     /* (1) BSPC pressed plain, then Ctrl+Alt pressed, then BSPC released:
      * release predicate needs `pressed`, so the release must pass. */
     reset_engine();
-    CHECK(cad_feed(KC_BSPC, true) == true);
+    CHECK(chord_feed(KC_BSPC, true) == true);
     CHECK(reg_count(KC_BSPC) == 1);
-    CHECK(cad_feed(KC_LCTL, true) == true);
-    CHECK(cad_feed(KC_LALT, true) == true);
-    if (cad_feed(KC_BSPC, false) != true) {
+    CHECK(chord_feed(KC_LCTL, true) == true);
+    CHECK(chord_feed(KC_LALT, true) == true);
+    if (chord_feed(KC_BSPC, false) != true) {
         g_fail++;
-        printf("FAIL %s:%d  CAD: BSPC release swallowed while Ctrl+Alt held -> stuck Backspace\n",
+        printf("FAIL %s:%d  chord hook: BSPC release swallowed while Ctrl+Alt held -> stuck Backspace\n",
                __FILE__, __LINE__);
     } else {
         g_pass++;
     }
     CHECK(reg_count(KC_BSPC) == 0);
-    cad_feed(KC_LCTL, false);
-    cad_feed(KC_LALT, false);
+    chord_feed(KC_LCTL, false);
+    chord_feed(KC_LALT, false);
     CHECK(s_orphan == 0);
 
     /* (2) Ctrl+Alt held, BSPC press consumed; Ctrl/Alt released before BSPC:
      * the BSPC release must still be consumed (no orphan key-up). */
     reset_engine();
-    CHECK(cad_feed(KC_LCTL, true) == true);
-    CHECK(cad_feed(KC_LALT, true) == true);
-    CHECK(cad_feed(KC_BSPC, true) == false); /* consumed by CAD */
+    CHECK(chord_feed(KC_LCTL, true) == true);
+    CHECK(chord_feed(KC_LALT, true) == true);
+    CHECK(chord_feed(KC_BSPC, true) == false); /* consumed by the chord hook */
     CHECK(reg_count(KC_BSPC) == 0);
-    cad_feed(KC_LCTL, false);
-    cad_feed(KC_LALT, false);
-    if (cad_feed(KC_BSPC, false) != false) {
+    chord_feed(KC_LCTL, false);
+    chord_feed(KC_LALT, false);
+    if (chord_feed(KC_BSPC, false) != false) {
         g_fail++;
-        printf("FAIL %s:%d  CAD: consumed BSPC press leaked an orphan release\n", __FILE__, __LINE__);
+        printf("FAIL %s:%d  chord hook: consumed BSPC press leaked an orphan release\n", __FILE__, __LINE__);
     } else {
         g_pass++;
     }
@@ -370,15 +370,12 @@ static void test_falsify_caps(void) {
     CHECK(feed(KC_CAPS, false) == false);
     CHECK(kv_get_mode() == KV_MODE_NORMAL);
 
-    /* Normal -> Insert short press, stable. */
-    CHECK(feed(KC_CAPS, true) == false);
-    CHECK(feed(KC_CAPS, false) == false);
-    CHECK(kv_get_mode() == KV_MODE_INSERT);
-
-    /* Insert -> Normal again. */
+    /* Normal short press stays Normal: Normal is the resting mode (no toggle
+     * back to Insert via Caps). */
     CHECK(feed(KC_CAPS, true) == false);
     CHECK(feed(KC_CAPS, false) == false);
     CHECK(kv_get_mode() == KV_MODE_NORMAL);
+
     reset_engine(); /* leave the suite in a clean INSERT state */
 
     /* Long press from Visual -> momentary Normal -> release returns to Visual. */
@@ -591,7 +588,7 @@ static void test_falsify_caps_fn_ordering(void) {
     check_caps_table_clean();
 
     /* A following normal Caps press/release must stay paired (no stuck Caps):
-     * Insert -> Normal short press stays Normal; the next one returns to Insert. */
+     * Insert -> Normal on the first tap; a second tap stays Normal (no-op). */
     reset_engine();
     CHECK(feed(KC_CAPS, true) == false);
     CHECK(kv_get_mode() == KV_MODE_NORMAL);
@@ -599,7 +596,7 @@ static void test_falsify_caps_fn_ordering(void) {
     CHECK(kv_get_mode() == KV_MODE_NORMAL);
     CHECK(feed(KC_CAPS, true) == false);
     CHECK(feed(KC_CAPS, false) == false);
-    CHECK(kv_get_mode() == KV_MODE_INSERT);
+    CHECK(kv_get_mode() == KV_MODE_NORMAL);
     CHECK(reg_count(KC_CAPS) == 0);
     CHECK(s_orphan == 0);
 
@@ -630,13 +627,13 @@ static void test_falsify_mouse_trigger_mod_switch(void) {
     reset_engine();
     s_is_mac = false;
     g_now = 3000;
-    CHECK(feed_cfg(QK_KB_22, true, &cfg) == false);
+    CHECK(feed_cfg(TEST_TRIGGER_KC, true, &cfg) == false);
     g_now += 250;
     vim_keymap_common_task(g_now);
     CHECK(reg_count(KC_RALT) == 1);
     CHECK(reg_count(KC_RGUI) == 0);
     s_is_mac = true; /* platform flips mid-hold */
-    CHECK(feed_cfg(QK_KB_22, false, &cfg) == false);
+    CHECK(feed_cfg(TEST_TRIGGER_KC, false, &cfg) == false);
     CHECK(reg_count(KC_RALT) == 0); /* the actually registered one is removed */
     CHECK(reg_count(KC_RGUI) == 0);
     CHECK(kv_get_mode() == KV_MODE_INSERT);
@@ -646,13 +643,13 @@ static void test_falsify_mouse_trigger_mod_switch(void) {
     reset_engine();
     s_is_mac = true;
     g_now = 4000;
-    CHECK(feed_cfg(QK_KB_22, true, &cfg) == false);
+    CHECK(feed_cfg(TEST_TRIGGER_KC, true, &cfg) == false);
     g_now += 250;
     vim_keymap_common_task(g_now);
     CHECK(reg_count(KC_RGUI) == 1);
     CHECK(reg_count(KC_RALT) == 0);
     s_is_mac = false;
-    CHECK(feed_cfg(QK_KB_22, false, &cfg) == false);
+    CHECK(feed_cfg(TEST_TRIGGER_KC, false, &cfg) == false);
     CHECK(reg_count(KC_RGUI) == 0);
     CHECK(reg_count(KC_RALT) == 0);
     CHECK(kv_get_mode() == KV_MODE_INSERT);
@@ -664,23 +661,23 @@ static void test_falsify_mouse_trigger_mod_switch(void) {
     reset_engine();
     s_is_mac = false;
     g_now = 5000;
-    CHECK(feed_cfg(QK_KB_22, true, &cfg) == false);
-    CHECK(feed_cfg(QK_KB_22, false, &cfg) == false);
+    CHECK(feed_cfg(TEST_TRIGGER_KC, true, &cfg) == false);
+    CHECK(feed_cfg(TEST_TRIGGER_KC, false, &cfg) == false);
     CHECK(kv_get_mode() == KV_MODE_MOUSE);
     s_is_mac = true;
     g_now = 6000;
-    CHECK(feed_cfg(QK_KB_22, true, &cfg) == false);
+    CHECK(feed_cfg(TEST_TRIGGER_KC, true, &cfg) == false);
     g_now += 250;
     vim_keymap_common_task(g_now);
     CHECK(reg_count(KC_RGUI) == 1);
     CHECK(reg_count(KC_RALT) == 0);
     s_is_mac = false; /* flip before release */
-    CHECK(feed_cfg(QK_KB_22, false, &cfg) == false);
+    CHECK(feed_cfg(TEST_TRIGGER_KC, false, &cfg) == false);
     CHECK(reg_count(KC_RGUI) == 0);
     CHECK(reg_count(KC_RALT) == 0);
     CHECK(kv_get_mode() == KV_MODE_MOUSE); /* long press is not a tap */
-    CHECK(feed_cfg(QK_KB_22, true, &cfg) == false);
-    CHECK(feed_cfg(QK_KB_22, false, &cfg) == false);
+    CHECK(feed_cfg(TEST_TRIGGER_KC, true, &cfg) == false);
+    CHECK(feed_cfg(TEST_TRIGGER_KC, false, &cfg) == false);
     CHECK(kv_get_mode() == KV_MODE_INSERT); /* tap exits back to entry mode */
     CHECK(s_orphan == 0);
 }
@@ -782,7 +779,7 @@ int main(void) {
     test_falsify_shift_before_fn();
     test_falsify_mouse_preheld_mod();
     test_falsify_mouse_consume_exit();
-    test_falsify_cad();
+    test_falsify_hook_pairing();
     test_falsify_caps();
     test_falsify_caps_normal_press_pairing();
     test_falsify_shift_esc_vim_off();

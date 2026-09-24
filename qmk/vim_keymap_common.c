@@ -1,4 +1,4 @@
-// Copyright 2026 qk61-vim
+// Copyright 2026 qmk-vim-fn
 // SPDX-License-Identifier: GPL-2.0-or-later
 //
 // vim_keymap_common.c — shared keymap layer for the qmk-vim-fn engine.
@@ -356,11 +356,11 @@ static bool caps_process(uint16_t keycode, keyrecord_t *record) {
             // Momentary Normal: return to the full entry mode (Visual -> Visual).
             kv_set_mode(s_caps_entry_mode);
             vim_glue_release_all();
-        } else if (s_caps_entry_mode == KV_MODE_NORMAL) {
-            kv_set_mode(KV_MODE_INSERT); // short press toggles Normal -> Insert
-            vim_glue_release_all();
         }
-        // Insert -> Normal and Visual -> Normal were already applied on press.
+        // Short press: stay in NORMAL — Normal is the resting mode.  A second
+        // short press while already in NORMAL is therefore a no-op; editing
+        // commands (i/I/a/A/o/O, s/c) return to INSERT on their own, and the
+        // long press above restores the mode that was active before the tap.
     }
     return false; // let step 8 consume the paired release (or pass it through)
 }
@@ -372,9 +372,9 @@ static bool caps_process(uint16_t keycode, keyrecord_t *record) {
 //
 // Declared keys are passed back to QMK unchanged (design §4.12 "已声明放行/
 // 分发"): cfg->myfn() still runs on both edges for any per-key keyboard action,
-// but ownership stays with QMK, so later pipeline steps and the vendor
-// process_record_kb tail (e.g. NUT65's process_record_wls / EE_CLR / HS_BATQ)
-// still see the key.  Undeclared keys (incl. modifiers) are swallowed on press
+// but ownership stays with QMK, so later pipeline steps and any keyboard's
+// process_record_kb tail (e.g. vendor init/reset/wireless keys) still see the
+// key.  Undeclared keys (incl. modifiers) are swallowed on press
 // (fn readme rule 3).
 static bool myfn_process(uint16_t keycode, keyrecord_t *record) {
     if (vim_is_layer_key(keycode)) return false; // exempt: always pass to QMK
@@ -399,7 +399,7 @@ static bool myfn_process(uint16_t keycode, keyrecord_t *record) {
 
     // Declared key: the keyboard decides per edge.  Returning true consumes
     // it (paired release swallowed via the shared table); false passes it to
-    // QMK (e.g. F-keys, NUT65 vendor EE_CLR/BT processed in the kb tail).
+    // QMK (e.g. F-keys, or vendor keys handled in the process_record_kb tail).
     bool consume = s_cfg->myfn ? s_cfg->myfn(keycode, record->event.pressed) : false;
     if (consume) {
         if (record->event.pressed) {
@@ -447,8 +447,8 @@ static bool shortcuts_process(uint16_t keycode, keyrecord_t *record) {
 // (design §4.10) and pairs it automatically, so a hook never needs to track
 // key-up itself.  A hook's claim to consume a *release* is deliberately
 // ignored: releases are always governed by the shared pairing table, so a
-// stale release predicate (e.g. QK61 CAD checking get_mods()) can never strand
-// a host key.
+// stale release predicate (e.g. a keyboard hook checking get_mods()) can never
+// strand a host key.
 static bool hook_process(uint16_t keycode, keyrecord_t *record, bool (*hook)(uint16_t, keyrecord_t *)) {
     if (!hook) return false;
     if (!hook(keycode, record)) return false;

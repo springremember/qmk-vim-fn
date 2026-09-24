@@ -1,4 +1,4 @@
-// Copyright 2026 qk61-vim
+// Copyright 2026 qmk-vim-fn
 // SPDX-License-Identifier: GPL-2.0-or-later
 //
 // vim_keymap_common.h — shared keymap layer for the qmk-vim-fn engine.

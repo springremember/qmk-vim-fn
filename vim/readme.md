@@ -2,7 +2,8 @@
 
 > 面向使用。描述 vim 引擎的**目标行为**（键盘无关）。技术细节见 [`design.md`](design.md)。
 > 引擎以**纯键码**工作：把 vim 命令翻译成宿主按键序列发送，不依赖编辑器插件。
-> 键盘**开机默认进入 Insert（照常打字）**；按 `Caps` 切到 Normal 执行 vim 命令。
+> 文末与前文出现的键盘名（如 QK61/NUT65）仅为**参考示例**；本仓库共享层不含任何键盘专属实现或测试。
+> 键盘**开机默认进入 Insert（照常打字）**；按 `Caps` 或 `Esc` 切到 Normal 执行 vim 命令。
 
 ---
 
@@ -17,13 +18,14 @@
 
 | 操作 | 效果 |
 |---|---|
-| `Caps` 短按 | Insert ↔ Normal 切换（Visual 下=回到 Normal） |
+| `Caps` 短按 | 进入 Normal（Visual 下=回到 Normal）；**已在 Normal 时再按无作用** |
 | `Caps` 长按（≥200ms） | 临时进入 Normal，松手回到原模式 |
-| `Esc`（Insert） | 向宿主发送真实 `Esc`，**不切换模式** |
+| `Esc`（Insert） | 向宿主发送真实 `Esc`，**并进入 Normal** |
 | `Esc`（Normal） | 向宿主发送真实 `Esc` |
 | `Esc`（Visual/Visual-Line） | 退出选区回 Normal（不发送 Esc） |
 
-> 离开 Insert 回 Normal **只能靠 `Caps`**。`Esc` 不再负责模式切换，且 **`Esc` 没有长按功能**。
+> 进入 Normal 用 `Caps` 或 `Esc`。Normal 是"停留模式"：回 Insert 只能靠 vim 编辑命令
+> （`i/I/a/A/o/O`、`s/c`），`Caps` 单击不再切回 Insert；`Esc` 仍发送真实 `Esc` 且无长按功能。
 > 多键 pending（如按了 `d`）时按 `Esc`：**仅取消 pending，不发送任何键**。
 > **任何模式切换都会丢弃未完成的多键命令**（计数/操作符/`g`/`Z` 前缀）：如 `d` 后切 Caps，
 > 回 Normal 按 `w` 只会执行 `w`，不会残留成 `dw`。
@@ -187,6 +189,8 @@ c w     改到下一词首（进入 Insert）
 | `Shift+Esc`（**仅 Insert**） | 左 `Shift`=`~`、右 `Shift`=`` ` `` |
 
 > 这些是 keymap 层行为，不同键盘可自行取舍。
+> **Normal 下按住 `Ctrl`/`Alt`/`GUI`（Win/Cmd）时**：普通键组合原样透传宿主（如 `Ctrl+C`）；
+> **仅 `h/j/k/l` 例外**——仍作方向键，并与该修饰键组合（如 `Win+h` 发 `Win+←`），不把裸 `h` 透传。
 > **消费 press 的组合键，其 release 也须一并消费**：如 `Shift+Esc` 按下时改发 `~`/`` ` `` 后，其**抬起必须吞掉**（记住已消费的键、无条件吞），否则会多打出一个键。
 
 ---

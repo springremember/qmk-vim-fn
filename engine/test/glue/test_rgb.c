@@ -53,10 +53,10 @@ static int g_pass, g_fail;
         else { g_fail++; printf("FAIL %s:%d  %s\n", __FILE__, __LINE__, #cond); } \
     } while (0)
 
-/* ---------------- keyboard cfg (mirrors QK61) ---------------- */
+/* ---------------- generic test cfg ---------------- */
 static const vim_cfg_t g_cfg = {
     .fn_layer         = 4,
-    .trigger_kc       = QK_KB_22,
+    .trigger_kc       = TEST_TRIGGER_KC,
     .mod_win          = KC_RALT,
     .mod_mac          = KC_RGUI,
     .is_mac           = NULL,
@@ -99,7 +99,7 @@ typedef struct { uint8_t r, g, b; } rgb_t;
 #define CHECK_RGB(got, er, eg, eb) \
     CHECK((got).r == (er) && (got).g == (eg) && (got).b == (eb))
 
-/* Exactly how keymap.c calls it: the mouse flag is `m == KV_MODE_MOUSE`. */
+/* The keyboard layer always calls it with the mouse flag `m == KV_MODE_MOUSE`. */
 static rgb_t color_from_engine(void) {
     rgb_t c = {0, 0, 0};
     vim_rgb_state_color(kv_vim_enabled(), kv_get_mode(), kv_pending(),
@@ -223,8 +223,8 @@ static void test_rgb_visual_pending_stays_purple(void) {
  * leaves s_mode untouched, design §4.7). */
 static void test_rgb_mouse_cyan(void) {
     reset_engine();
-    CHECK(pipeline(QK_KB_22, true) == false);
-    CHECK(pipeline(QK_KB_22, false) == false);
+    CHECK(pipeline(TEST_TRIGGER_KC, true) == false);
+    CHECK(pipeline(TEST_TRIGGER_KC, false) == false);
     CHECK(kv_get_mode() == KV_MODE_MOUSE);
     CHECK_RGB(color_from_engine(), 0x00, 0xFF, 0xFF);
 

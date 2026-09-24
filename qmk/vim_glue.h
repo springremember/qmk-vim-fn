@@ -1,4 +1,4 @@
-// Copyright 2026 qk61-vim
+// Copyright 2026 qmk-vim-fn
 // SPDX-License-Identifier: GPL-2.0-or-later
 //
 // vim_glue.h — QMK adapter for the QMK-agnostic qmk-vim-fn engine.

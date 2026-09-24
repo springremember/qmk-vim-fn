@@ -340,9 +340,19 @@ kv_result_t kv_kbd(kv_keycode_t kc) {
 
     /* loop instead of recursion for strict-clear re-identification */
     for (;;) {
-        /* INSERT passes through; MOUSE and any keyboard-layer mode
-         * (kv_mode_t >= KV_MODE_MOUSE) is delegated to the keyboard layer. */
-        if (s_mode == KV_MODE_INSERT || s_mode >= KV_MODE_MOUSE) return KV_PASSTHROUGH;
+        /* INSERT: ordinary keys pass through to the host.  Esc also leaves
+         * INSERT for NORMAL (it still emits the real Esc), so Esc is a second
+         * way out of typing besides Caps.  MOUSE and any keyboard-layer mode
+         * (kv_mode_t >= KV_MODE_MOUSE) is wholly delegated to the keyboard
+         * layer. */
+        if (s_mode == KV_MODE_INSERT) {
+            if (KV_BASIC(kc) == KV_ESC) {
+                reset_pending();
+                s_mode = KV_MODE_NORMAL;
+            }
+            return KV_PASSTHROUGH;
+        }
+        if (s_mode >= KV_MODE_MOUSE) return KV_PASSTHROUGH;
 
         if (s_mode == KV_MODE_VISUAL || s_mode == KV_MODE_VISUAL_LINE) {
             feed_visual(kc);

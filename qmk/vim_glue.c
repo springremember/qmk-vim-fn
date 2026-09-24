@@ -1,4 +1,4 @@
-// Copyright 2026 qk61-vim
+// Copyright 2026 qmk-vim-fn
 // SPDX-License-Identifier: GPL-2.0-or-later
 //
 // vim_glue.c — QMK adapter for the QMK-agnostic qmk-vim-fn engine.
@@ -14,10 +14,11 @@
 // Records every physical modifier down/up independently of get_mods(), so it
 // survives myfn swallowing a modifier and is immune to oneshot / locked mods.
 //
-// Known exception: the QK61 vendor layer rewrites `record->event.pressed` to
-// false before forwarding to process_record_user (Win-lock for LGUI/RGUI/APP,
-// and EE_CLR).  The shadow faithfully records what it is given, so while Win
-// lock is on those modifier edges are intentionally not seen.
+// Known exception: a keyboard's vendor layer may rewrite `record->event.pressed`
+// to false before forwarding to process_record_user (e.g. a Win-lock feature on
+// LGUI/RGUI/APP, or an init key).  The shadow faithfully records what it is
+// given, so those modifier edges are intentionally not seen while such a lock
+// is active.
 // --------------------------------------------------------------------------
 static uint8_t s_shadow;
 
@@ -233,6 +234,20 @@ bool vim_glue_engine(uint16_t keycode, keyrecord_t *record) {
 
     uint8_t m = vim_glue_mods();
     if (m & (MOD_MASK_CTRL | MOD_MASK_ALT | MOD_MASK_GUI)) {
+        // Exception (hjkl only): in NORMAL mode a *bare* h/j/k/l still acts as a
+        // direction key, combined with the physically held Ctrl/Alt/GUI (e.g.
+        // Win+h -> Win+Left).  It register-holds the host arrow so it repeats,
+        // and the key-up tail unregisters it.  Only a fresh motion (nothing
+        // pending) qualifies; a pending count/operator/prefix keeps the chord
+        // passthrough below (strict clear) exactly as before.
+        if (mi >= 0 && !kv_pending() && kv_get_mode() == KV_MODE_NORMAL) {
+            pair_add(keycode);
+            if (!s_arrow_reg[mi]) {
+                register_code(s_arrow_kc[mi]);
+                s_arrow_reg[mi] = true;
+            }
+            return false;
+        }
         if (kv_pending()) kv_cancel(); // strict clear: non-vim key abandons pending
         return true;                   // CAG: QMK handles it
     }

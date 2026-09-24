@@ -74,7 +74,7 @@ static int g_pass, g_fail;
         else { g_fail++; printf("FAIL %s:%d  %s\n", __FILE__, __LINE__, #cond); } \
     } while (0)
 
-/* ---------------- keyboard cfg (mirrors QK61/NUT65 tests) ---------------- */
+/* ---------------- generic test cfg ---------------- */
 static bool test_declared(uint16_t kc) {
     if (kc >= KC_F1 && kc <= KC_F12) return true;
     if (kc == KC_VOLD || kc == KC_VOLU) return true;
@@ -85,7 +85,7 @@ static bool test_declared(uint16_t kc) {
 static bool test_myfn(uint16_t kc, bool pressed) { (void)kc; (void)pressed; return false; }
 
 static const vim_cfg_t g_cfg = {
-    .fn_layer = 4, .trigger_kc = QK_KB_22, .mod_win = KC_RALT, .mod_mac = KC_RGUI,
+    .fn_layer = 4, .trigger_kc = TEST_TRIGGER_KC, .mod_win = KC_RALT, .mod_mac = KC_RGUI,
     .is_mac = NULL, .link_ok = NULL, .hold_ms = 200, .shift_esc_enable = true,
     .led_index = 0, .hook_pre = NULL, .hook_post_myfn = NULL,
     .myfn_declared = test_declared, .myfn = test_myfn, .vim_set_enabled = NULL,

@@ -6,6 +6,7 @@
 > 测试见 [`testcase.md`](testcase.md)。
 >
 > 注：本文件为重构设计的**唯一权威**，取代 `qmk-vim/docs/REDESIGN_PLAN.md`（历史草案，勿引）。
+> 注：文中出现的键盘名（如 QK61/NUT65）仅为**参考示例**；本仓库共享层不含任何键盘专属实现或测试。
 
 ---
 
@@ -416,7 +417,7 @@ while (queue_has()) {
   `i/I/a/A/o/O`→INSERT；`v/V`→VISUAL；`Esc`→透传。
   - 变更类 `s/C/S/c`：进入 Insert（`c` 为操作符，其"改"结果同样进入 Insert）。
 - **OP_PENDING（瞬态）**：移动设区间→emit；非期望键→清空+重新识别；Esc→取消。
-- **INSERT**：普通字符透传；`Esc`=真 Esc 发宿主（不切模式）；离开 Insert 靠 `Caps`。
+- **INSERT**：普通字符透传；`Esc`=真 Esc 发宿主**并转入 NORMAL**（`Caps` 与 `Esc` 皆可离开 Insert）。
 - **VISUAL / VISUAL_LINE**：键集 = 移动（含计数 `Nm`）+ `d/y/c/x/s/p`。移动按 Shift 变体扩展选区；
   `d/x`=剪选区、`y`=复制、`c/s`=剪+进 INSERT、`p`=粘贴，完成后回 NORMAL。
   **未列键（数字、`g`、`Z`、`<`/`>`、`i`/`a` 等）为非法键 → 吞键留在 Visual**（不退出、不插入、
@@ -463,8 +464,10 @@ void vim_glue_release_all(void);          /* 反注册 held motion 方向键（�
 
 **职责清单**（对 §4.7/§4.10 的落地）：
 1. **key-down 分发**（在 `vim_glue_engine` 内）：纯 Shift → 折叠为 `KV_C_*` 喂引擎；带 Ctrl/Alt/GUI →
-   不喂、放行 QMK；**Esc 不做任何键盘层处理**（引擎已实现 pending 取消/Visual 退出/真 Esc 透传，
-   CONSUMED 自动配对 release——两键盘的 pr_esc 整段删除）。
+   不喂、放行 QMK——**例外**：Normal 下**裸 `h/j/k/l`**仍作方向键（与所按 Ctrl/Alt/GUI 组合，如
+   `Win+h`→`Win+←`），pending 前缀（`3l`/`dl`）仍走严格透传；**Esc 不做任何键盘层处理**（引擎已实现
+   pending 取消/Visual 退出/真 Esc 透传、Insert Esc 转 Normal，CONSUMED 自动配对 release——两键盘的
+   pr_esc 整段删除）。
 2. **统一 press/release 配对表**：引擎 CONSUMED 与键盘层 swallow 的键共用**同一张表**
    （keymap 禁止再自建 swallow 旗标/数组）；表满策略：最旧条目被覆盖（新键优先）。
 3. **held motion**：`h/j/k/l` 的 register/unregister；切换模式/禁用/进 MOUSE 时强制反注册。
@@ -485,7 +488,7 @@ void vim_glue_release_all(void);          /* 反注册 held motion 方向键（�
                                          配对走 glue 表)；NUT65: NULL
   4 鼠标模式状态机                     ← 见下 vim_mouse_cfg_t
   5 Shift+Esc(cfg->shift_esc_enable)  ← LSFT+Esc=~/RSFT+Esc=`(仅 Insert)；NUT65/QK61 同实现
-  6 Caps tap/hold 状态机              ← 短按切换/长按临时 Normal/回原模式/Fn+Caps 开关 vim
+  6 Caps tap/hold 状态机              ← 短按进 Normal（已在 Normal 时无作用）/长按临时 Normal/回原模式/Fn+Caps 开关 vim
   7 §2.1 快捷键表                     ← 两键盘完全一致(BSPC/Space/-/Shift+=/Ctrl+F/B//)：
                                          base+mods 匹配+kv_cancel 前置+send_plain_tap
   8 vim_glue_engine                   ← Esc 直落于此（pr_esc 已删）

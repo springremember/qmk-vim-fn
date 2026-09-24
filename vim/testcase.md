@@ -131,7 +131,7 @@
 | 行尾插入 | `A` | `End` → Insert | |
 | 下方开行 | `o` | `End`,`Shift+Enter` → Insert | |
 | 上方开行 | `O` | `Home`,`Shift+Enter`,`↑` → Insert | |
-| Esc 不切模式 | Insert 下 `Esc` | 发真实 `Esc`，仍为 Insert | |
+| Esc 进入 Normal | Insert 下 `Esc` | 发真实 `Esc`，并转入 Normal | |
 | 普通字符 | Insert 下 `a` | 透传字符 | |
 
 ## 9. pending 严格清空
@@ -158,6 +158,11 @@
 | key-up 透传 | 除 held motion `h/j/k/l` 外的任意键 release | 引擎不消费释放 | E3 |
 | 按住移动 | `h` 按住 | 连续左移，松开停止 | |
 | 松开不卡方向键 | 松开 `h` | 宿主 `←` 被释放 | |
+| held motion + 修饰键（仅 hjkl） | Normal `Win`+`h` | `Win+←` 方向键（hold），不把裸 `h` 透传 | |
+| held motion + 修饰键（前缀不例外） | `d` `Ctrl`+`h` | 严格清空 `d`，`Ctrl+h` 透传 | |
+| Caps 单击进 Normal | `Caps` 短按 | 进入 Normal | |
+| Caps 在 Normal 再点 | Normal `Caps` 短按 | 无作用（停留 Normal） | |
+| Caps 长按 | `Caps` 长按 ≥200ms | 临时 Normal，松手回原模式 | |
 
 ## 11. emit 非阻塞
 | 用例 | 输入 | 期望 | 关联 |
