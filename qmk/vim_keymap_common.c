@@ -373,7 +373,7 @@ static bool caps_process(uint16_t keycode, keyrecord_t *record) {
 // Declared keys are passed back to QMK unchanged (design §4.12 "已声明放行/
 // 分发"): cfg->myfn() still runs on both edges for any per-key keyboard action,
 // but ownership stays with QMK, so later pipeline steps and any keyboard's
-// process_record_kb tail (e.g. vendor init/reset/wireless keys) still see the
+// process_record_kb tail (e.g. other vendor keys) still see the
 // key.  Undeclared keys (incl. modifiers) are swallowed on press
 // (fn readme rule 3).
 static bool myfn_process(uint16_t keycode, keyrecord_t *record) {
