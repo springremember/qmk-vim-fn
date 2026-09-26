@@ -580,8 +580,7 @@ void vim_keymap_common_task(uint32_t now_ms) {
 
 uint16_t vim_rgb_led_index(void) { return s_cfg ? s_cfg->led_index : 0; }
 
-void vim_rgb_state_color(bool enabled, kv_mode_t m, bool pending, bool mouse, uint8_t *r, uint8_t *g, uint8_t *b) {
-    // MOUSE cyan wins over the "vim off" red (design §4.9).
+void vim_rgb_state_color(bool enabled, kv_mode_t m, bool pending, bool mouse, uint8_t *r, uint8_t *g, uint8_t *b) {    // MOUSE cyan wins over the "vim off" red (design §4.9).
     if (mouse) {
         *r = 0x00; *g = 0xFF; *b = 0xFF; // cyan: mouse mode
         return;
@@ -608,4 +607,15 @@ void vim_rgb_state_color(bool enabled, kv_mode_t m, bool pending, bool mouse, ui
             *r = 0x00; *g = 0xFF; *b = 0x00; // green
             break;
     }
+}
+
+bool vim_insert_flash(void) {
+    // Design §4.12: true iff vim on + mode INSERT + the Esc grace window is still
+    // open.  That window is opened by exactly one event — esc_process()'s
+    // "idle-Normal Esc -> INSERT" — is restarted by an in-window Esc, and is
+    // dropped by vim_pipeline_process() as soon as the mode leaves INSERT.  So it
+    // is precisely "this INSERT came from an idle-Normal Esc, less than 3 s ago".
+    if (!kv_vim_enabled()) return false;             // vim off: mode colour is red
+    if (kv_get_mode() != KV_MODE_INSERT) return false;
+    return s_esc_grace != 0 && !vim_timer_elapsed(s_esc_grace, VIM_ESC_GRACE_MS);
 }

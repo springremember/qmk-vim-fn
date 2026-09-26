@@ -53,6 +53,11 @@ typedef struct {
     /* RGB indicator LED index used by vim_rgb_state_color(). */
     uint16_t led_index;
 
+    /* "Back to typing" flash colour (design §4.12): while vim_insert_flash() is
+     * true the keyboard replaces the INSERT mode colour with this 0xRRGGBB
+     * value.  0 = no flash (plain INSERT colour). */
+    uint32_t insert_flash_color;
+
     /* Pipeline hooks / myfn dispatch (may be NULL). */
     bool (*hook_pre)(uint16_t keycode, keyrecord_t *record);      /* true = consumed */
     bool (*hook_post_myfn)(uint16_t keycode, keyrecord_t *record);/* true = consumed */
@@ -87,6 +92,14 @@ bool vim_is_layer_key(uint16_t keycode);
  * yellow (normal pending) / blue (normal) / green (insert).  `pending` never
  * overrides Visual. */
 void vim_rgb_state_color(bool enabled, kv_mode_t m, bool pending, bool mouse, uint8_t *r, uint8_t *g, uint8_t *b);
+
+/* True while the "back to typing" flash is due (design §4.12): vim is enabled,
+ * the mode is INSERT, and the Esc grace window is still open — i.e. the current
+ * INSERT was entered by an idle-Normal Esc, within VIM_ESC_GRACE_MS (3000 ms).
+ * An in-window Esc restarts the window; leaving INSERT drops it immediately, so
+ * boot / Caps-on / i,a,o,s,c ... report false, as do NORMAL / VISUAL / MOUSE.
+ * The keyboard paints cfg->insert_flash_color while this is true. */
+bool vim_insert_flash(void);
 
 /* RGB indicator LED index carried by the active keyboard cfg (design §4.12:
  * the keyboard supplies only the LED position; consumed by its RGB helper). */
