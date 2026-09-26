@@ -64,6 +64,7 @@ static const vim_cfg_t g_cfg = {
     .hold_ms          = 200,
     .shift_esc_enable = true,
     .led_index        = 0,
+    .insert_flash_color = 0x008000, /* 测试值；判据只看 vim_insert_flash()，不看具体色值 */
     .hook_pre         = NULL,
     .hook_post_myfn   = NULL,
     .myfn_declared    = NULL,
@@ -255,6 +256,82 @@ static void test_rgb_mouse_precedence(void) {
     CHECK_RGB(color_raw(true, KV_MODE_VISUAL, true, true), 0x00, 0xFF, 0xFF);
 }
 
+/* vim_insert_flash() — 规格见 design.md §4.12 / readme.md §10：
+ * 真 ⟺ vim 开 + 模式 INSERT + Esc 宽限窗口（3000ms）未过期；
+ * 该窗口只由「Normal 空闲 Esc → INSERT」开启、窗口内 Esc 重置、离开 INSERT 即失效。
+ *
+ * 各分支用 kv_set_mode() 直接摆位，避免与 Esc 状态机自身的路径互相纠缠
+ * （Esc 切换语义已有 enter_normal()/test_esc* 覆盖）。 */
+static void test_insert_flash(void) {
+    /* 开机：INSERT、vim 开、无窗口 -> 假 */
+    reset_engine();
+    CHECK(kv_get_mode() == KV_MODE_INSERT);
+    CHECK(!vim_insert_flash());
+
+    /* 窗口开启：Normal 空闲 Esc -> 真 Esc + INSERT，判据为真 */
+    kv_set_mode(KV_MODE_NORMAL);
+    CHECK(!vim_insert_flash());            /* NORMAL 下窗口无意义 -> 假 */
+    CHECK(pipeline(KC_ESC, true) == true); /* 真 Esc 透传 */
+    CHECK(kv_get_mode() == KV_MODE_INSERT);
+    CHECK(vim_insert_flash());
+    (void)pipeline(KC_ESC, false);
+    CHECK(vim_insert_flash());
+
+    g_now += 2999;
+    vim_keymap_common_task(g_now); /* 例行任务不得清掉窗口 */
+    CHECK(vim_insert_flash());
+
+    g_now += 1; /* 恰好 3000ms：过期 */
+    CHECK(!vim_insert_flash());
+
+    /* 窗口内 Esc 重置计时（橙色续期） */
+    g_now += 10000;
+    kv_set_mode(KV_MODE_NORMAL);
+    CHECK(pipeline(KC_ESC, true) == true); /* t0 */
+    (void)pipeline(KC_ESC, false);
+    g_now += 2999;
+    CHECK(pipeline(KC_ESC, true) == true); /* 窗口内：真 Esc，重置窗口 */
+    (void)pipeline(KC_ESC, false);
+    CHECK(vim_insert_flash());
+    g_now += 2999;
+    CHECK(vim_insert_flash()); /* t0+5998 仍在（窗口已重置） */
+    g_now += 1;
+    CHECK(!vim_insert_flash());
+
+    /* 其它 Insert 入口不开窗口：引擎 'i' */
+    kv_set_mode(KV_MODE_NORMAL);
+    CHECK(pipeline(KC_I, true) == false); /* 'i' -> INSERT */
+    CHECK(kv_get_mode() == KV_MODE_INSERT);
+    CHECK(!vim_insert_flash());
+    (void)pipeline(KC_I, false);
+
+    /* 离开 INSERT 立即失效：窗口仍开着但模式切到 VISUAL / NORMAL */
+    g_now += 10000;
+    kv_set_mode(KV_MODE_NORMAL);
+    CHECK(pipeline(KC_ESC, true) == true); /* 开窗 */
+    CHECK(vim_insert_flash());
+    (void)pipeline(KC_ESC, false);
+    kv_set_mode(KV_MODE_NORMAL);
+    CHECK(!vim_insert_flash());            /* NORMAL 不亮 */
+    CHECK(pipeline(KC_V, true) == false); /* 'v' -> VISUAL */
+    CHECK(kv_get_mode() == KV_MODE_VISUAL);
+    CHECK(!vim_insert_flash());            /* VISUAL 不亮 */
+    (void)pipeline(KC_V, false);
+
+    /* vim 关闭：即使窗口戳还在也为假 */
+    g_now += 10000;
+    kv_set_mode(KV_MODE_NORMAL);
+    CHECK(pipeline(KC_ESC, true) == true);
+    CHECK(vim_insert_flash());
+    kv_disable();
+    CHECK(!kv_vim_enabled());
+    CHECK(!vim_insert_flash());
+
+    /* 收尾：复位引擎；重启/首次进入 Insert 不得带出提示色 */
+    reset_engine();
+    CHECK(vim_insert_flash() == false);
+}
+
 int main(void) {
     /* The s_cfg==NULL case must be observed before the first pipeline call. */
     test_rgb_led_index_null();
@@ -267,6 +344,7 @@ int main(void) {
     test_rgb_mouse_cyan();
     test_rgb_off_red();
     test_rgb_mouse_precedence();
+    test_insert_flash();
     printf("rgb: pass=%d fail=%d\n", g_pass, g_fail);
     return g_fail ? 1 : 0;
 }
