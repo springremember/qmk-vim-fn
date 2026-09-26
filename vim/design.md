@@ -9,6 +9,7 @@
 > 注：文中出现的键盘名（如 QK61/NUT65）仅为**参考示例**；本仓库共享层不含任何键盘专属实现或测试。
 > 注：**变更流程（文档先行）与共享层↔键盘分支的同步/验证规范**见 [`../qmk/README.md`](../qmk/README.md)；
 > 该规范与本文档同级权威，改动顺序、子模块同步、验证清单、坑位清单均以其为准。
+> 「文档先行」认可的文档文件集：`vim/{design,readme,changes,testcase}.md`、`fn/{readme,changes}.md`、`qmk/README.md`。
 
 ---
 
