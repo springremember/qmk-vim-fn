@@ -34,6 +34,18 @@ bool vim_timer_elapsed(uint16_t start, uint16_t ms) {
     return start != 0 && timer_elapsed(start) >= ms;
 }
 
+// 32-bit stamp/compare for windows that may go unchecked across the 16-bit wrap:
+// QMK's timer_read() is (uint16_t)timer_read32(), so an *expired* window re-reads as
+// "elapsed" again after 65536 ms (design §4.12: Esc grace window).
+uint32_t vim_timer_start32(void) {
+    uint32_t t = timer_read32();
+    return t ? t : 1; // same zero-reading guard as the 16-bit helper
+}
+
+bool vim_timer_elapsed32(uint32_t start, uint32_t ms) {
+    return start != 0 && timer_elapsed32(start) >= ms;
+}
+
 // Real QMK (quantum/keycodes.h) always provides these; the glue-test host stub
 // may not, so keep the shared layer compilable against both.
 #ifndef IS_QK_TO
@@ -316,7 +328,7 @@ static bool shift_esc_process(uint16_t keycode, keyrecord_t *record) {
 // is reset by every in-window Esc.  Visual / pending-Normal / CAG Escapes are
 // left to the engine and shortcut layers, unchanged.
 #define VIM_ESC_GRACE_MS 3000
-static uint16_t s_esc_grace; // 0 = no window; else vim_timer_start() stamp
+static uint32_t s_esc_grace; // 0 = no window; else vim_timer_start32() stamp (32-bit: no wrap)
 
 static bool esc_process(uint16_t keycode, keyrecord_t *record) {
     if (keycode != KC_ESC || !record->event.pressed) return false;
@@ -335,13 +347,13 @@ static bool esc_process(uint16_t keycode, keyrecord_t *record) {
     if (m == KV_MODE_NORMAL) {
         // Normal idle: real Esc, back to typing, open the grace window.
         kv_set_mode(KV_MODE_INSERT);
-        s_esc_grace = vim_timer_start();
+        s_esc_grace = vim_timer_start32();
         return false; // pass -> host receives the real Esc
     }
 
     // INSERT.
-    if (s_esc_grace && !vim_timer_elapsed(s_esc_grace, VIM_ESC_GRACE_MS)) {
-        s_esc_grace = vim_timer_start(); // in-window Esc: real Esc, reset window
+    if (s_esc_grace && !vim_timer_elapsed32(s_esc_grace, VIM_ESC_GRACE_MS)) {
+        s_esc_grace = vim_timer_start32(); // in-window Esc: real Esc, reset window
         return false;
     }
     // No window (entered Insert another way) or it expired: swallow, go NORMAL.
@@ -617,5 +629,17 @@ bool vim_insert_flash(void) {
     // is precisely "this INSERT came from an idle-Normal Esc, less than 3 s ago".
     if (!kv_vim_enabled()) return false;             // vim off: mode colour is red
     if (kv_get_mode() != KV_MODE_INSERT) return false;
-    return s_esc_grace != 0 && !vim_timer_elapsed(s_esc_grace, VIM_ESC_GRACE_MS);
+    return s_esc_grace != 0 && !vim_timer_elapsed32(s_esc_grace, VIM_ESC_GRACE_MS);
+}
+
+bool vim_insert_flash_color(uint8_t *r, uint8_t *g, uint8_t *b) {
+    // design §4.12: the shared layer owns the whole contract — predicate AND the
+    // cfg->insert_flash_color decision (0 = do not override).  The keyboard only
+    // supplies the colour value and decides which LEDs to repaint.
+    if (!vim_insert_flash()) return false;
+    if (!s_cfg || s_cfg->insert_flash_color == 0) return false;
+    if (r) *r = (uint8_t)((s_cfg->insert_flash_color >> 16) & 0xFF);
+    if (g) *g = (uint8_t)((s_cfg->insert_flash_color >> 8) & 0xFF);
+    if (b) *b = (uint8_t)(s_cfg->insert_flash_color & 0xFF);
+    return true;
 }

@@ -98,8 +98,17 @@ void vim_rgb_state_color(bool enabled, kv_mode_t m, bool pending, bool mouse, ui
  * INSERT was entered by an idle-Normal Esc, within VIM_ESC_GRACE_MS (3000 ms).
  * An in-window Esc restarts the window; leaving INSERT drops it immediately, so
  * boot / Caps-on / i,a,o,s,c ... report false, as do NORMAL / VISUAL / MOUSE.
- * The keyboard paints cfg->insert_flash_color while this is true. */
+ * The window is stamped with the 32-bit timer: the 16-bit reading wraps after
+ * 65536 ms and would resurrect an already-expired window. */
 bool vim_insert_flash(void);
+
+/* Predicate AND colour in one call (design §4.12): returns true — and unpacks
+ * cfg->insert_flash_color's 0xRRGGBB into the r/g/b out-params — only when
+ * vim_insert_flash() holds and the configured colour is non-zero (0 = do not
+ * override).  Returns false, leaving the out-params untouched, when the keyboard
+ * must keep the mode colour.  The keyboard supplies the colour in cfg and
+ * decides which LEDs to repaint. */
+bool vim_insert_flash_color(uint8_t *r, uint8_t *g, uint8_t *b);
 
 /* RGB indicator LED index carried by the active keyboard cfg (design §4.12:
  * the keyboard supplies only the LED position; consumed by its RGB helper). */
@@ -108,6 +117,11 @@ uint16_t vim_rgb_led_index(void);
 /* Shared tap/hold timing helper (guards against a zero timer_read()). */
 uint16_t vim_timer_start(void);
 bool     vim_timer_elapsed(uint16_t start, uint16_t ms);
+
+/* 32-bit variant for windows that may go unchecked across the 16-bit wrap
+ * (design §4.12: the Esc grace window). */
+uint32_t vim_timer_start32(void);
+bool     vim_timer_elapsed32(uint32_t start, uint32_t ms);
 
 /* Default §2.1 shortcut table (identical for every keyboard). */
 extern const vim_shortcut_t vim_default_shortcuts[];
