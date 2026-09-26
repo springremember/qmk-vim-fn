@@ -159,8 +159,10 @@ static bool rshift_exempt(uint16_t keycode) {
 }
 
 // Assert the lazily-held Left Shift for the next pass-through key (idempotent).
+// If the physical Left Shift is already held, do nothing: it already provides
+// the required Shift and must not be unregistered on Right Shift release.
 static void rshift_lazy_assert(void) {
-    if (!s_rshift_lazy) {
+    if (!s_rshift_lazy && (s_shadow & MOD_BIT_LSHIFT) == 0) {
         register_mods(MOD_BIT_LSHIFT);
         s_rshift_lazy = true;
     }

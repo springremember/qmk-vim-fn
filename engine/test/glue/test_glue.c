@@ -1547,6 +1547,24 @@ static void test_rshift_exempt_keys(void) {
     CHECK(!lshift_down());
 }
 
+/* If the physical Left Shift is already held, RShift must not steal/undo it:
+ * releasing RShift must leave the physical LShift intact. */
+static void test_rshift_lshift_coexist(void) {
+    reset_engine(); /* INSERT */
+    CHECK(pipeline(KC_LSFT, true) == true);    /* physical LShift: passes */
+    register_code(KC_LSFT);                    /* QMK registers it on the host */
+    CHECK(lshift_down());
+    CHECK(pipeline(KC_RSFT, true) == false);   /* RShift swallowed */
+    CHECK(pipeline(KC_A, true) == true);       /* Shift+a: LShift already suffices */
+    CHECK(lshift_down());
+    CHECK(pipeline(KC_A, false) == true);
+    CHECK(pipeline(KC_RSFT, false) == false);  /* must NOT drop the physical LShift */
+    CHECK(lshift_down());
+    unregister_code(KC_LSFT);
+    CHECK(pipeline(KC_LSFT, false) == true);   /* physical LShift up */
+    CHECK(!lshift_down());
+}
+
 /* With vim off, Right Shift is an ordinary modifier. */
 static void test_rshift_normal_when_vim_off(void) {
     reset_engine();
@@ -1612,6 +1630,7 @@ int main(void) {
     test_rshift_letter_uppercase();
     test_rshift_with_ctrl();
     test_rshift_exempt_keys();
+    test_rshift_lshift_coexist();
     test_rshift_normal_when_vim_off();
     printf("glue: pass=%d fail=%d\n", g_pass, g_fail);
     return g_fail ? 1 : 0;
