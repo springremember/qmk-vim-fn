@@ -196,3 +196,5 @@ void    tap_code(uint16_t keycode);
 void    tap_code16(uint16_t keycode);
 uint16_t timer_read(void);
 uint16_t timer_elapsed(uint16_t since);
+uint32_t timer_read32(void);
+uint32_t timer_elapsed32(uint32_t since);

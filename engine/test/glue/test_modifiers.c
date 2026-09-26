@@ -112,9 +112,11 @@ void tap_code16(uint16_t kc) {
     tap_code((uint16_t)(kc & 0xFF));
 }
 
-static uint16_t g_now;
-uint16_t timer_read(void) { return g_now; }
-uint16_t timer_elapsed(uint16_t since) { return (uint16_t)(g_now - since); }
+static uint32_t g_now;
+uint16_t timer_read(void) { return (uint16_t)g_now; }
+uint16_t timer_elapsed(uint16_t since) { return (uint16_t)((uint16_t)g_now - since); }
+uint32_t timer_read32(void) { return g_now; }
+uint32_t timer_elapsed32(uint32_t since) { return g_now - since; }
 
 /* ---------------- host emulation helpers ---------------- */
 static int reg_count(uint16_t kc) {

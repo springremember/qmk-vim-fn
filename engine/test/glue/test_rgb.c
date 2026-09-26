@@ -41,9 +41,11 @@ void unregister_code(uint16_t kc) {
 void tap_code(uint16_t kc) { register_code(kc); unregister_code(kc); }
 void tap_code16(uint16_t kc) { tap_code((uint16_t)(kc & 0xFF)); }
 
-static uint16_t g_now;
-uint16_t timer_read(void) { return g_now; }
-uint16_t timer_elapsed(uint16_t since) { return (uint16_t)(g_now - since); }
+static uint32_t g_now;
+uint16_t timer_read(void) { return (uint16_t)g_now; }
+uint16_t timer_elapsed(uint16_t since) { return (uint16_t)((uint16_t)g_now - since); }
+uint32_t timer_read32(void) { return g_now; }
+uint32_t timer_elapsed32(uint32_t since) { return g_now - since; }
 
 /* ---------------- test bookkeeping ---------------- */
 static int g_pass, g_fail;
@@ -64,7 +66,7 @@ static const vim_cfg_t g_cfg = {
     .hold_ms          = 200,
     .shift_esc_enable = true,
     .led_index        = 0,
-    .insert_flash_color = 0x008000, /* 测试值；判据只看 vim_insert_flash()，不看具体色值 */
+    .insert_flash_color = 0xFF8000, /* 与两键盘一致；改 cfg 必须能改变 vim_insert_flash_color() 输出 */
     .hook_pre         = NULL,
     .hook_post_myfn   = NULL,
     .myfn_declared    = NULL,
@@ -332,6 +334,90 @@ static void test_insert_flash(void) {
     CHECK(vim_insert_flash() == false);
 }
 
+/* 审计 P1 回归：Esc 宽限窗口不得因 16 位计时回绕「复活」。
+ * QMK 的 timer_read() 是 (uint16_t)timer_read32()，65536ms 后 elapsed 回绕为 0；
+ * 窗口戳必须走 32 位，否则持续在 Insert 打字时每 65.5s 会假命中 3s。 */
+static void test_insert_flash_wraparound(void) {
+    reset_engine();               /* INSERT、无窗口 */
+    g_now = 1000;                 /* 明确基准，避免上一用例的时间残留 */
+    kv_set_mode(KV_MODE_NORMAL);
+    CHECK(pipeline(KC_ESC, true) == true); /* t0=1000 开窗 */
+    CHECK(vim_insert_flash());
+    (void)pipeline(KC_ESC, false);
+
+    g_now = 1000 + 65000;         /* 16 位窗口在 65536 处回绕之前应已过期 */
+    CHECK(!vim_insert_flash());
+
+    g_now = 1000 + 65536;         /* 恰好回绕：修复前这里会重新为真 */
+    CHECK(!vim_insert_flash());
+    g_now = 1000 + 68535;         /* 回绕后 2999ms：仍必须为假 */
+    CHECK(!vim_insert_flash());
+
+    /* 回绕后（窗口已过期）Insert 下 Esc 必须仍吞键进 Normal，不得因回绕变成真实 Esc */
+    CHECK(kv_get_mode() == KV_MODE_INSERT);
+    CHECK(pipeline(KC_ESC, true) == false);
+    CHECK(kv_get_mode() == KV_MODE_NORMAL);
+    (void)pipeline(KC_ESC, false);
+
+    /* 复位并把桩的时间基准交回默认值（后续用例从 reset_engine 的 1000 起算） */
+    reset_engine();
+    CHECK(!vim_insert_flash());
+}
+
+/* vim_insert_flash_color()：判据与 cfg->insert_flash_color 的联合裁决（design §4.12）。
+ * 色值 0 = 不覆盖；非零时拆出 0xRRGGBB 分量。 */
+static void test_insert_flash_color(void) {
+    uint8_t r = 0xAA, g = 0xBB, b = 0xCC;
+    static vim_cfg_t cfg_none;  /* insert_flash_color == 0 */
+    static vim_cfg_t cfg_odd;   /* 另一个非零色值 */
+
+    reset_engine();
+    /* 无窗口：即使色值非零也不覆盖 */
+    r = 0xAA; g = 0xBB; b = 0xCC;
+    CHECK(!vim_insert_flash_color(&r, &g, &b));
+    CHECK(r == 0xAA && g == 0xBB && b == 0xCC); /* 未命中不得改动输出 */
+
+    /* 开窗：命中判据，拆出 cfg 里的 0xFF8000 */
+    kv_set_mode(KV_MODE_NORMAL);
+    CHECK(pipeline(KC_ESC, true) == true);
+    (void)pipeline(KC_ESC, false);
+    r = 0; g = 0; b = 0;
+    CHECK(vim_insert_flash_color(&r, &g, &b));
+    CHECK(r == 0xFF && g == 0x80 && b == 0x00);
+
+    /* 色值 0 = 不覆盖：判据仍真，但 helper 返回 false 且不动输出 */
+    cfg_none          = g_cfg;
+    cfg_none.insert_flash_color = 0;
+    (void)pipeline_cfg(KC_Z, true, &cfg_none); /* 让 s_cfg 指向 cfg_none */
+    r = 0x11; g = 0x22; b = 0x33;
+    CHECK(vim_insert_flash() == true);         /* 窗口判据本身不受色值影响 */
+    CHECK(!vim_insert_flash_color(&r, &g, &b));
+    CHECK(r == 0x11 && g == 0x22 && b == 0x33);
+
+    /* 换个非零色值：输出必须跟着 cfg 走（证明读的是 cfg，不是局部宏） */
+    cfg_odd          = g_cfg;
+    cfg_odd.insert_flash_color = 0x123456;
+    (void)pipeline_cfg(KC_Z, true, &cfg_odd);
+    r = 0; g = 0; b = 0;
+    CHECK(vim_insert_flash_color(&r, &g, &b));
+    CHECK(r == 0x12 && g == 0x34 && b == 0x56);
+
+    /* 离开 Insert / vim 关：helper 与判据一起变假 */
+    kv_set_mode(KV_MODE_NORMAL);
+    r = 0x11; g = 0x22; b = 0x33;
+    CHECK(!vim_insert_flash_color(&r, &g, &b));
+    CHECK(r == 0x11 && g == 0x22 && b == 0x33);
+    kv_set_mode(KV_MODE_INSERT);
+    kv_disable();
+    r = 0x11; g = 0x22; b = 0x33;
+    CHECK(!vim_insert_flash_color(&r, &g, &b));
+    CHECK(r == 0x11 && g == 0x22 && b == 0x33);
+
+    /* 复位并把 s_cfg 交回默认实例 */
+    reset_engine();
+    (void)pipeline(KC_Z, true);
+}
+
 int main(void) {
     /* The s_cfg==NULL case must be observed before the first pipeline call. */
     test_rgb_led_index_null();
@@ -345,6 +431,8 @@ int main(void) {
     test_rgb_off_red();
     test_rgb_mouse_precedence();
     test_insert_flash();
+    test_insert_flash_wraparound();
+    test_insert_flash_color();
     printf("rgb: pass=%d fail=%d\n", g_pass, g_fail);
     return g_fail ? 1 : 0;
 }
