@@ -79,7 +79,7 @@ static bool pipeline(uint16_t kc, bool pressed) {
 static void reset_engine(void) {
     g_now = 1000; s_mods = 0; s_reg_n = 0;
     layer_state = 0; default_layer_state = 0;
-    vim_glue_init();
+    vim_keymap_common_init();
     kv_set_mode(KV_MODE_NORMAL);
 }
 

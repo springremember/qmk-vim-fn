@@ -148,8 +148,10 @@ static void test_strict_clear(void) {
 static void test_insert(void) {
     fresh(); kv_set_mode(KV_MODE_INSERT); rec_start();
     key(KV_A); CHECK_SEQ(KV_A);
+    /* Esc in INSERT is a plain host Esc now: the engine stays in INSERT (the
+     * shared keymap layer owns the Insert<->Normal Esc toggle). */
     rec_start(); key(KV_ESC); CHECK_SEQ(KV_ESC);
-    CHECK(kv_get_mode() == KV_MODE_NORMAL); /* Esc still emits, and leaves INSERT */
+    CHECK(kv_get_mode() == KV_MODE_INSERT);
     fresh(); key(KV_I); CHECK(rec_count() == 0); CHECK(kv_get_mode() == KV_MODE_INSERT);
     fresh(); key(KV_C_I); CHECK_SEQ(KV_HOME); CHECK(kv_get_mode() == KV_MODE_INSERT);
     fresh(); key(KV_A); CHECK_SEQ(KV_RGHT);

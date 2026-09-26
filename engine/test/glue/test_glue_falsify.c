@@ -164,7 +164,7 @@ static void reset_engine(void) {
     for (int i = 0; i < HIT_CAP; i++) s_hits[i] = 0;
     layer_state = 0;
     default_layer_state = 0;
-    vim_glue_init(); /* kv_init + enable + INSERT */
+    vim_keymap_common_init(); /* shared statics + kv_init/enable/INSERT */
 }
 
 static void fn_on(void) { layer_state = (1UL << 4); }
@@ -363,18 +363,21 @@ static void test_falsify_hook_pairing(void) {
  * F. Caps long press returns to the exact entry mode (Visual -> Visual)
  * ====================================================================== */
 static void test_falsify_caps(void) {
-    /* Insert -> Normal short press, stable. */
+    /* tap (vim on, INSERT): press previews NORMAL, release toggles vim OFF. */
     reset_engine();
     CHECK(feed(KC_CAPS, true) == false);
     CHECK(kv_get_mode() == KV_MODE_NORMAL);
+    CHECK(kv_vim_enabled() == true);
     CHECK(feed(KC_CAPS, false) == false);
-    CHECK(kv_get_mode() == KV_MODE_NORMAL);
+    CHECK(kv_vim_enabled() == false);
+    CHECK(s_orphan == 0);
 
-    /* Normal short press stays Normal: Normal is the resting mode (no toggle
-     * back to Insert via Caps). */
+    /* tap again (vim off): release toggles vim back ON, restarting in INSERT. */
     CHECK(feed(KC_CAPS, true) == false);
+    CHECK(kv_vim_enabled() == false);
     CHECK(feed(KC_CAPS, false) == false);
-    CHECK(kv_get_mode() == KV_MODE_NORMAL);
+    CHECK(kv_vim_enabled() == true);
+    CHECK(kv_get_mode() == KV_MODE_INSERT);
 
     reset_engine(); /* leave the suite in a clean INSERT state */
 
@@ -393,6 +396,7 @@ static void test_falsify_caps(void) {
     } else {
         g_pass++;
     }
+    CHECK(kv_vim_enabled() == true);
 }
 
 /* ======================================================================
@@ -440,25 +444,26 @@ static void test_falsify_shift_esc_vim_off(void) {
 }
 
 /* ======================================================================
- * H. Fn+Caps: press swallowed and paired; release swallowed via the pairing
- *    table even if Fn is released first
+ * H. Fn+Caps behaves exactly like a bare Caps (no special case): press
+ *    swallowed and paired, release toggles vim, even if Fn is released first
  * ====================================================================== */
 static void test_falsify_fn_caps(void) {
     reset_engine();
     fn_on();
     CHECK(kv_vim_enabled() == true);
 
-    /* Caps released AFTER Fn: both edges consumed. */
+    /* Caps released AFTER Fn: both edges consumed, toggle happens on release. */
     CHECK(feed(KC_CAPS, true) == false);
-    CHECK(kv_vim_enabled() == false);
+    CHECK(kv_vim_enabled() == true);      /* toggle deferred to release */
     CHECK(feed(KC_CAPS, false) == false); /* Fn still down; step 8 pair */
+    CHECK(kv_vim_enabled() == false);     /* release toggled off */
     CHECK(s_orphan == 0);
     fn_off();
 
     /* Now turn vim back on, but release Fn BEFORE Caps. */
     fn_on();
     CHECK(feed(KC_CAPS, true) == false);
-    CHECK(kv_vim_enabled() == true);
+    CHECK(kv_vim_enabled() == false);
     fn_off(); /* Fn released first */
     if (feed(KC_CAPS, false) != false) {
         g_fail++;
@@ -467,6 +472,7 @@ static void test_falsify_fn_caps(void) {
     } else {
         g_pass++;
     }
+    CHECK(kv_vim_enabled() == true); /* release toggled on regardless of Fn */
     CHECK(s_orphan == 0);
 }
 
@@ -531,37 +537,39 @@ static void test_falsify_held_overreach(void) {
  * J. Caps / Fn release ordering must not strand a Caps pair entry or leak an
  *    orphan Caps key-up, and a following normal Caps edge pair stays paired.
  * ====================================================================== */
-/* Detects a leftover CAPS entry in the shared pairing table: with vim OFF a
- * Caps press/release must pass through both edges.  A stale pair entry would
- * swallow the release (orphan key-up / stuck Caps). */
+/* Detects a leftover CAPS entry in the shared pairing table: Caps is always
+ * owned now (it is the vim switch), so a fresh press/release must be consumed
+ * on both edges with the release reaching the pairing table.  A stale pair
+ * entry would drop the *press* into the pairing table instead, and the release
+ * would then be consumed from the wrong entry -> orphan key-up.  We assert the
+ * full press/release round trip is clean. */
 static void check_caps_table_clean(void) {
-    kv_disable();
-    if (feed(KC_CAPS, true) != true) {
+    bool en0 = kv_vim_enabled();
+    int  nb  = s_orphan;
+    bool p   = feed(KC_CAPS, true);
+    bool r   = feed(KC_CAPS, false);
+    if (p != false || r != false) {
         g_fail++;
-        printf("FAIL %s:%d  residual Caps state: pass-through press was consumed\n",
-               __FILE__, __LINE__);
+        printf("FAIL %s:%d  residual Caps state: press=%d release=%d (expected consumed)\n",
+               __FILE__, __LINE__, (int)p, (int)r);
     } else {
         g_pass++;
     }
-    if (feed(KC_CAPS, false) != true) {
-        g_fail++;
-        printf("FAIL %s:%d  residual Caps pair: pass-through release swallowed -> stuck Caps\n",
-               __FILE__, __LINE__);
-    } else {
-        g_pass++;
-    }
-    CHECK(s_orphan == 0);
-    CHECK(reg_count(KC_CAPS) == 0); /* host Caps released */
+    CHECK(s_orphan == nb);                 /* no orphan Caps key-up */
+    CHECK(kv_vim_enabled() == !en0);       /* the tap toggled exactly once */
+    CHECK(reg_count(KC_CAPS) == 0);        /* host Caps never registered */
 }
 
 static void test_falsify_caps_fn_ordering(void) {
-    /* (1) Caps press -> Fn down -> Fn up -> Caps release */
+    /* (1) Caps press -> Fn down -> Fn up -> Caps release.  Release is a tap:
+     * toggles vim off, and the pair is still owned. */
     reset_engine(); /* INSERT, vim on */
     CHECK(feed(KC_CAPS, true) == false);
     CHECK(kv_get_mode() == KV_MODE_NORMAL);
     fn_on();
     fn_off(); /* Fn released first */
     CHECK(feed(KC_CAPS, false) == false); /* paired release consumed */
+    CHECK(kv_vim_enabled() == false);     /* tap toggled vim off */
     CHECK(s_orphan == 0);
     check_caps_table_clean();
 
@@ -575,7 +583,8 @@ static void test_falsify_caps_fn_ordering(void) {
     fn_off();
     check_caps_table_clean();
 
-    /* (3) same as (2) but long-pressed across Fn: release must still pair. */
+    /* (3) same as (2) but long-pressed across Fn: release must still pair, and
+     * a long press does NOT toggle vim. */
     reset_engine();
     g_now = 1000;
     CHECK(feed(KC_CAPS, true) == false);
@@ -583,36 +592,35 @@ static void test_falsify_caps_fn_ordering(void) {
     g_now += 250; /* exceed hold_ms */
     CHECK(feed(KC_CAPS, false) == false);
     CHECK(kv_get_mode() == KV_MODE_INSERT); /* long press restores entry mode */
+    CHECK(kv_vim_enabled() == true);        /* long press never toggles */
     CHECK(s_orphan == 0);
     fn_off();
     check_caps_table_clean();
 
-    /* A following normal Caps press/release must stay paired (no stuck Caps):
-     * Insert -> Normal on the first tap; a second tap stays Normal (no-op). */
+    /* A following normal Caps tap toggles vim and stays fully paired. */
     reset_engine();
-    CHECK(feed(KC_CAPS, true) == false);
-    CHECK(kv_get_mode() == KV_MODE_NORMAL);
-    CHECK(feed(KC_CAPS, false) == false);
-    CHECK(kv_get_mode() == KV_MODE_NORMAL);
+    CHECK(kv_vim_enabled() == true);
     CHECK(feed(KC_CAPS, true) == false);
     CHECK(feed(KC_CAPS, false) == false);
-    CHECK(kv_get_mode() == KV_MODE_NORMAL);
+    CHECK(kv_vim_enabled() == false);  /* tap 1: off */
+    CHECK(feed(KC_CAPS, true) == false);
+    CHECK(feed(KC_CAPS, false) == false);
+    CHECK(kv_vim_enabled() == true);   /* tap 2: on */
     CHECK(reg_count(KC_CAPS) == 0);
     CHECK(s_orphan == 0);
 
-    /* Repeated Fn+Caps enable/disable cycles must always pair the Caps edges;
-     * afterwards a normal (vim-off) Caps press/release passes through. */
+    /* Repeated Caps toggles must always pair the Caps edges and end enabled. */
     reset_engine();
+    CHECK(kv_vim_enabled() == true);
     for (int i = 0; i < 3; i++) {
-        fn_on();
+        int nb = s_orphan;
         CHECK(feed(KC_CAPS, true) == false);
-        CHECK(kv_vim_enabled() == (i % 2 != 0)); /* 1 -> off -> on -> off */
-        fn_off();
-        CHECK(feed(KC_CAPS, false) == false); /* paired release */
-        CHECK(s_orphan == 0);
+        CHECK(feed(KC_CAPS, false) == false);
+        CHECK(kv_vim_enabled() == (i % 2 == 0 ? false : true)); /* on->off->on->off */
+        CHECK(s_orphan == nb);
     }
     CHECK(kv_vim_enabled() == false);
-    check_caps_table_clean();
+    check_caps_table_clean(); /* toggles back on; leaves suite enabled */
 }
 
 /* ======================================================================
@@ -756,8 +764,8 @@ static void test_falsify_held_axes_and_mode(void) {
     CHECK(reg_count(KC_RGHT) == 0);
     CHECK(s_orphan == 0);
 
-    /* held l, then Fn+Caps toggles vim off: the real disable path force-
-     * releases immediately and still consumes the physical release. */
+    /* held l, then Caps tap toggles vim off on release: the real disable path
+     * force-releases immediately and still consumes the physical release. */
     reset_engine();
     kv_set_mode(KV_MODE_NORMAL);
     CHECK(feed(KC_L, true) == false);
@@ -765,10 +773,11 @@ static void test_falsify_held_axes_and_mode(void) {
     CHECK(reg_count(KC_RGHT) == 1);
     fn_on();
     CHECK(feed(KC_CAPS, true) == false);
+    CHECK(kv_vim_enabled() == true);      /* toggle deferred to release */
+    CHECK(feed(KC_CAPS, false) == false); /* release toggles off -> release_all */
     CHECK(kv_vim_enabled() == false);
-    CHECK(reg_count(KC_RGHT) == 0); /* released by set_vim_enabled -> release_all */
+    CHECK(reg_count(KC_RGHT) == 0);
     fn_off();
-    CHECK(feed(KC_CAPS, false) == false);
     CHECK(feed(KC_L, false) == false);
     CHECK(reg_count(KC_RGHT) == 0);
     CHECK(s_orphan == 0);

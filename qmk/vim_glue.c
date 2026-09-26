@@ -83,6 +83,8 @@ static int arrow_index(uint16_t keycode) {
     return -1;
 }
 
+static bool s_rshift_lazy; // Right Shift lazily asserted Left Shift
+
 void vim_glue_release_all(void) {
     for (int i = 0; i < 4; i++) {
         if (s_arrow_reg[i]) {
@@ -90,6 +92,10 @@ void vim_glue_release_all(void) {
             s_arrow_reg[i] = false;
         }
         s_held_expect[i] = false; // a mode switch cancels the pending hold too
+    }
+    if (s_rshift_lazy) {
+        unregister_mods(MOD_BIT_LSHIFT);
+        s_rshift_lazy = false;
     }
 }
 
@@ -128,6 +134,37 @@ static bool pair_take(uint16_t keycode) {
 }
 
 void vim_glue_swallow(uint16_t keycode) { pair_add(keycode); }
+
+// --------------------------------------------------------------------------
+// Right-Shift lazy send (design §4.10 / readme §1).
+//
+// Under vim the physical Right Shift is never registered on its own: a lone
+// Shift press/release is what flips the host OS / IME input state, so Right
+// Shift alone outputs nothing.  While it is physically held, the first *other*
+// key lazily asserts Left Shift (held until Right Shift is released), which
+// yields RightShift+a = A and RightShift+Ctrl+C = Ctrl+Shift+C with no lone
+// Shift ever reaching the host.  Modifiers, Esc and QK layer keys are exempt
+// (they must pass through untouched).  With vim off, Right Shift is an
+// ordinary modifier (vim_glue_engine returns before this).
+// --------------------------------------------------------------------------
+bool vim_is_layer_key(uint16_t keycode); // vim_keymap_common.c
+
+static bool rshift_held(void) { return (s_shadow & MOD_BIT_RSHIFT) != 0; }
+
+// True when the key must pass straight through without the lazy Shift, even if
+// Right Shift is held (modifiers have their own report bits; Esc and QK layer
+// keys must never be wrapped).
+static bool rshift_exempt(uint16_t keycode) {
+    return IS_MODIFIER_KEYCODE(keycode) || keycode == KC_ESC || vim_is_layer_key(keycode);
+}
+
+// Assert the lazily-held Left Shift for the next pass-through key (idempotent).
+static void rshift_lazy_assert(void) {
+    if (!s_rshift_lazy) {
+        register_mods(MOD_BIT_LSHIFT);
+        s_rshift_lazy = true;
+    }
+}
 
 // --------------------------------------------------------------------------
 // Emit callback (design §4.12 #5): the engine hands us a host keycode with
@@ -197,6 +234,7 @@ void vim_glue_init(void) {
 
     s_shadow  = 0;
     s_pair_n  = 0;
+    s_rshift_lazy = false;
     for (int i = 0; i < 4; i++) {
         s_held_expect[i] = false;
         s_arrow_reg[i]   = false;
@@ -214,6 +252,10 @@ bool vim_glue_engine(uint16_t keycode, keyrecord_t *record) {
     if (!record->event.pressed) {
         // key-up: pass through unless the matching press was consumed.  The
         // held-motion arrow is unregistered here (design §4.10).
+        if (keycode == KC_RSFT && s_rshift_lazy) {
+            unregister_mods(MOD_BIT_LSHIFT); // drop the lazily-held Shift
+            s_rshift_lazy = false;
+        }
         if (mi >= 0) {
             s_held_expect[mi] = false;
             if (s_arrow_reg[mi]) {
@@ -225,6 +267,13 @@ bool vim_glue_engine(uint16_t keycode, keyrecord_t *record) {
     }
 
     if (!kv_vim_enabled()) return true;
+
+    // Right Shift: never registered on its own (that is what trips the host /
+    // IME); its release is consumed by the pairing table.
+    if (keycode == KC_RSFT) {
+        pair_add(keycode);
+        return false;
+    }
 
     // Modifiers never feed the engine and never clear pending: their physical
     // state is already captured in step 0's shadow.  Clearing here would break
@@ -249,6 +298,7 @@ bool vim_glue_engine(uint16_t keycode, keyrecord_t *record) {
             return false;
         }
         if (kv_pending()) kv_cancel(); // strict clear: non-vim key abandons pending
+        if (rshift_held() && !rshift_exempt(keycode)) rshift_lazy_assert(); // Shift wins
         return true;                   // CAG: QMK handles it
     }
 
@@ -264,6 +314,7 @@ bool vim_glue_engine(uint16_t keycode, keyrecord_t *record) {
     // low byte happens to be 0x29).
     if (!kv_is_vim_key(kc) && keycode != KC_ESC) {
         if (kv_pending()) kv_cancel();
+        if (rshift_held() && !rshift_exempt(keycode)) rshift_lazy_assert(); // Shift+key
         return true;
     }
 
@@ -279,5 +330,6 @@ bool vim_glue_engine(uint16_t keycode, keyrecord_t *record) {
         }
         return false;
     }
+    if (rshift_held() && !rshift_exempt(keycode)) rshift_lazy_assert();
     return true;
 }

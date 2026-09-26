@@ -32,7 +32,7 @@
 | 合并 | `J` | `End`,`Delete` | |
 | 撤销 | `u` | `Ctrl+Z`（**单次**） | E4 |
 | 重复 | `.` | 重放上一命令 token | A2 |
-| Normal Esc 透传 | `Esc`（Normal） | 发真实 `Esc` | |
+| Normal Esc 透传 | `Esc`（Normal） | 发真实 `Esc`，回 Insert | |
 | replace 透传 | `R` / `Shift+R` | 原样透传（不进入 replace 模式） | |
 
 ## 2. 操作符 + 移动
@@ -131,7 +131,8 @@
 | 行尾插入 | `A` | `End` → Insert | |
 | 下方开行 | `o` | `End`,`Shift+Enter` → Insert | |
 | 上方开行 | `O` | `Home`,`Shift+Enter`,`↑` → Insert | |
-| Esc 进入 Normal | Insert 下 `Esc` | 发真实 `Esc`，并转入 Normal | |
+| Esc 进入 Normal | Insert 下 `Esc`（非宽限） | 吞键，转入 Normal，不发 Esc | |
+| Esc 宽限内 | Normal->Insert Esc 后 3s 内 `Esc` | 发真实 Esc，留 Insert，重置 3s | |
 | 普通字符 | Insert 下 `a` | 透传字符 | |
 
 ## 9. pending 严格清空
@@ -160,9 +161,13 @@
 | 松开不卡方向键 | 松开 `h` | 宿主 `←` 被释放 | |
 | held motion + 修饰键（仅 hjkl） | Normal `Win`+`h` | `Win+←` 方向键（hold），不把裸 `h` 透传 | |
 | held motion + 修饰键（前缀不例外） | `d` `Ctrl`+`h` | 严格清空 `d`，`Ctrl+h` 透传 | |
-| Caps 单击进 Normal | `Caps` 短按 | 进入 Normal | |
-| Caps 在 Normal 再点 | Normal `Caps` 短按 | 无作用（停留 Normal） | |
+| Caps 单击 | `Caps` 单击 | 切换 vim 开/关（开=Insert 起） | |
 | Caps 长按 | `Caps` 长按 ≥200ms | 临时 Normal，松手回原模式 | |
+| Esc 三态 | Insert 宽限内 / 宽限外、Normal 空闲 | 见 §8 | |
+| 右Shift 单独 | 右Shift 按/松 | 无输出（不注册 Shift） | |
+| 右Shift+字母 | Insert 下 `右Shift`+`a` | 瞬时 `Shift+a`（=A），无孤立 Shift | |
+| 右Shift+修饰 | `右Shift`+`Ctrl`+`C` | `Ctrl+Shift+C` | |
+| 右Shift 关闭 vim | vim off 下 `右Shift` | 普通右 Shift | |
 
 ## 11. emit 非阻塞
 | 用例 | 输入 | 期望 | 关联 |

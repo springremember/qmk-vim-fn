@@ -117,7 +117,7 @@ static bool pipeline(uint16_t kc, bool pressed) {
 static void reset_engine(void) {
     g_now = 1000; s_mods = 0; s_reg_n = 0;
     layer_state = 0; default_layer_state = 0;
-    vim_glue_init();
+    vim_keymap_common_init();
     kv_set_mode(KV_MODE_NORMAL);
     g_emit_n = 0;
 }
@@ -140,8 +140,11 @@ static void test_op_modifier_second(const char *name, uint16_t op, uint16_t mod,
         g_fail++; printf("FAIL %s: operator 0x%04X did not create pending\n", name, op); return;
     }
 
-    /* critical: the bare modifier passes and leaves the operator pending */
-    CHECK(pipeline(mod, true) == true);
+    /* critical: the bare modifier passes and leaves the operator pending.
+     * Right Shift is the one documented exception: it is swallowed (lazy
+     * Shift / no lone Shift) but must still leave the operator pending. */
+    bool rsh = (mod == KC_RSFT);
+    CHECK(pipeline(mod, true) == (rsh ? false : true));
     if (kv_pending() != true) {
         g_fail++;
         printf("FAIL %s: modifier 0x%04X cleared pending (d+Shift+$ regression)\n", name, mod);
@@ -160,7 +163,7 @@ static void test_op_modifier_second(const char *name, uint16_t op, uint16_t mod,
     CHECK(kv_get_mode() == KV_MODE_NORMAL);
     CHECK(kv_pending() == false);
     CHECK(pipeline(second, false) == false);
-    CHECK(pipeline(mod, false) == true);
+    CHECK(pipeline(mod, false) == (rsh ? false : true));
     CHECK(pipeline(op, false) == false);
 }
 
@@ -202,15 +205,16 @@ static void test_mod_alone(uint16_t prefix_a, uint16_t prefix_b,
     }
 
     g_emit_n = 0;
-    if (pipeline(mod, true) != true) {
+    bool rsh = (mod == KC_RSFT); /* Right Shift is swallowed (lazy Shift) */
+    if (pipeline(mod, true) != (rsh ? false : true)) {
         g_fail++;
-        printf("FAIL mod-alone(%s): bare modifier 0x%04X was consumed (should pass)\n", mname, mod);
+        printf("FAIL mod-alone(%s): bare modifier 0x%04X wrong pass/consume\n", mname, mod);
     } else g_pass++;
     CHECK(kv_pending() == true);                                 /* never cleared */
     CHECK((vim_glue_mods() & MOD_BIT(mod)) != 0);                /* shadow only */
     CHECK(g_emit_n == 0);                                        /* no emission */
 
-    CHECK(pipeline(mod, false) == true);
+    CHECK(pipeline(mod, false) == (rsh ? false : true));
     CHECK(kv_pending() == true);
     CHECK((vim_glue_mods() & MOD_BIT(mod)) == 0);
 

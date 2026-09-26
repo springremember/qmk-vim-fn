@@ -345,7 +345,7 @@ void kv_set_emit(kv_emit_fn fn);
 /* 由 housekeeping 调用：按计时发送 emit 队列（替代阻塞的 wait_ms） */
 void kv_task(uint32_t now_ms);
 
-/* ---- 查询/设置接口（供键盘层：Caps 恢复、RGB 指示、Fn+Caps 开关、前置分支取消）---- */
+/* ---- 查询/设置接口（供键盘层：Caps 恢复、RGB 指示、vim 开关、前置分支取消）---- */
 kv_mode_t kv_get_mode(void);        /* 当前模式（含 Visual/Visual-Line/Mouse） */
 bool      kv_vim_enabled(void);     /* vim 总开关 */
 bool      kv_pending(void);         /* 是否有 pending（计数/操作符/前缀/缩进） */
@@ -414,10 +414,11 @@ while (queue_has()) {
 
 ### 4.9 模式与转移
 - **NORMAL**：单键立即 emit；数字→`Cnt`；`d/y/c`→`Op`；`<`/`>`→`Ang`；`g`→`Gp`；`Z`→`Zp`；
-  `i/I/a/A/o/O`→INSERT；`v/V`→VISUAL；`Esc`→透传。
+  `i/I/a/A/o/O`→INSERT；`v/V`→VISUAL；`Esc`→**交键盘层 Esc 切换**（见下）。
   - 变更类 `s/C/S/c`：进入 Insert（`c` 为操作符，其"改"结果同样进入 Insert）。
 - **OP_PENDING（瞬态）**：移动设区间→emit；非期望键→清空+重新识别；Esc→取消。
-- **INSERT**：普通字符透传；`Esc`=真 Esc 发宿主**并转入 NORMAL**（`Caps` 与 `Esc` 皆可离开 Insert）。
+- **INSERT**：普通字符透传；`Esc` **引擎不再处理**（`kv_kbd` 对 INSERT 一律 `KV_PASSTHROUGH`），
+  由共享 keymap 层步骤 6 `esc_process()` 决定：非宽限时吞键转 NORMAL，宽限内透传真实 Esc（见 §4.12）。
 - **VISUAL / VISUAL_LINE**：键集 = 移动（含计数 `Nm`）+ `d/y/c/x/s/p`。移动按 Shift 变体扩展选区；
   `d/x`=剪选区、`y`=复制、`c/s`=剪+进 INSERT、`p`=粘贴，完成后回 NORMAL。
   **未列键（数字、`g`、`Z`、`<`/`>`、`i`/`a` 等）为非法键 → 吞键留在 Visual**（不退出、不插入、
@@ -428,7 +429,7 @@ while (queue_has()) {
   拖动）、`Enter`=右键；**`Shift` 不触发退出**（press 吞、release 透传，供滚轮组合）；**`Ctrl`/`Alt`/`GUI`
   按下即退出**（强制反注册全部按住的鼠标键/轴后，在进入前模式**重新识别该修饰键**，其 release 随后透传）；
   **其它非修饰键**退出 MOUSE 并**强制反注册全部按住的鼠标键/轴**（指针四向、左右键、滚轮）后，
-  在进入前模式**重新识别该键**；`Esc` 在 MOUSE 内同此规则（退出+重识别，不直接发真 Esc）。
+  在进入前模式**重新识别该键**；`Esc` 在 MOUSE 内同此规则（退出+重识别，随后由 `esc_process` 按新规则处理）。
   RGB 指示为**青**（详见 [`readme.md`](readme.md) §8）。
 
 ### 4.10 修饰键、key-up 与输入保真
@@ -443,6 +444,12 @@ while (queue_has()) {
 - **修饰键影子**：glue 维护**物理**修饰键影子（记录每个修饰键的物理 down/up，不依赖 `get_mods()`，
   免受 oneshot/锁存干扰），用于 bootloader 组合判定与 Shift 折叠；**不打包、不 `clear_mods`/`set_mods`**
   （键盘层"剥修饰发裸键"属例外，见 §2.1，需临时 clear 并恢复）。
+- **右 Shift 懒发送（glue）**：vim 开启时，物理右 Shift **单独按下/抬起不注册任何键**（孤立 Shift 会
+  触发宿主输入法切换）。当右 Shift 按住期间有其它键（非修饰键、非 Esc、非层键）透传时，glue 才**临时
+  补注册左 Shift**，并保持到右 Shift 抬起再反注册——因此 `右Shift+a`=`A`、`右Shift+Ctrl+C`=`Ctrl+Shift+C`，
+  且宿主永不见孤立 Shift。右 Shift 的 press/release 由共享配对表吞掉。修饰键/Esc/层键豁免（不包装）。
+  vim 关闭时右 Shift 为普通修饰键。`vim_glue_mods()` 影子**照常记录右 Shift**，故 Normal 下的 Shift 折叠
+  （`右Shift+p`→`P`）与 `右Shift+Esc`→`` ` `` 仍成立。
 - **emit 非阻塞**：`kv_task()` 按计时发送；不使用 `wait_ms`。
 
 ### 4.12 glue 层（QMK 适配层）职责规格
@@ -466,8 +473,8 @@ void vim_glue_release_all(void);          /* 反注册 held motion 方向键（�
 1. **key-down 分发**（在 `vim_glue_engine` 内）：纯 Shift → 折叠为 `KV_C_*` 喂引擎；带 Ctrl/Alt/GUI →
    不喂、放行 QMK——**例外**：Normal 下**裸 `h/j/k/l`**仍作方向键（与所按 Ctrl/Alt/GUI 组合，如
    `Win+h`→`Win+←`），pending 前缀（`3l`/`dl`）仍走严格透传；**Esc 不做任何键盘层处理**（引擎已实现
-   pending 取消/Visual 退出/真 Esc 透传、Insert Esc 转 Normal，CONSUMED 自动配对 release——两键盘的
-   pr_esc 整段删除）。
+   pending 取消/Visual 退出；Insert/Normal 的 Esc 切换由共享 keymap 层 `esc_process` 负责）。
+   **右 Shift 懒发送**（见 §4.10）：单独不注册，按它键时临时补左 Shift。
 2. **统一 press/release 配对表**：引擎 CONSUMED 与键盘层 swallow 的键共用**同一张表**
    （keymap 禁止再自建 swallow 旗标/数组）；表满策略：最旧条目被覆盖（新键优先）。
 3. **held motion**：`h/j/k/l` 的 register/unregister；切换模式/禁用/进 MOUSE 时强制反注册。
@@ -480,20 +487,21 @@ void vim_glue_release_all(void);          /* 反注册 held motion 方向键（�
 **共享 keymap 层**（`qmk/vim_keymap_common.{h,c}`；两键盘共用，禁止在 keymap 复制实现——
 历史 bug 全在此段；QK61 现行实现与 NUT65 V1.0 逐行比对确认以下均为 spec 级）：
 - **`vim_pipeline_process(keycode, record, cfg)` — 单源拦截链**（取代两键盘各自手写的十段顺序）：
-  ```
-  0 影子更新(vim_glue_mod_update)     ← 先于一切吞键（myfn 吞修饰键后 get_mods 失效）
-  1 cfg->hook_pre                     ← NUT65: pr_boot_combo(影子判定)/电源组合；QK61: NULL
-  2 myfn 骨架                         ← 层键豁免(fn 1.4.0)+未定义(含修饰键)吞键+已声明调 cfg->myfn(返回 bool:消费/放行)
-  3 cfg->hook_post_myfn               ← QK61: 闪灯/Ctrl+Alt+Del/Fn+Esc 复位(3s 用共享 hold helper，
-                                         配对走 glue 表)；NUT65: NULL
-  4 鼠标模式状态机                     ← 见下 vim_mouse_cfg_t
-  5 Shift+Esc(cfg->shift_esc_enable)  ← LSFT+Esc=~/RSFT+Esc=`(仅 Insert)；NUT65/QK61 同实现
-  6 Caps tap/hold 状态机              ← 短按进 Normal（已在 Normal 时无作用）/长按临时 Normal/回原模式/Fn+Caps 开关 vim
-  7 §2.1 快捷键表                     ← 两键盘完全一致(BSPC/Space/-/Shift+=/Ctrl+F/B//)：
-                                         base+mods 匹配+kv_cancel 前置+send_plain_tap
-  8 vim_glue_engine                   ← Esc 直落于此（pr_esc 已删）
-  ```
-  每段显式命名+前置条件注释（消除 A-P1-7 隐式顺序契约）。
+   ```
+   0 影子更新(vim_glue_mod_update)     ← 先于一切吞键（myfn 吞修饰键后 get_mods 失效）
+   1 cfg->hook_pre                     ← NUT65: pr_boot_combo(影子判定)/电源组合；QK61: NULL
+   2 myfn 骨架                         ← 层键豁免(fn 1.4.0)+未定义(含修饰键)吞键+已声明调 cfg->myfn(返回 bool:消费/放行)
+   3 cfg->hook_post_myfn               ← QK61: 闪灯/Ctrl+Alt+Del/Fn+Esc 复位(3s 用共享 hold helper，
+                                          配对走 glue 表)；NUT65: NULL
+   4 鼠标模式状态机                     ← 见下 vim_mouse_cfg_t
+   5 Shift+Esc(cfg->shift_esc_enable)  ← LSFT+Esc=~/RSFT+Esc=`(仅 Insert)；RSFT 由 glue 懒发送剥离
+   6 Esc 切换(esc_process)             ← Insert<->Normal 切换 + 3s 宽限（仅 Normal->Insert 开启，窗口内重置）
+   7 Caps tap/hold 状态机              ← 单击开关 vim(开=从 Insert 起)/长按临时 Normal/回原模式；Fn+Caps 无特殊
+   8 §2.1 快捷键表                     ← 两键盘完全一致(BSPC/Space/-/Shift+=/Ctrl+F/B//)：
+                                          base+mods 匹配+kv_cancel 前置+send_plain_tap
+   9 vim_glue_engine                   ← 右 Shift 懒发送 + 引擎分发（Insert Esc 直落透传）
+   ```
+   每段显式命名+前置条件注释（消除 A-P1-7 隐式顺序契约）。
 - **鼠标模式状态机**（参数化；enter/exit、200ms 短/长按、`hjkl`/`Shift+J`/`Shift+K`/`Space`/`Enter`
   的 press/release 按"实际注册键"配对、`Shift` 不退出、`Ctrl`/`Alt`/`GUI` 按下退出+重识别、
   非修饰键退出强制释放全部鼠标键+重识别）：

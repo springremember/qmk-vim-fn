@@ -32,6 +32,19 @@
 
 ---
 
+## 2b. Esc / Caps / 右 Shift 行为变更（V2.x）
+
+- **Esc 切换**：Insert 按 `Esc` 改为**吞键进 Normal（不发 Esc）**；Normal 空闲按 `Esc` 发真实 `Esc` 并回 Insert。
+  引擎 `kv_kbd()` 对 Insert 一律 `KV_PASSTHROUGH`，Esc 切换移交共享 keymap 层步骤 6 `esc_process()`。
+- **Esc 宽限窗口（3s）**：仅由「Normal 空闲 Esc → Insert」开启；窗口内 Insert `Esc` 仍发真实 Esc 并重置计时；
+  窗口外 Insert `Esc` 进 Normal。其它进入 Insert 的路径（开机/Caps 开 vim/编辑命令）**无宽限**。
+- **Caps**：单击改为**开关 vim**（不再进 Normal）；长按=临时 Normal（保留）；**`Fn+Caps` 特殊处理取消**，等同裸 Caps；
+  `Caps` 始终被消费（永不作 Caps Lock，vim 关闭时单击=启用 vim）。
+- **右 Shift 懒发送**：vim 开启时孤立右 Shift 不发键（避免宿主输入法切换）；与它键同按才临时补左 Shift
+  （`右Shift+a`=`A`、`右Shift+Ctrl+C`=`Ctrl+Shift+C`）；`右Shift+Esc` 仍输出裸 `` ` ``；vim 关闭时右 Shift 正常。
+
+---
+
 ## 3. 状态机隐患修复（A1–A8）
 
 | 编号 | 问题 | 目标做法 |

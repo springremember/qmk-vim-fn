@@ -254,8 +254,8 @@ static void reset_engine(void) {
     s_post_calls = 0;
     layer_state = 0;
     default_layer_state = 0;
-    /* ensure a previous test cannot leave mouse mode latched */
-    vim_glue_init(); /* kv_init + enable + INSERT */
+    /* ensure a previous test cannot leave mouse/Caps/grace state latched */
+    vim_keymap_common_init(); /* resets shared statics + kv_init/enable/INSERT */
 }
 
 static void fn_on(void) { s_fn_active = true; layer_state = (1UL << 4); }
@@ -293,11 +293,11 @@ static void test_polarity_pairing(void) {
     CHECK(pipeline(KC_ESC, false) == false);
     CHECK(pipeline(KC_D, false) == false);
 
-    /* Insert Esc: real Esc both edges, and it leaves INSERT for NORMAL */
+    /* Insert Esc (no grace window): swallowed, drops to NORMAL, no host Esc */
     reset_engine();
-    CHECK(pipeline(KC_ESC, true) == true);
+    CHECK(pipeline(KC_ESC, true) == false);
     CHECK(kv_get_mode() == KV_MODE_NORMAL);
-    CHECK(pipeline(KC_ESC, false) == true);
+    CHECK(pipeline(KC_ESC, false) == false);
 
     /* keymap-layer shortcut (Space => Right) consumes press AND release */
     reset_engine();
@@ -342,53 +342,52 @@ static void test_myfn_skeleton(void) {
 }
 
 static void test_caps(void) {
-    /* short press Insert -> Normal */
+    /* tap (vim on): press previews NORMAL, release toggles vim OFF */
     reset_engine();
     CHECK(pipeline(KC_CAPS, true) == false);
-    CHECK(kv_get_mode() == KV_MODE_NORMAL);
+    CHECK(kv_vim_enabled() == true);          /* not toggled until release */
     CHECK(pipeline(KC_CAPS, false) == false);
-    CHECK(kv_get_mode() == KV_MODE_NORMAL);
+    CHECK(kv_vim_enabled() == false);         /* tap toggled vim off */
 
-    /* short press Normal -> stays Normal (no vim effect; Normal is the resting
-     * mode).  A pending prefix is still dropped (mode-switch strict clear). */
+    /* tap (vim off): release toggles vim back ON, restarting in INSERT */
     CHECK(pipeline(KC_CAPS, true) == false);
     CHECK(pipeline(KC_CAPS, false) == false);
-    CHECK(kv_get_mode() == KV_MODE_NORMAL);
+    CHECK(kv_vim_enabled() == true);
+    CHECK(kv_get_mode() == KV_MODE_INSERT);   /* enable restarts in INSERT */
 
-    /* Normal + pending `d` then Caps: stays Normal and cancels the pending. */
+    /* Normal + pending `d` then Caps: press drops the pending, release toggles */
     reset_engine();
     kv_set_mode(KV_MODE_NORMAL);
     CHECK(pipeline(KC_D, true) == false);      /* operator pending */
     CHECK(kv_pending() == true);
     CHECK(pipeline(KC_CAPS, true) == false);
+    CHECK(kv_pending() == false);              /* mode preview cleared pending */
     CHECK(pipeline(KC_CAPS, false) == false);
-    CHECK(kv_get_mode() == KV_MODE_NORMAL);
-    CHECK(kv_pending() == false);
+    CHECK(kv_vim_enabled() == false);          /* release toggled off */
 
-    /* long press Insert -> momentary, returns to Insert */
+    /* long press Insert -> momentary NORMAL, returns to Insert, vim stays on */
     reset_engine();
     g_now = 1000;
     CHECK(pipeline(KC_CAPS, true) == false);
     g_now += 250;
     CHECK(pipeline(KC_CAPS, false) == false);
     CHECK(kv_get_mode() == KV_MODE_INSERT);
+    CHECK(kv_vim_enabled() == true);
 
-    /* vim off: Caps passes through */
+    /* vim off: Caps is still owned (it is the vim switch), never Caps Lock */
     reset_engine();
     kv_disable();
-    CHECK(pipeline(KC_CAPS, true) == true);
-    CHECK(pipeline(KC_CAPS, false) == true);
+    CHECK(pipeline(KC_CAPS, true) == false);
+    CHECK(pipeline(KC_CAPS, false) == false);
+    CHECK(kv_vim_enabled() == true);          /* tap re-enabled vim */
 
-    /* Fn+Caps toggles vim (press and release both consumed) */
+    /* Fn+Caps behaves exactly like a bare Caps (no special case) */
     reset_engine();
     fn_on();
     CHECK(kv_vim_enabled() == true);
     CHECK(pipeline(KC_CAPS, true) == false);
-    CHECK(kv_vim_enabled() == false);
     CHECK(pipeline(KC_CAPS, false) == false);
-    CHECK(pipeline(KC_CAPS, true) == false);
-    CHECK(kv_vim_enabled() == true);
-    CHECK(pipeline(KC_CAPS, false) == false);
+    CHECK(kv_vim_enabled() == false);         /* toggled off, same as bare Caps */
     fn_off();
 }
 
@@ -451,10 +450,11 @@ static void test_mouse(void) {
     CHECK(pipeline(KC_LCTL, false) == true);
 
     /* Esc inside MOUSE exits (restores entry mode INSERT) and re-identifies;
-     * re-fed in INSERT, Esc emits the real Esc and now leaves for NORMAL. */
-    CHECK(pipeline(KC_ESC, true) == true);
+     * re-fed in INSERT with no grace window, Esc is swallowed and drops to
+     * NORMAL (the shared Esc-toggle rule). */
+    CHECK(pipeline(KC_ESC, true) == false);
     CHECK(kv_get_mode() == KV_MODE_NORMAL);
-    CHECK(pipeline(KC_ESC, false) == true);
+    CHECK(pipeline(KC_ESC, false) == false);
 
     /* trigger long press registers the Win/Mac modifier, does not toggle */
     reset_engine();
@@ -876,15 +876,17 @@ static void test_mouse_trigger_release_no_timer(void) {
 /* design §4.10 / readme §4: Shift+Esc (Insert only) => ~ / `, gated on vim and
  * on cfg->shift_esc_enable, and never in a CAG combo. */
 static void test_shift_esc_variants(void) {
-    /* RSHIFT+Esc -> bare ` (KC_GRV) */
+    /* RSHIFT+Esc -> bare ` (KC_GRV).  RSHIFT itself is never registered (lazy
+     * Shift), so both of its edges are consumed. */
     reset_engine();
     int grv_before = s_hits[KC_GRV];
-    CHECK(pipeline(KC_RSFT, true) == true);
+    CHECK(pipeline(KC_RSFT, true) == false);   /* swallowed, never a lone Shift */
+    CHECK((vim_glue_mods() & MOD_BIT_RSHIFT) != 0); /* but the shadow records it */
     CHECK(pipeline(KC_ESC, true) == false);
     CHECK(s_hits[KC_GRV] == grv_before + 1);
     CHECK(s_tap16_n >= 1 && s_tap16[s_tap16_n - 1] == KC_GRV);
     CHECK(pipeline(KC_ESC, false) == false);
-    CHECK(pipeline(KC_RSFT, false) == true);
+    CHECK(pipeline(KC_RSFT, false) == false);
 
     /* LSHIFT+Esc -> ~ content LSFT(KC_GRV) */
     reset_engine();
@@ -908,15 +910,17 @@ static void test_shift_esc_variants(void) {
     CHECK(pipeline(KC_LSFT, false) == true);
     CHECK(pipeline(KC_LCTL, false) == true);
 
-    /* cfg->shift_esc_enable == false disables the combo entirely */
+    /* cfg->shift_esc_enable == false disables the ~/` combo; the Esc then falls
+     * through to the shared Esc toggle (no window -> swallowed, drops NORMAL). */
     vim_cfg_t cfg = g_cfg;
     cfg.shift_esc_enable = false;
     reset_engine();
     grv_before = s_hits[KC_GRV];
     CHECK(pipeline_cfg(KC_LSFT, true, &cfg) == true);
-    CHECK(pipeline_cfg(KC_ESC, true, &cfg) == true);
+    CHECK(pipeline_cfg(KC_ESC, true, &cfg) == false);
     CHECK(s_hits[KC_GRV] == grv_before);
-    CHECK(pipeline_cfg(KC_ESC, false, &cfg) == true);
+    CHECK(kv_get_mode() == KV_MODE_NORMAL);
+    CHECK(pipeline_cfg(KC_ESC, false, &cfg) == false);
     CHECK(pipeline_cfg(KC_LSFT, false, &cfg) == true);
 }
 
@@ -959,10 +963,11 @@ static void test_vim_set_enabled_callback(void) {
     CHECK(kv_vim_enabled() == true);
     fn_on();
     CHECK(pipeline_cfg(KC_CAPS, true, &cfg) == false);
-    CHECK(s_set_enabled_calls == 1);
-    CHECK(s_set_enabled_last == false);          /* toggling off */
+    CHECK(s_set_enabled_calls == 0);             /* toggle happens on release */
     CHECK(kv_vim_enabled() == true);             /* callback did not change engine */
     CHECK(pipeline_cfg(KC_CAPS, false, &cfg) == false);
+    CHECK(s_set_enabled_calls == 1);
+    CHECK(s_set_enabled_last == false);          /* toggling off */
     fn_off();
 
     reset_engine();
@@ -970,6 +975,8 @@ static void test_vim_set_enabled_callback(void) {
     CHECK(kv_vim_enabled() == false);
     fn_on();
     CHECK(pipeline_cfg(KC_CAPS, true, &cfg) == false);
+    CHECK(s_set_enabled_calls == 0);
+    CHECK(pipeline_cfg(KC_CAPS, false, &cfg) == false);
     CHECK(s_set_enabled_calls == 1);
     CHECK(s_set_enabled_last == true);           /* toggling on */
     fn_off();
@@ -1353,15 +1360,16 @@ static void test_mouse_lbtn_threshold(void) {
     CHECK(kv_get_mode() == KV_MODE_MOUSE);
 }
 
-/* design §4.10: Shift+Esc is hijacked only in INSERT.  In NORMAL (mode !=
- * INSERT) both Shift and the real Esc pass through and no ~ / ` is emitted. */
+/* design §4.10: Shift+Esc is hijacked only in INSERT.  In NORMAL the ~/` combo
+ * is skipped; the Esc then takes the shared Esc-toggle path (real Esc back to
+ * INSERT) and no ~ / ` is emitted. */
 static void test_shift_esc_normal_passthrough(void) {
     reset_engine();
     kv_set_mode(KV_MODE_NORMAL);
     int grv_before = s_hits[KC_GRV];
     CHECK(pipeline(KC_LSFT, true) == true);
-    CHECK(pipeline(KC_ESC, true) == true);       /* mode != INSERT -> real Esc */
-    CHECK(kv_get_mode() == KV_MODE_NORMAL);
+    CHECK(pipeline(KC_ESC, true) == true);       /* NORMAL idle -> real Esc, to INSERT */
+    CHECK(kv_get_mode() == KV_MODE_INSERT);
     CHECK(s_hits[KC_GRV] == grv_before);
     CHECK(pipeline(KC_ESC, false) == true);
     CHECK(pipeline(KC_LSFT, false) == true);
@@ -1431,6 +1439,122 @@ static void test_hook_post_after_myfn(void) {
     fn_off();
 }
 
+/* ================= Esc toggle + grace window ================= */
+
+/* INSERT with no window: Esc is swallowed and drops to NORMAL (no host Esc). */
+static void test_esc_insert_no_window(void) {
+    reset_engine(); /* INSERT, no grace window */
+    CHECK(pipeline(KC_ESC, true) == false);
+    CHECK(kv_get_mode() == KV_MODE_NORMAL);
+    CHECK(pipeline(KC_ESC, false) == false);
+}
+
+/* NORMAL idle Esc: real Esc and back to INSERT, opening the grace window. */
+static void test_esc_normal_to_insert(void) {
+    reset_engine();
+    kv_set_mode(KV_MODE_NORMAL);
+    CHECK(pipeline(KC_ESC, true) == true);     /* passes -> host Esc */
+    CHECK(kv_get_mode() == KV_MODE_INSERT);
+    CHECK(pipeline(KC_ESC, false) == true);
+}
+
+/* Grace window: within 3 s of a Normal->Insert Esc, Insert Esc stays a real
+ * Esc (and resets the window); past 3 s it toggles to NORMAL again. */
+static void test_esc_grace_window(void) {
+    reset_engine();
+    kv_set_mode(KV_MODE_NORMAL);
+    g_now = 1000;
+    CHECK(pipeline(KC_ESC, true) == true);     /* open window at t=1000 */
+    CHECK(kv_get_mode() == KV_MODE_INSERT);
+    CHECK(pipeline(KC_ESC, false) == true);
+
+    /* 2999 ms later: still in window -> real Esc, stays INSERT */
+    g_now = 1000 + 2999;
+    CHECK(pipeline(KC_ESC, true) == true);
+    CHECK(kv_get_mode() == KV_MODE_INSERT);    /* real Esc, mode unchanged */
+    CHECK(pipeline(KC_ESC, false) == true);
+
+    /* exactly 3000 ms after the reset: window expired -> swallow, NORMAL */
+    g_now += 3000;
+    CHECK(pipeline(KC_ESC, true) == false);
+    CHECK(kv_get_mode() == KV_MODE_NORMAL);
+    CHECK(pipeline(KC_ESC, false) == false);
+}
+
+/* Entering INSERT another way (Caps enable) grants no window. */
+static void test_esc_no_window_other_paths(void) {
+    reset_engine();
+    kv_disable();
+    CHECK(pipeline(KC_CAPS, true) == false);   /* vim off: press owned */
+    CHECK(pipeline(KC_CAPS, false) == false);  /* tap re-enables vim -> INSERT */
+    CHECK(kv_get_mode() == KV_MODE_INSERT);
+    /* No window: Esc immediately toggles to NORMAL. */
+    CHECK(pipeline(KC_ESC, true) == false);
+    CHECK(kv_get_mode() == KV_MODE_NORMAL);
+    CHECK(pipeline(KC_ESC, false) == false);
+}
+
+/* ================= Right Shift lazy send ================= */
+
+static bool lshift_down(void) { return (get_mods() & MOD_BIT_LSHIFT) != 0; }
+
+/* RShift alone: never registered, both edges consumed, no lone Shift. */
+static void test_rshift_alone_silent(void) {
+    reset_engine(); /* INSERT */
+    CHECK(pipeline(KC_RSFT, true) == false);   /* swallowed */
+    CHECK(!lshift_down());                     /* no lazy Shift yet */
+    CHECK(pipeline(KC_RSFT, false) == false);  /* paired release */
+    CHECK(!lshift_down());
+    CHECK(s_orphan == 0);
+}
+
+/* RShift+a in INSERT: host gets Shift+a (A), never a lone Shift. */
+static void test_rshift_letter_uppercase(void) {
+    reset_engine(); /* INSERT */
+    CHECK(pipeline(KC_RSFT, true) == false);
+    CHECK(!lshift_down());
+    CHECK(pipeline(KC_A, true) == true);       /* passes (a) with lazy Shift added */
+    CHECK(lshift_down());                      /* lazily asserted */
+    CHECK(pipeline(KC_A, false) == true);
+    CHECK(lshift_down());                      /* still held for the combo */
+    CHECK(pipeline(KC_RSFT, false) == false);
+    CHECK(!lshift_down());                     /* dropped on RShift release */
+    CHECK(s_orphan == 0);
+}
+
+/* RShift + Ctrl + C: lazy Shift adds to the chord -> Ctrl+Shift+C. */
+static void test_rshift_with_ctrl(void) {
+    reset_engine(); /* INSERT */
+    CHECK(pipeline(KC_RSFT, true) == false);
+    CHECK(pipeline(KC_LCTL, true) == true);    /* modifier passes, no lazy yet */
+    CHECK(!lshift_down());
+    CHECK(pipeline(KC_C, true) == true);       /* Ctrl+C with lazy Shift */
+    CHECK(lshift_down());
+    CHECK(pipeline(KC_C, false) == true);
+    CHECK(pipeline(KC_LCTL, false) == true);
+    CHECK(pipeline(KC_RSFT, false) == false);
+    CHECK(!lshift_down());
+}
+
+/* Modifiers / Esc / layer keys are exempt: RShift never wraps them. */
+static void test_rshift_exempt_keys(void) {
+    reset_engine(); /* INSERT */
+    CHECK(pipeline(KC_RSFT, true) == false);
+    CHECK(pipeline(KC_LALT, true) == true);    /* modifier: exempt */
+    CHECK(!lshift_down());
+    CHECK(pipeline(KC_LALT, false) == true);
+    CHECK(pipeline(KC_RSFT, false) == false);
+    CHECK(!lshift_down());
+}
+
+/* With vim off, Right Shift is an ordinary modifier. */
+static void test_rshift_normal_when_vim_off(void) {
+    reset_engine();
+    kv_disable();
+    CHECK(pipeline(KC_RSFT, true) == true);    /* passes as a normal modifier */
+    CHECK(pipeline(KC_RSFT, false) == true);
+}
+
 int main(void) {
     /* Must run before any pipeline call so s_cfg is still NULL. */
     test_task_null_cfg_guard();
@@ -1478,6 +1602,17 @@ int main(void) {
     test_mouse_move_release_unset();     /* (a2) L238/246/252/258 false arms */
     test_mouse_space_release_no_timer(); /* (a3) L267 false arm */
     test_mouse_trigger_mod_zero();       /* (a4) L161 false arm */
+    /* Esc toggle + grace window */
+    test_esc_insert_no_window();
+    test_esc_normal_to_insert();
+    test_esc_grace_window();
+    test_esc_no_window_other_paths();
+    /* Right Shift lazy send */
+    test_rshift_alone_silent();
+    test_rshift_letter_uppercase();
+    test_rshift_with_ctrl();
+    test_rshift_exempt_keys();
+    test_rshift_normal_when_vim_off();
     printf("glue: pass=%d fail=%d\n", g_pass, g_fail);
     return g_fail ? 1 : 0;
 }

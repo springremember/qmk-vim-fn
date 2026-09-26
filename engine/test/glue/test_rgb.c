@@ -90,7 +90,7 @@ static void reset_engine(void) {
     s_reg_n = 0;
     layer_state = 0;
     default_layer_state = 0;
-    vim_glue_init(); /* kv_init + enable + INSERT */
+    vim_keymap_common_init(); /* shared statics + kv_init/enable/INSERT */
 }
 
 /* ---------------- RGB colour helpers ---------------- */
@@ -115,11 +115,11 @@ static rgb_t color_raw(bool enabled, kv_mode_t m, bool pending, bool mouse) {
     return c;
 }
 
-/* Reach NORMAL from the real input path (Caps short press), leaving the
- * release paired. */
+/* Reach NORMAL from the real input path: Esc in INSERT with no grace window is
+ * swallowed and drops to NORMAL, leaving the release paired. */
 static void enter_normal(void) {
-    CHECK(pipeline(KC_CAPS, true) == false);
-    CHECK(pipeline(KC_CAPS, false) == false);
+    CHECK(pipeline(KC_ESC, true) == false);
+    CHECK(pipeline(KC_ESC, false) == false);
     CHECK(kv_get_mode() == KV_MODE_NORMAL);
 }
 

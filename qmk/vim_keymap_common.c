@@ -14,9 +14,10 @@
 //   3  cfg->hook_post_myfn
 //   4  mouse-mode state machine
 //   5  Shift+Esc (Insert only)
-//   6  Caps tap/hold (Insert/Normal + Fn+Caps vim toggle)
-//   7  §2.1 shortcut table
-//   8  vim_glue_engine (Esc falls straight through to the engine)
+//   6  Esc toggle (Insert <-> Normal, with the escape grace window)
+//   7  Caps tap/hold (tap = vim on/off toggle, hold = momentary Normal)
+//   8  §2.1 shortcut table
+//   9  vim_glue_engine (Esc falls straight through to the engine)
 
 #include "qmk-vim-fn/qmk/vim_keymap_common.h"
 #include "qmk-vim-fn/qmk/vim_glue.h"
@@ -303,12 +304,62 @@ static bool shift_esc_process(uint16_t keycode, keyrecord_t *record) {
 }
 
 // ==========================================================================
-// Step 6 — Caps tap/hold + Fn+Caps vim toggle
+// Step 6 — Esc toggle (Insert <-> Normal) + escape grace window
+// ==========================================================================
+//
+// With vim on, Esc toggles typing <-> command:
+//   Insert  -> swallow the Esc and drop into NORMAL (no host Esc);
+//   Normal  -> emit the real Esc, return to INSERT, and open a short grace
+//              window so a burst of Escapes (e.g. leaving a shell prompt)
+//              stays a real Esc instead of re-entering NORMAL.
+// The window is 3 s, is opened ONLY by this Normal -> Insert transition, and
+// is reset by every in-window Esc.  Visual / pending-Normal / CAG Escapes are
+// left to the engine and shortcut layers, unchanged.
+#define VIM_ESC_GRACE_MS 3000
+static uint16_t s_esc_grace; // 0 = no window; else vim_timer_start() stamp
+
+static bool esc_process(uint16_t keycode, keyrecord_t *record) {
+    if (keycode != KC_ESC || !record->event.pressed) return false;
+    if (!kv_vim_enabled()) return false; // vim off: plain Esc
+
+    uint8_t mods = vim_glue_mods();
+    if (mods & (MOD_MASK_CTRL | MOD_MASK_ALT | MOD_MASK_GUI)) return false; // CAG
+    kv_mode_t m = kv_get_mode();
+
+    // Visual: the engine exits to NORMAL and emits nothing.
+    if (m == KV_MODE_VISUAL || m == KV_MODE_VISUAL_LINE) return false;
+
+    // NORMAL with a pending prefix/operator: the engine cancels it (no key).
+    if (m == KV_MODE_NORMAL && kv_pending()) return false;
+
+    if (m == KV_MODE_NORMAL) {
+        // Normal idle: real Esc, back to typing, open the grace window.
+        kv_set_mode(KV_MODE_INSERT);
+        s_esc_grace = vim_timer_start();
+        return false; // pass -> host receives the real Esc
+    }
+
+    // INSERT.
+    if (s_esc_grace && !vim_timer_elapsed(s_esc_grace, VIM_ESC_GRACE_MS)) {
+        s_esc_grace = vim_timer_start(); // in-window Esc: real Esc, reset window
+        return false;
+    }
+    // No window (entered Insert another way) or it expired: swallow, go NORMAL.
+    s_esc_grace = 0;
+    kv_cancel();
+    kv_set_mode(KV_MODE_NORMAL);
+    vim_glue_swallow(KC_ESC);
+    return true;
+}
+
+// ==========================================================================
+// Step 7 — Caps tap/hold
 // ==========================================================================
 static uint16_t  s_caps_timer;
 static kv_mode_t s_caps_entry_mode; // full entry mode, restored on long press
 
 static void set_vim_enabled(bool enabled) {
+    s_esc_grace = 0; // an enable/disable transition invalidates the window
     if (s_cfg->vim_set_enabled) {
         s_cfg->vim_set_enabled(enabled);
     } else if (enabled) {
@@ -324,45 +375,34 @@ static bool caps_process(uint16_t keycode, keyrecord_t *record) {
     if (keycode != KC_CAPS) return false;
 
     if (record->event.pressed) {
-        if (fn_layer_active()) {
-            // Fn+Caps toggles vim.  Consume the press and pair it; the release
-            // is consumed by the shared pairing table (design §4.10).
-            vim_glue_swallow(KC_CAPS);
-            set_vim_enabled(!kv_vim_enabled());
-            return true;
-        }
-
-        if (!kv_vim_enabled()) return false; // vim off: Caps behaves normally
-
-        // Non-Fn Caps while vim is on: tap/hold.  Consume and pair the press;
-        // the exact entry mode is recorded for the release restore.
-        s_caps_entry_mode = kv_get_mode(); // remember the exact entry mode
+        // Caps is always owned (it toggles vim), so it never works as Caps Lock.
+        // While vim is on we momentarily enter NORMAL so a long press previews
+        // command mode and restores the entry mode on release.
+        s_caps_entry_mode = kv_get_mode();
         s_caps_timer      = vim_timer_start();
-        kv_set_mode(KV_MODE_NORMAL);
-        vim_glue_release_all(); // mode transition: no held arrow may stick
+        if (kv_vim_enabled()) {
+            kv_set_mode(KV_MODE_NORMAL);
+            vim_glue_release_all();
+        }
         vim_glue_swallow(KC_CAPS);
         return true;
     }
 
-    // Release: never decide consume/pass from the *current* fn/vim state — the
-    // shared pairing table owns it unconditionally (design §4.10).  A press
-    // that was not consumed (vim off: Caps passed straight through) has no
-    // table entry, so the release falls through to QMK as well.  The tap/hold
-    // restore must run before that decision.
     if (s_caps_timer) {
         bool held    = vim_timer_elapsed(s_caps_timer, s_cfg->hold_ms);
         s_caps_timer = 0;
         if (held) {
-            // Momentary Normal: return to the full entry mode (Visual -> Visual).
-            kv_set_mode(s_caps_entry_mode);
-            vim_glue_release_all();
+            // Long press: momentary NORMAL, restore the exact entry mode.
+            if (kv_vim_enabled()) {
+                kv_set_mode(s_caps_entry_mode);
+                vim_glue_release_all();
+            }
+        } else {
+            // Tap: toggle vim (enabling always restarts in INSERT).
+            set_vim_enabled(!kv_vim_enabled());
         }
-        // Short press: stay in NORMAL — Normal is the resting mode.  A second
-        // short press while already in NORMAL is therefore a no-op; editing
-        // commands (i/I/a/A/o/O, s/c) return to INSERT on their own, and the
-        // long press above restores the mode that was active before the tap.
     }
-    return false; // let step 8 consume the paired release (or pass it through)
+    return false; // paired release consumed by the shared table
 }
 
 // ==========================================================================
@@ -459,9 +499,7 @@ static bool hook_process(uint16_t keycode, keyrecord_t *record, bool (*hook)(uin
     return false; // release: fall through to the shared pairing table
 }
 
-bool vim_pipeline_process(uint16_t keycode, keyrecord_t *record, const vim_cfg_t *cfg) {
-    s_cfg = cfg;
-
+static bool vim_dispatch(uint16_t keycode, keyrecord_t *record, const vim_cfg_t *cfg) {
     // 0 — physical modifier shadow (must precede every swallow).
     vim_glue_mod_update(keycode, record->event.pressed);
 
@@ -480,14 +518,44 @@ bool vim_pipeline_process(uint16_t keycode, keyrecord_t *record, const vim_cfg_t
     // 5 — Shift+Esc.
     if (shift_esc_process(keycode, record)) return false;
 
-    // 6 — Caps tap/hold.
+    // 6 — Esc toggle (opens/resets the escape grace window on Normal->Insert).
+    if (esc_process(keycode, record)) return false;
+
+    // 7 — Caps tap/hold.
     if (caps_process(keycode, record)) return false;
 
-    // 7 — §2.1 shortcuts.
+    // 8 — §2.1 shortcuts.
     if (shortcuts_process(keycode, record)) return false;
 
-    // 8 — engine (Esc falls straight through here; no keyboard Esc branch).
+    // 9 — engine (Esc falls straight through here; no keyboard Esc branch).
     return vim_glue_engine(keycode, record);
+}
+
+bool vim_pipeline_process(uint16_t keycode, keyrecord_t *record, const vim_cfg_t *cfg) {
+    s_cfg = cfg;
+
+    // The escape grace window only exists while typing; any key observed outside
+    // INSERT invalidates it (esc_process re-opens it on Normal->Insert).
+    if (kv_get_mode() != KV_MODE_INSERT) s_esc_grace = 0;
+
+    return vim_dispatch(keycode, record, cfg);
+}
+
+void vim_keymap_common_init(void) {
+    // Reset the shared-layer static state.  vim_glue_init() resets the engine +
+    // glue; the rest is owned here (mouse FSM, Caps tap/hold, escape grace).
+    s_cfg             = NULL;
+    s_mouse_entry_mode = KV_MODE_INSERT;
+    s_mouse_timer      = 0;
+    s_mouse_held       = false;
+    s_mouse_mod_reg    = KC_NO;
+    s_lbtn_timer       = 0;
+    s_lbtn_held        = false;
+    for (int i = 0; i < MV_COUNT; i++) s_move_reg[i] = KC_NO;
+    s_caps_timer       = 0;
+    s_caps_entry_mode  = KV_MODE_INSERT;
+    s_esc_grace        = 0;
+    vim_glue_init();
 }
 
 void vim_keymap_common_task(uint32_t now_ms) {

@@ -3,7 +3,7 @@
 > 面向使用。描述 vim 引擎的**目标行为**（键盘无关）。技术细节见 [`design.md`](design.md)。
 > 引擎以**纯键码**工作：把 vim 命令翻译成宿主按键序列发送，不依赖编辑器插件。
 > 文末与前文出现的键盘名（如 QK61/NUT65）仅为**参考示例**；本仓库共享层不含任何键盘专属实现或测试。
-> 键盘**开机默认进入 Insert（照常打字）**；按 `Caps` 或 `Esc` 切到 Normal 执行 vim 命令。
+> 键盘**开机默认进入 Insert（照常打字）**；按 `Esc` 或单击 `Caps` 切换 vim 开关。
 
 ---
 
@@ -18,17 +18,25 @@
 
 | 操作 | 效果 |
 |---|---|
-| `Caps` 短按 | 进入 Normal（Visual 下=回到 Normal）；**已在 Normal 时不再切换模式**（无 vim 编辑效果，仅丢弃未完成的多键命令）|
-| `Caps` 长按（≥200ms） | 临时进入 Normal，松手回到原模式 |
-| `Esc`（Insert） | 向宿主发送真实 `Esc`，**并进入 Normal** |
-| `Esc`（Normal） | 向宿主发送真实 `Esc` |
+| `Esc`（Insert，非宽限） | **进入 Normal（不发送 Esc）** |
+| `Esc`（Insert，3s 宽限内） | 发送真实 `Esc`，留在 Insert，并**重置 3s 宽限** |
+| `Esc`（Normal 空闲） | 发送真实 `Esc`，**进入 Insert**，并**开启 3s 宽限** |
 | `Esc`（Visual/Visual-Line） | 退出选区回 Normal（不发送 Esc） |
+| `Caps` 单击 | **切换 vim 开/关**（开=从 Insert 起；关=禁用 vim）|
+| `Caps` 长按（≥200ms） | 临时进入 Normal，松手回到原模式 |
+| `Fn+Caps` | 与裸 `Caps` **完全相同**（无特殊处理）|
 
-> 进入 Normal 用 `Caps` 或 `Esc`。Normal 是"停留模式"：回 Insert 只能靠 vim 编辑命令
-> （`i/I/a/A/o/O`、`s/c`），`Caps` 单击不再切回 Insert；`Esc` 仍发送真实 `Esc` 且无长按功能。
-> 多键 pending（如按了 `d`）时按 `Esc`：**仅取消 pending，不发送任何键**。
-> **任何模式切换都会丢弃未完成的多键命令**（计数/操作符/`g`/`Z` 前缀）：如 `d` 后切 Caps，
+> **Esc 宽限（3s）**：只由「Normal 空闲按 Esc 回到 Insert」这一条路径开启，且窗口内再按 `Esc` 会重置计时。
+> 用途：连续按 Esc（如从 shell 提示符退出、多次退出全屏）仍是真实 Esc；其余进入 Insert 的路径
+> （开机、`Caps` 开启 vim、`i/I/a/A/o/O`、`s/c`）**没有宽限**，其后的 Insert `Esc` 一律进 Normal。
+> `Caps` 单击**不再进入 Normal**，它只开关 vim；进入 Normal 现由 `Esc`（或 `Caps` 长按）负责。
+> 多键 pending（如按了 `d`）时按 `Esc`：**仅取消 pending，不发送任何键**（不变）。
+> **任何模式切换都会丢弃未完成的多键命令**（计数/操作符/`g`/`Z` 前缀）：如 `d` 后切模式，
 > 回 Normal 按 `w` 只会执行 `w`，不会残留成 `dw`。
+
+> **右 `Shift`（仅 vim 开启时）**：为避免孤立 Shift 触发宿主输入法切换，右 `Shift` **单独按下/抬起不发送
+> 任何东西**；当它按住期间有别的键时才**临时补上左 Shift**（`右Shift+a` = `A`，`右Shift+Ctrl+C` =
+> `Ctrl+Shift+C`），松开右 Shift 即撤下。vim 关闭时右 `Shift` 与普通修饰键无异。
 
 ---
 
@@ -186,12 +194,13 @@ c w     改到下一词首（进入 Insert）
 | `Ctrl+F` / `Ctrl+B` | 下翻页 / 上翻页（`PgDn` / `PgUp`） |
 | `/` | 调用宿主查找（`Ctrl+F`） |
 | `Enter` / `Tab` | 透传真实按键 |
-| `Shift+Esc`（**仅 Insert**） | 左 `Shift`=`~`、右 `Shift`=`` ` `` |
+| `Shift+Esc`（**仅 Insert**） | 左 `Shift`=`~`、右 `Shift`=`` ` ``（右 Shift 剥离，不发 Shift） |
 
 > 这些是 keymap 层行为，不同键盘可自行取舍。
 > **Normal 下按住 `Ctrl`/`Alt`/`GUI`（Win/Cmd）时**：普通键组合原样透传宿主（如 `Ctrl+C`）；
 > **仅 `h/j/k/l` 例外**——仍作方向键，并与该修饰键组合（如 `Win+h` 发 `Win+←`），不把裸 `h` 透传。
 > **消费 press 的组合键，其 release 也须一并消费**：如 `Shift+Esc` 按下时改发 `~`/`` ` `` 后，其**抬起必须吞掉**（记住已消费的键、无条件吞），否则会多打出一个键。
+> **右 `Shift`**（仅 vim 开启）：单独不发送；与其它键同按才临时补左 Shift（`右Shift+a`=`A`、`右Shift+Ctrl+C`=`Ctrl+Shift+C`）。
 
 ---
 

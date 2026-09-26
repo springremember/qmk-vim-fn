@@ -64,9 +64,14 @@ typedef struct {
     const vim_shortcut_t *shortcuts;
 } vim_cfg_t;
 
-/* Single-source interception chain (pipeline steps 0..8, design §4.12).
+/* Single-source interception chain (pipeline steps 0..9, design §4.12).
  * Returns true when QMK should keep processing the key (QMK polarity). */
 bool vim_pipeline_process(uint16_t keycode, keyrecord_t *record, const vim_cfg_t *cfg);
+
+/* Reset the shared-layer static state (mouse FSM, Caps tap/hold, escape grace)
+ * and re-init the engine/glue.  Call from the keymap's keyboard_post_init_user
+ * instead of vim_glue_init(). */
+void vim_keymap_common_init(void);
 
 /* Housekeeping: drain the engine emit queue and service mouse long-presses. */
 void vim_keymap_common_task(uint32_t now_ms);

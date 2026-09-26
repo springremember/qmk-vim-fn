@@ -227,7 +227,7 @@ static void reset_engine(void) {
     for (int i = 0; i < HIT_CAP; i++) s_hits[i] = 0;
     layer_state = 0;
     default_layer_state = 0;
-    vim_glue_init(); /* kv_init + enable + INSERT */
+    vim_keymap_common_init(); /* shared statics + kv_init/enable/INSERT */
 }
 
 static void fn_on(void) { layer_state = (1UL << 4); }
@@ -337,30 +337,32 @@ static void test_shortcut_shift_eql(void) {
     CHECK(feed(KC_LSFT, false) == true);
     CHECK(s_orphan == 0);
 
-    /* RSFT+EQL -> DOWN + HOME (side-agnostic) */
+    /* RSFT+EQL -> DOWN + HOME (side-agnostic).  RSFT itself is swallowed
+     * (lazy Shift), but the shadow still records RSHIFT for the fold. */
     reset_engine();
     kv_set_mode(KV_MODE_NORMAL);
-    CHECK(feed(KC_RSFT, true) == true);
+    CHECK(feed(KC_RSFT, true) == false);
+    CHECK((vim_glue_mods() & MOD_BIT_RSHIFT) != 0);
     CHECK(feed(KC_EQL, true) == false);
     CHECK(s_hits[KC_DOWN] == 1);
     CHECK(s_hits[KC_HOME] == 1);
     CHECK(tap16_mods_of(KC_DOWN) == 0);
     CHECK(tap16_mods_of(KC_HOME) == 0);
     CHECK(feed(KC_EQL, false) == false);
-    CHECK(feed(KC_RSFT, false) == true);
+    CHECK(feed(KC_RSFT, false) == false);
 
     /* LSFT+RSFT+EQL -> still a hit */
     reset_engine();
     kv_set_mode(KV_MODE_NORMAL);
     CHECK(feed(KC_LSFT, true) == true);
-    CHECK(feed(KC_RSFT, true) == true);
+    CHECK(feed(KC_RSFT, true) == false);
     CHECK(feed(KC_EQL, true) == false);
     CHECK(s_hits[KC_DOWN] == 1);
     CHECK(s_hits[KC_HOME] == 1);
     CHECK(tap16_mods_of(KC_DOWN) == 0);
     CHECK(tap16_mods_of(KC_HOME) == 0);
     CHECK(feed(KC_EQL, false) == false);
-    CHECK(feed(KC_RSFT, false) == true);
+    CHECK(feed(KC_RSFT, false) == false);
     CHECK(feed(KC_LSFT, false) == true);
 
     /* bare EQL must NOT hit (mods_req = SHIFT) and passes as a non-vim key */

@@ -119,7 +119,7 @@ static void reset_engine(void) {
     for (int i = 0; i < HIT_CAP; i++) s_hits[i] = 0;
     layer_state = 0;
     default_layer_state = 0;
-    vim_glue_init(); /* kv_init + enable + INSERT */
+    vim_keymap_common_init(); /* shared statics + kv_init/enable/INSERT */
 }
 
 static const char *mode_name(kv_mode_t m) {
@@ -248,11 +248,11 @@ int main(void) {
         test_vim_keys_consumed(modes[i]);
     }
 
-    /* NORMAL Esc is a real pass-through (design §4.9), not a mode change. */
+    /* NORMAL idle Esc: real Esc and back to INSERT (shared Esc toggle). */
     reset_engine();
     kv_set_mode(KV_MODE_NORMAL);
     CHECK(pipeline(KC_ESC, true) == true);
-    CHECK(kv_get_mode() == KV_MODE_NORMAL);
+    CHECK(kv_get_mode() == KV_MODE_INSERT);
     CHECK(pipeline(KC_ESC, false) == true);
 
     test_visual_esc_exit(KV_MODE_VISUAL);
