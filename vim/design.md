@@ -512,7 +512,9 @@ void vim_glue_release_all(void);          /* 反注册 held motion 方向键（�
       bool   (*link_ok)(void);  /* NUT65=mouse_link_ok；QK61=NULL 恒真 */
       uint16_t hold_ms;         /* 200 */
       bool     shift_esc_enable;/* Shift+Esc 组合开关 */
-  } vim_mouse_cfg_t;            /* cfg 同时携带 hook_pre/hook_post_myfn/myfn 分发 */
+  } vim_mouse_cfg_t;            /* cfg 同时携带 hook_pre/hook_post_myfn/myfn 分发；
+                                 * 另有 led_index(模式色灯位) 与 insert_flash_color
+                                 * (Normal--Esc-->Insert 3s 提示色 0xRRGGBB，0=不覆盖) */
   bool vim_mouse_process(uint16_t kc, keyrecord_t *r, const vim_mouse_cfg_t *cfg);
   void vim_mouse_release_all(void);
   ```
@@ -521,6 +523,14 @@ void vim_glue_release_all(void);          /* 反注册 held motion 方向键（�
 - **`vim_task(now_ms)`** = `vim_glue_task` + 鼠标长按检查（拖动/长按修饰进入）；
 - **`vim_rgb_state_color(void)`**：六色计算（绿/蓝/黄/紫/青/红、pending 不覆盖 Visual）——
   spec 级；键盘只提供**灯位索引**（`cfg->led_index`）。
+- **`vim_insert_flash(void)`**：`Normal --Esc--> Insert` 的「回到打字」提示色窗口判据（spec 级）。
+  定义：**vim 已开启 + 当前模式为 INSERT + §4.12 步骤 6 的 Esc 宽限窗口（`VIM_ESC_GRACE_MS` = 3000ms）
+  仍未过期** 时为真。该窗口**只**由 `esc_process()` 的「Normal 空闲 Esc → INSERT」开启、由窗口内的 `Esc`
+  重置、并在模式离开 INSERT 时被 `vim_pipeline_process()` 清掉；因此该判据等价于「Insert 是由
+  Normal 空闲 Esc 进入的（且 3s 内）」，`i`/`a`/`o`/`s`/`c`、开机、`Caps` 开启 vim 等入口均为假。
+  键盘在 `cfg->insert_flash_color`（`0xRRGGBB`；`0` = 不覆盖）非零时，用它**替换** `vim_rgb_state_color()`
+  给出的 Insert 绿；替换范围由键盘决定（QK61：Esc 灯 + logo 电量灯；NUT65：Esc 灯 + 底部电量灯条）。
+  优先级：MOUSE 青、Visual 紫、Normal 蓝、pending 黄、vim 关红**均不受影响**（该判据只可能为真于 Insert）。
 - **myfn 骨架**：层键豁免；未声明键（含修饰键）press 吞、release 由配对表裁决；**已声明键调 `cfg->myfn(kc,pressed)`**，
   返回 `true`=消费（press 入配对表、release 交配对表）、`false`=放行给 QMK（F 区/音量、NUT65 厂商 `EE_CLR`/`BT` 等）。
 

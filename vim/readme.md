@@ -195,8 +195,11 @@ c w     改到下一词首（进入 Insert）
 | `/` | 调用宿主查找（`Ctrl+F`） |
 | `Enter` / `Tab` | 透传真实按键 |
 | `Shift+Esc`（**仅 Insert**） | 左 `Shift`=`~`、右 `Shift`=`` ` ``（右 Shift 剥离，不发 Shift） |
+| `Esc`（Insert ↔ Normal 切换） | `Insert` 按 `Esc` → 吞键进 `Normal`（不发 Esc）；`Normal` 空闲按 `Esc` → 发真实 `Esc` 回 `Insert`，并开启 **3s 宽限窗口**（窗口内再按 `Esc` 仍是真实 `Esc`，不切回 Normal；窗口过期后 `Esc` 恢复切换语义） |
 
 > 这些是 keymap 层行为，不同键盘可自行取舍。
+> **`Esc` 宽限窗口的一个可见副作用**：`Normal --Esc--> Insert` 后 3s 内，模式指示色由 Insert 绿替换为
+> 键盘配置的提示色（见 §10「回到打字提示」）。
 > **Normal 下按住 `Ctrl`/`Alt`/`GUI`（Win/Cmd）时**：普通键组合原样透传宿主（如 `Ctrl+C`）；
 > **仅 `h/j/k/l` 例外**——仍作方向键，并与该修饰键组合（如 `Win+h` 发 `Win+←`），不把裸 `h` 透传。
 > **消费 press 的组合键，其 release 也须一并消费**：如 `Shift+Esc` 按下时改发 `~`/`` ` `` 后，其**抬起必须吞掉**（记住已消费的键、无条件吞），否则会多打出一个键。
@@ -209,6 +212,7 @@ c w     改到下一词首（进入 Insert）
 | 状态 | 颜色 |
 |---|---|
 | Insert | 绿 |
+| **Insert（`Normal --Esc--> Insert` 后 3s 内）** | **橙**（键盘可配置；见下） |
 | Normal（空闲） | 蓝 |
 | Normal 多键 pending（计数/操作符/缩进/`g`/`Z` 待结束） | 黄 |
 | Visual / Visual-Line | 紫（Visual **没有**多键 pending：非法键直接吞键，因此不显示黄） |
@@ -216,6 +220,13 @@ c w     改到下一词首（进入 Insert）
 | vim 关闭 | 红 |
 
 > pending 黄**不覆盖** Visual / Visual-Line：Visual 内做多键时仍显示紫。
+>
+> **回到打字提示（橙）**：`Normal` 空闲按 `Esc` 回到 `Insert` 后 **3 秒内**，模式色由 Insert 绿**替换**为
+> 键盘配置的提示色（两键盘均为橙 `#FF8000`），3 秒后自动回到 Insert 绿。
+> 判据见 `design.md` §4.12 的 `vim_insert_flash()`：**vim 开 + 模式为 Insert + Esc 宽限窗口未过期**。
+> 该窗口**只**由「Normal 空闲 `Esc` 回到 Insert」开启（窗口内再按 `Esc` 会重置计时，橙色随之续期）；
+> 其余进入 Insert 的路径（开机、`Caps` 开启 vim、`i`/`a`/`o`/`s`/`c` 等编辑命令）**不亮橙**；
+> Normal / Visual / 鼠标模式 / vim 关闭一律不亮橙。
 
 ---
 
