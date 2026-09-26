@@ -223,7 +223,10 @@ c w     改到下一词首（进入 Insert）
 >
 > **回到打字提示（橙）**：`Normal` 空闲按 `Esc` 回到 `Insert` 后 **3 秒内**，模式色由 Insert 绿**替换**为
 > 键盘配置的提示色（两键盘均为橙 `#FF8000`），3 秒后自动回到 Insert 绿。
-> 判据见 `design.md` §4.12 的 `vim_insert_flash()`：**vim 开 + 模式为 Insert + Esc 宽限窗口未过期**。
+> 判据见 `design.md` §4.12：`vim_insert_flash()`（**vim 开 + 模式为 Insert + Esc 宽限窗口未过期**）
+> 与 `vim_insert_flash_color(&r,&g,&b)`（把判据与 `cfg.insert_flash_color` 一起裁决，色值 `0` = 不覆盖）。
+> 窗口计时用 **32 位** timer：QMK `timer_read()` 是 16 位，在 65536ms 处回绕会让已过期的窗口"复活"
+> （持续打字 65.5s 后 3s 假亮橙），故宽限窗口一律 `timer_read32()/timer_elapsed32()`。
 > 该窗口**只**由「Normal 空闲 `Esc` 回到 Insert」开启（窗口内再按 `Esc` 会重置计时，橙色随之续期）；
 > 其余进入 Insert 的路径（开机、`Caps` 开启 vim、`i`/`a`/`o`/`s`/`c` 等编辑命令）**不亮橙**；
 > Normal / Visual / 鼠标模式 / vim 关闭一律不亮橙。

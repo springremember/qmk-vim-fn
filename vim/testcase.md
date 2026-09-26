@@ -134,6 +134,17 @@
 | Esc 进入 Normal | Insert 下 `Esc`（非宽限） | 吞键，转入 Normal，不发 Esc | |
 | Esc 宽限内 | Normal->Insert Esc 后 3s 内 `Esc` | 发真实 Esc，留 Insert，重置 3s | |
 | 普通字符 | Insert 下 `a` | 透传字符 | |
+| 回到打字提示色：无窗口 | 开机（Insert，未按过 Esc） | `vim_insert_flash()`=false | §10 |
+| 回到打字提示色：开窗 | Normal 空闲 `Esc` 回 Insert | `vim_insert_flash()`=true，`vim_insert_flash_color()`=true 并给出 `cfg.insert_flash_color` | §10 |
+| 回到打字提示色：3s 边界 | 开窗后 2999ms / 恰好 3000ms | 前者 true；后者 false，回 Insert 绿 | §10 |
+| 回到打字提示色：窗口内 Esc 续期 | 开窗 → +2999ms `Esc` → 再 +2999ms | 仍 true（重置计时，非从首次开窗算） | §10 |
+| 回到打字提示色：其它入口 | 引擎 `i`/`a`/`o`/`I`/`A`/`O` 进入 Insert | false | §10 |
+| 回到打字提示色：离开 Insert | 开窗后回 Normal / Visual / 鼠标模式 | false | §10 |
+| 回到打字提示色：vim 关 | `Caps` 关 vim | false（模式色红） | §10 |
+| 回到打字提示色：色值 0 | `cfg.insert_flash_color = 0` | `vim_insert_flash_color()`=false（不覆盖） | §10 |
+| 回到打字提示色：16 位回绕 | 开窗后时间推进 65536ms（不按任何键） | false（窗口**不得**因 `uint16` 回绕复活） | §10 |
+| 回到打字提示色：32 位计时 | 开窗 → +65536ms → +2999ms / +3000ms | 前者 false；后者仍 false（窗口只按首次开窗算 3s） | §10 |
+| 宽限窗口回绕时不误吞 | 回绕后（窗口已过期）Insert 下 `Esc` | 吞键进 Normal（不得因回绕变成真实 Esc） | §10 |
 
 ## 9. pending 严格清空
 | 用例 | 输入 | 期望 | 关联 |

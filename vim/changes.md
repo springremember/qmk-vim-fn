@@ -42,6 +42,14 @@
   `Caps` 始终被消费（永不作 Caps Lock，vim 关闭时单击=启用 vim）。
 - **右 Shift 懒发送**：vim 开启时孤立右 Shift 不发键（避免宿主输入法切换）；与它键同按才临时补左 Shift
   （`右Shift+a`=`A`、`右Shift+Ctrl+C`=`Ctrl+Shift+C`）；`右Shift+Esc` 仍输出裸 `` ` ``；vim 关闭时右 Shift 正常。
+- **回到打字提示色（V2.x 新增）**：`Normal` 空闲 `Esc` 回到 `Insert` 后 3s 内，模式指示色由 Insert 绿替换为
+  `cfg.insert_flash_color`（两键盘均配橙 `#FF8000`），随后自动恢复。判据 `vim_insert_flash()` = vim 开 +
+  Insert + 上述宽限窗口未过期；色值裁决在共享层 `vim_insert_flash_color()`（`0`=不覆盖）。窗口内 `Esc` 续期；
+  其它进入 Insert 的路径不亮橙。**该窗口计时改 32 位**（见下条）。
+- **修复：Esc 宽限窗口 16 位计时回绕（P1）**：窗口戳原先存 `timer_read()`（`(uint16_t)timer_read32()`），
+  65536ms 后 `elapsed` 回绕为 0，使**已过期**的窗口重新被判有效——持续在 Insert 打字每 65.5s 出现 3s 假命中
+  （橙灯误亮，且该 3s 内 `Esc` 变真实宿主 Esc、回不了 Normal）。窗口戳与比较改为
+  `vim_timer_start32()` / `timer_elapsed32()`。
 
 ---
 
