@@ -569,7 +569,9 @@ static void test_count_drop(void) {
     /* 行选下的计数：3j 展开为 3 次整行推进 */
     /* V 进入会发 Home+Shift+End；rec_start 后只统计 3j 的三次行推进 */
     fresh(); key(KV_C_V); rec_start(); key(KV_3); key(KV_J);
-    CHECK_SEQ(KV_LSFT_KC(KV_DOWN), KV_LSFT_KC(KV_DOWN), KV_LSFT_KC(KV_DOWN));
+    CHECK_SEQ(KV_LSFT_KC(KV_END), KV_LSFT_KC(KV_DOWN),
+              KV_LSFT_KC(KV_END), KV_LSFT_KC(KV_DOWN),
+              KV_LSFT_KC(KV_END), KV_LSFT_KC(KV_DOWN));
     CHECK(kv_get_mode() == KV_MODE_VISUAL_LINE);
 
     /* single-key commands behave exactly as without a count */
@@ -663,8 +665,9 @@ static void test_visual_commands(void) {
     fresh(); key(KV_C_V);                 /* 进入 VISUAL_LINE：Home,Shift+End */
     key(KV_J);                            /* 扩展一行 */
     key(KV_Y);                            /* 复制：Shift+Home,Shift+End,Ctrl+C */
-    CHECK_SEQ(KV_HOME, KV_LSFT_KC(KV_END), KV_LSFT_KC(KV_DOWN),
-              KV_LSFT_KC(KV_HOME), KV_LSFT_KC(KV_END), KV_LCTL_KC(KV_C));
+    CHECK_SEQ(KV_HOME, KV_LSFT_KC(KV_END),                    /* 进入：整行 */
+              KV_LSFT_KC(KV_END), KV_LSFT_KC(KV_DOWN),        /* j：顶行尾 + 整行下扩 */
+              KV_LSFT_KC(KV_HOME), KV_LSFT_KC(KV_END), KV_LCTL_KC(KV_C)); /* y：贴行边界后复制 */
 
     /* ---- 计数（design §4.9 实现要点 / readme §5） ---- */
     /* 上限 2 位：第 3 位起忽略 → 123j ≡ 12j */
@@ -706,11 +709,11 @@ static void test_visual_commands(void) {
 /* design §4.9 — VISUAL_LINE 行选近似：进入锚行尾，移动按整行推进（与 VISUAL 不同）。 */
 static void test_visual_line_commands(void) {
     fresh_vline(); CHECK(kv_get_mode() == KV_MODE_VISUAL_LINE);
-    key(KV_J); CHECK_SEQ(KV_LSFT_KC(KV_DOWN));   /* 整行向下扩展（不前置 Home，否则折叠选区） */
-    fresh_vline(); key(KV_K);     CHECK_SEQ(KV_LSFT_KC(KV_UP));
-    fresh_vline(); key(KV_W);     CHECK_SEQ(KV_LSFT_KC(KV_DOWN));  /* 行选：下一行（非 Ctrl+Shift+→） */
-    fresh_vline(); key(KV_E);     CHECK_SEQ(KV_LSFT_KC(KV_DOWN));
-    fresh_vline(); key(KV_B);     CHECK_SEQ(KV_LSFT_KC(KV_UP));    /* 行选：上一行（非 Ctrl+Shift+←） */
+    key(KV_J); CHECK_SEQ(KV_LSFT_KC(KV_END), KV_LSFT_KC(KV_DOWN)); /* 先顶行尾再整行下扩 */
+    fresh_vline(); key(KV_K);     CHECK_SEQ(KV_LSFT_KC(KV_END), KV_LSFT_KC(KV_UP));
+    fresh_vline(); key(KV_W);     CHECK_SEQ(KV_LSFT_KC(KV_END), KV_LSFT_KC(KV_DOWN));
+    fresh_vline(); key(KV_E);     CHECK_SEQ(KV_LSFT_KC(KV_END), KV_LSFT_KC(KV_DOWN));
+    fresh_vline(); key(KV_B);     CHECK_SEQ(KV_LSFT_KC(KV_END), KV_LSFT_KC(KV_UP));
     fresh_vline(); key(KV_H);     CHECK_SEQ(KV_LSFT_KC(KV_LEFT));  /* 边界微调 */
     fresh_vline(); key(KV_L);     CHECK_SEQ(KV_LSFT_KC(KV_RGHT));
     fresh_vline(); key(KV_0);     CHECK_SEQ(KV_LSFT_KC(KV_HOME));  /* 行首（按住选区） */

@@ -116,8 +116,13 @@ void kv_emit_visual_line_anchor(void) {
 /* design §4.9 VISUAL_LINE — 行选近似：移动按"整行"推进，因此与 VISUAL 的输出不同。
  * 进入 V 由引擎另发 SHIFT+END 锚定行尾（见 engine.c）。 */
 void kv_emit_visual_line_motion(kv_keycode_t kc) {
+    /* 先 Shift+End 把光标顶到**行尾**再纵向扩展：宿主的 Shift+↓ 只下移一行、列不变，
+     * 若直接发 Shift+↓，选区只会到下一行的"原光标列"，长行会被漏掉（用户实测报告）。 */
+    const bool vmove = (kc == KV_J || kc == KV_K || kc == KV_W || kc == KV_E || kc == KV_B ||
+                        kc == KV_C_W || kc == KV_C_E || kc == KV_C_B);
+    if (vmove) kv_emit_tap(KV_LSFT_KC(KV_END));
     switch (kc) {
-        case KV_J: case KV_W: case KV_E:              /* 整行向下（不前置 Home：会折叠多行选区） */
+        case KV_J: case KV_W: case KV_E:              /* 整行向下 */
         case KV_C_W: case KV_C_E:
             kv_emit_tap(KV_LSFT_KC(KV_DOWN));  break;
         case KV_K: case KV_B: case KV_C_B:            /* 整行向上 */
