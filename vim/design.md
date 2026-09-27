@@ -403,7 +403,7 @@ while (queue_has()) {
 | `yy` / `Nyy` | Home, Home, Shift+Down×n, Ctrl+C（**×n 行**） |
 | `cc` / `Ncc` | Home, Home, Shift+End, Shift+Down×(n-1), change (+Insert)（**×n 行**；n=1 时无 `Shift+Down`） |
 | `dw` / `d$` / `d0` | 选词/选到行首尾 → Ctrl+X |
-| `p` / `P` | Ctrl+V（`yanked_line` 定位） |
+| `p` / `P` | Ctrl+V（`P` 先 `←`；不做 `yanked_line` 行选定位） |
 | `J` | End, Delete |
 | `u` | Ctrl+Z（单次） |
 | `ZZ` | Ctrl+S |
@@ -411,7 +411,10 @@ while (queue_has()) {
 | `> <` | 缩进 / 反缩进（`>0`/`<0` = 缩进/反缩进到行首） |
 
 - 插入：`i` 原地；`I`=Home 后；`a`=→ 后；`A`=End 后；`o`=End,**Shift+Enter**；`O`=Home,**Shift+Enter**,↑。
-- 粘贴定位：`yanked_line` 为真时 `p` 先 End+→，`P` 先 End+→+↑；否则 `P` 先 ←。
+- 粘贴定位：`p` 直接 `Ctrl+V`；`P` 先 `←` 再 `Ctrl+V`。
+  **不实现 `yanked_line` 行选定位**（旧设计曾写"行选后 p 先 End+→、P 先 End+→+↑"）：引擎是纯键码层、
+  读不到宿主的真实选区与列位置，用方向键"定位"在多数编辑器里会破坏选区/插入点，可靠性不足；
+  与之配套的 `kv_emit_paste(before, yanked_line)` 形参因此不存在（现为 `kv_emit_paste(bool before)`）。
 - **多行（`N` 行）展开**：先 `Home×2`；`yy` 扩选 `Shift+Down×n`；`dd`/`cc` 扩选 `Shift+End` + `Shift+Down×(n-1)`（覆盖含换行的 `N` 行）；`>>`/`<<` 同理按行扩选，再执行对应动作。
 - **独立移动 ×n**：`N` 个 `w`/`j`/… 即对应基础序列重复 `n` 次。
 - 未列出的 `op+移动` / `缩进+移动` / `op+gg` / `缩进+gg` / `dG`/`>G`/`>0` 等，复用对应基础序列（见 §4.4）。
