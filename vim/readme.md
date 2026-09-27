@@ -150,7 +150,7 @@ c w     改到下一词首（进入 Insert）
 | 操作 | 效果 |
 |---|---|
 | `v` | 进入 Visual（字符级） |
-| `V` | 进入 **Visual-Line（行选）**：进入即选中本行（`Shift+End`），移动按**整行**扩展 |
+| `V` | 进入 **Visual-Line（行选）**：进入即选中**整行**（`Home` → `Shift+End`），移动按**整行**扩展 |
 | 移动键（可带计数，如 `3l`） | 扩展选区；**两模式的移动输出不同**，见下表 |
 | `d` / `x` | 删除选区（`Ctrl+X`） |
 | `y` | 复制选区（`Ctrl+C`） |
@@ -162,10 +162,10 @@ c w     改到下一词首（进入 Insert）
 
 | 键 | Visual（字符级） | Visual-Line（行选） |
 |---|---|---|
-| `j` / `k` | `Shift+↓` / `Shift+↑` | `Shift+↓` / `Shift+↑`（整行推进/回退） |
+| `j` / `k` | `Shift+↓` / `Shift+↑` | `Shift+↓` / `Shift+↑`（整行扩展） |
 | `w` / `e` | `Ctrl+Shift+→` | **`Shift+↓`**（下一行） |
 | `b` | `Ctrl+Shift+←` | **`Shift+↑`**（上一行） |
-| `0` / `^` | `Shift+Home` | `Shift+Home`（行首） |
+| `0` / `^` | `Shift+Home` | `Home`（行首） |
 | `$` | `Shift+End` | `Shift+End`（行尾） |
 | `gg` / `G` | `Ctrl+Shift+Home/End` | `Ctrl+Shift+Home/End`（文首/文末） |
 | `h` / `l` | `Shift+←/→` | `Shift+←/→`（边界微调） |
@@ -174,7 +174,9 @@ c w     改到下一词首（进入 Insert）
 > **计数**（`3j`、`2w` 等）在两种可视模式都生效：数字先累积，随后**一个移动键**按计数重复
 > （`3j` = 连续 3 次推进）；最多 2 位（同 Normal）。数字累积期间**不产生多键 pending**
 > （Visual 下 `pending` 恒为 false），按 `Esc` 退出可视会丢弃未消费的计数。
-> `d`/`y`/`c`/`s`/`p`/`Esc` 在两模式下相同（对当前选区生效）。
+> `d`/`y`/`c`/`s`/`p`/`Esc` 在两模式下相同（对当前选区生效）；**动作后退出可视**：
+> `y` = 复制后回 Normal，`d`/`x` = 删除后回 Normal，`c`/`s` = 剪+进 Insert，`p` = 粘贴后回 Normal。
+> 行选是**整行近似**（固件只发按键，读不到编辑器真实选区），做不到精确的跨行列区间选区。
 
 > 未列出的键（如 `i`/`a`、数字、`g`/`Z`、`<`/`>`）在 Visual 内为**非法键**：保持在 Visual
 > （吞键，不退出、不插入、**不产生 pending**）；这不是"非 vim 键透传"规则（`i`/`a` 属 vim 键码集）。
@@ -235,14 +237,14 @@ c w     改到下一词首（进入 Insert）
 | Normal（空闲） | 蓝 |
 | Normal 多键 pending（计数/操作符/缩进/`g`/`Z` 待结束） | 黄 |
 | Visual（`v`） | 紫 |
-| **Visual-Line（`V`）** | **紫红** |
+| **Visual-Line（`V`）** | **洋红 rose** |
 
 | 鼠标模式 | 青（cyan） |
 | vim 关闭 | 红 |
 
 > pending 黄**不覆盖** Visual / Visual-Line：两种可视模式都不显示黄
 > （Visual 内**没有**多键 pending：非法键直接吞键；计数累积也不算 pending，见 §7）。
-> **Visual 紫（`#800080`）与 Visual-Line 紫红（`#FF00FF`）是两种颜色**，用于区分字符选与行选。
+> **Visual 紫（`#800080`）与 Visual-Line 洋红 rose（`#FF0080`）是两种颜色**，用于区分字符选与行选。
 >
 > **回到打字提示（橙）**：`Normal` 空闲按 `Esc` 回到 `Insert` 后 **3 秒内**，模式色由 Insert 绿**替换**为
 > 键盘配置的提示色（两键盘均为橙 `#FF8000`），3 秒后自动回到 Insert 绿。

@@ -430,16 +430,22 @@ while (queue_has()) {
   **未列键（数字、`g`、`Z`、`<`/`>`、`i`/`a` 等）为非法键 → 吞键留在 Visual**（不退出、不插入、
   不产生 pending）——即 Visual 模式**没有多键 pending**，`kv_pending()` 在 VISUAL 下恒为 false。
 - **VISUAL_LINE（`V`，行选近似）**——必须**可观察到与 VISUAL 的差异**（纯键码下只能近似"行选"）：
-  - **进入 `V`**：除切模式外，**立即发 `Shift+End`**（把选区锚点推到行尾，使行选"含整行"）；
-    进入**不点亮 Emit 之外的东西**，也不改变 vim 开关。
+  > **固有限制**：Vim 的"行选"是编辑器内核拥有的选区概念，固件只能发按键、读不到编辑器真实选区，
+  > 因此本层是**整行近似**：进入即选中整行（`Home`+`Shift+End`）；行移动用 `Shift+↑/↓` 扩展
+  > （**不在移动前 `Home`** —— 那会先折叠选区，多次扩展就坏了）；`d`/`y`/`c`/`s` 对"整行"生效。
+  > 代价：无法保证 Vim 那种"锚点行固定、光标列不动"的精确语义，也做不到精确列区间跨行选区
+  > （如第 3 行第 5 列 → 第 7 行第 3 列）；实际选区形状由宿主编辑器的 Shift+方向键行为决定。
+  - **进入 `V`**：除切模式外，**立即发 `Home` + `Shift+End`** —— 先回行首再选到行尾，
+    从而**选中整行**（只发 `Shift+End` 只能选到"光标处→行尾"，前半行会漏，故必须两步）。
+    进入不改变 vim 开关；`d`/`y`/`c`/`s` 对"整行"生效。
   - **行选移动映射**（`VISUAL_LINE` 内）：
 
     | 键 | 发出 | 语义 |
     | :--- | :--- | :--- |
-    | `j` / `k` | `Shift+Down` / `Shift+Up` | 整行推进 / 回退 |
+    | `j` / `k` | `Shift+Down` / `Shift+Up` | 整行向下/向上扩展 |
     | `w` / `e` | `Shift+Down` | 下一行（行选按行走，而非按词） |
     | `b` | `Shift+Up` | 上一行 |
-    | `0` / `^` | `Shift+Home` | 行首 |
+    | `0` / `^` | `Home` | 行首（按住选区时用 `Shift+Home` 由按下文决定） |
     | `$` | `Shift+End` | 行尾 |
     | `gg` / `G` | `Ctrl+Shift+Home` / `Ctrl+Shift+End` | 文首 / 文末 |
     | `h` / `l` | `Shift+Left` / `Shift+Right` | 字符级微调（行选下保留，作为边界调整） |
@@ -454,7 +460,9 @@ while (queue_has()) {
   - **与 VISUAL 的关键差异**：`VISUAL` 的移动一律 `Shift+方向`/`Ctrl+Shift+方向`（字符/词级）；
     `VISUAL_LINE` 的 `w`/`b`/`e` **改为整行推进**，且进入时先锚定行尾，因此同一串按键在两模式下
     **输出不同**、选区形态也不同（这是本规格的可测断言）。
-  - `d`/`y`/`c`/`s`/`p`/`Esc` 与 `VISUAL` 完全一致（对当前选区生效）。
+  - **动作后的模式**（与 Vim 一致，VISUAL 与 VISUAL_LINE 相同）：
+    `y`（复制）与 `d`/`x`（删除）**执行完回 NORMAL**；`c`/`s` 回 NORMAL 后进 INSERT；
+    `p` 粘贴后回 NORMAL；`Esc` 回 NORMAL。（此前实现漏了"退出"，动作后仍停在可视模式，已修。）
 - **MOUSE**：键盘层模式（引擎一律 `KV_PASSTHROUGH`，见 §4.7）。**右 Alt 短按**（阈值 **200ms**，与
   Caps 一致）在 `Insert`/`Normal`/`Visual` 均可进/出（长按=RAlt 修饰）；**进出 MOUSE 视同模式切换，
   先清 pending**。模式内：`hjkl`=指针、`Shift+J`/`Shift+K`=滚轮下/上、`Space`=左键（短按单击/长按
@@ -564,7 +572,7 @@ void vim_glue_release_all(void);          /* 反注册 held motion 方向键（�
   | 鼠标模式（`mouse`，最先判定） | 青 | `#00FFFF` |
   | vim 关闭 | 红 | `#FF0000` |
   | Visual（`KV_MODE_VISUAL`） | 紫 | `#800080` |
-  | **Visual-Line（`KV_MODE_VISUAL_LINE`）** | **紫红** | **`#FF00FF`** |
+  | **Visual-Line（`KV_MODE_VISUAL_LINE`）** | **洋红 rose** | **`#FF0080`** |
   | Normal + `pending` | 黄 | `#FFFF00` |
   | Normal（空闲） | 蓝 | `#0000FF` |
   | Insert（及其它/默认） | 绿 | `#00FF00` |
