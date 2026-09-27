@@ -432,12 +432,57 @@ static void test_insert_flash_color(void) {
  * ====================================================================== */
 static void caps_enter(void) {
     CHECK(pipeline(KC_CAPS, true) == false);   /* press 被吞（配对表） */
-    g_now += 200;                              /* == hold_ms */
-    vim_keymap_common_task(g_now);             /* 进入判定在 task() 里 */
+    /* 按下即进入（不等 hold_ms，也不经过 task）—— caps/design.md §3 */
 }
 static void caps_exit(void) {
     CHECK(pipeline(KC_CAPS, false) == false);  /* release 由配对表消费 */
     vim_keymap_common_task(g_now);
+}
+
+/* Caps 触发语义（caps/readme.md §2）：
+ *  - 裸 Caps 单击 = 无任何效果（不开关 vim、不产生键）
+ *  - Fn 先按住 + Caps 单击 = 切换 vim 开/关
+ *  - 按下即进入模式（无需等 200ms）；按下期间未按其它键就抬起则撤销 */
+static void test_caps_trigger(void) {
+    /* 裸 Caps 单击：什么都不做（vim 状态不变、无键注册） */
+    reset_engine();
+    bool was_on = kv_vim_enabled();
+    CHECK(pipeline(KC_CAPS, true) == false);
+    CHECK(pipeline(KC_CAPS, false) == false);
+    CHECK(kv_vim_enabled() == was_on);
+    CHECK(!sim_ctrl_held());
+    CHECK(kv_get_mode() == KV_MODE_INSERT);
+
+    /* Fn(层已激活) + Caps 单击：切换 vim */
+    reset_engine();
+    CHECK(!kv_vim_enabled() || kv_vim_enabled());     /* 读一次，清掉编译器告警 */
+    layer_state |= (1UL << g_cfg.fn_layer);
+    bool before = kv_vim_enabled();
+    CHECK(pipeline(KC_CAPS, true) == false);
+    CHECK(pipeline(KC_CAPS, false) == false);
+    CHECK(kv_vim_enabled() != before);               /* 单击 = 开关 vim */
+    CHECK(!sim_ctrl_held());
+    layer_state &= ~(1UL << g_cfg.fn_layer);
+
+    /* 按下即进入：Caps 按下后立刻按 1 -> F1（不需要等 200ms，也不经过 task） */
+    reset_engine();
+    CHECK(pipeline(KC_CAPS, true) == false);
+    CHECK(pipeline(KC_1, true) == false);            /* 模式已激活 */
+    CHECK(sim_held(KC_F1) && !sim_ctrl_held());
+    CHECK(pipeline(KC_1, false) == false);
+    caps_exit();
+    CHECK(kv_get_mode() == KV_MODE_INSERT);
+
+    /* vim 关闭时也立即进入（Fn+Caps 用于重新开启） */
+    reset_engine();
+    kv_disable();
+    CHECK(pipeline(KC_CAPS, true) == false);
+    CHECK(pipeline(KC_C, true) == false);
+    CHECK(sim_held(KC_LCTL) && sim_held(KC_C));
+    CHECK(pipeline(KC_C, false) == false);
+    caps_exit();
+    CHECK(!sim_ctrl_held());
+    reset_engine();
 }
 
 static void test_caps_mode(void) {
@@ -500,15 +545,21 @@ static void test_caps_mode(void) {
     CHECK(kv_vim_enabled() == was_on);
     CHECK(kv_get_mode() == was_mode);
 
-    /* §1 短按不进模式（也不注册 Ctrl） */
+    /* §2 裸 Caps 单击 = 无效果（不再开关 vim；也不注册 Ctrl） */
     reset_engine();
     bool before = kv_vim_enabled();
     g_now = 9000;
     CHECK(pipeline(KC_CAPS, true) == false);
-    g_now += 100;                                /* < hold_ms */
+    g_now += 100;                                /* 短按 */
     CHECK(pipeline(KC_CAPS, false) == false);
     CHECK(!sim_ctrl_held());
-    CHECK(kv_vim_enabled() != before);           /* 短按语义不变（示例 cfg：开关 vim） */
+    CHECK(kv_vim_enabled() == before);           /* vim 状态不变 */
+    /* Fn+Caps 才是开关 */
+    layer_state |= (1UL << g_cfg.fn_layer);
+    CHECK(pipeline(KC_CAPS, true) == false);
+    CHECK(pipeline(KC_CAPS, false) == false);
+    CHECK(kv_vim_enabled() != before);
+    layer_state &= ~(1UL << g_cfg.fn_layer);
 
     /* §4 vim 关闭时同样可用 */
     reset_engine();
@@ -540,6 +591,7 @@ int main(void) {
     test_insert_flash_wraparound();
     test_insert_flash_color();
     test_caps_mode();
+    test_caps_trigger();
     printf("rgb: pass=%d fail=%d\n", g_pass, g_fail);
     return g_fail ? 1 : 0;
 }

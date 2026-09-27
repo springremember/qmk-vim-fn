@@ -263,6 +263,14 @@ static void reset_engine(void) {
 static void fn_on(void) { s_fn_active = true; layer_state = (1UL << 4); }
 static void fn_off(void) { s_fn_active = false; layer_state = 0; }
 
+/* vim 开关的唯一键盘入口 = Fn + Caps 单击（caps/readme.md §2）。 */
+static void caps_toggle_vim(void) {
+    fn_on();
+    CHECK(pipeline(KC_CAPS, true) == false);
+    CHECK(pipeline(KC_CAPS, false) == false);
+    fn_off();
+}
+
 /* ================= tests ================= */
 
 static void test_polarity_pairing(void) {
@@ -344,16 +352,18 @@ static void test_myfn_skeleton(void) {
 }
 
 static void test_caps(void) {
-    /* tap (vim on): press previews NORMAL, release toggles vim OFF */
+    /* 裸 Caps 单击：无任何效果（不开关 vim、不发键） */
     reset_engine();
     CHECK(pipeline(KC_CAPS, true) == false);
-    CHECK(kv_vim_enabled() == true);          /* not toggled until release */
+    CHECK(kv_vim_enabled() == true);          /* 不变 */
     CHECK(pipeline(KC_CAPS, false) == false);
-    CHECK(kv_vim_enabled() == false);         /* tap toggled vim off */
+    CHECK(kv_vim_enabled() == true);          /* 仍不变 */
 
-    /* tap (vim off): release toggles vim back ON, restarting in INSERT */
-    CHECK(pipeline(KC_CAPS, true) == false);
-    CHECK(pipeline(KC_CAPS, false) == false);
+    /* Fn+Caps 单击：开关 vim（关） */
+    caps_toggle_vim();
+    CHECK(kv_vim_enabled() == false);
+    /* Fn+Caps 再单击：开回来，且从 INSERT 起 */
+    caps_toggle_vim();
     CHECK(kv_vim_enabled() == true);
     CHECK(kv_get_mode() == KV_MODE_INSERT);   /* enable restarts in INSERT */
 
@@ -364,9 +374,9 @@ static void test_caps(void) {
     CHECK(pipeline(KC_D, true) == false);      /* operator pending */
     CHECK(kv_pending() == true);
     CHECK(pipeline(KC_CAPS, true) == false);
-    CHECK(kv_pending() == true);               /* no preview -> pending kept */
+    CHECK(kv_pending() == true);               /* 裸 Caps 不影响 pending */
     CHECK(pipeline(KC_CAPS, false) == false);
-    CHECK(kv_vim_enabled() == false);          /* release toggled off */
+    CHECK(kv_vim_enabled() == true);           /* 裸 Caps 不开关 vim */
 
     /* long press Insert -> momentary NORMAL, returns to Insert, vim stays on */
     reset_engine();
@@ -377,21 +387,18 @@ static void test_caps(void) {
     CHECK(kv_get_mode() == KV_MODE_INSERT);
     CHECK(kv_vim_enabled() == true);
 
-    /* vim off: Caps is still owned (it is the vim switch), never Caps Lock */
+    /* vim off: 裸 Caps 无效果（vim 开关要 Fn+Caps） */
     reset_engine();
     kv_disable();
     CHECK(pipeline(KC_CAPS, true) == false);
     CHECK(pipeline(KC_CAPS, false) == false);
-    CHECK(kv_vim_enabled() == true);          /* tap re-enabled vim */
+    CHECK(kv_vim_enabled() == false);         /* 裸 Caps 不开 vim */
 
-    /* Fn+Caps behaves exactly like a bare Caps (no special case) */
-    reset_engine();
-    fn_on();
-    CHECK(kv_vim_enabled() == true);
-    CHECK(pipeline(KC_CAPS, true) == false);
-    CHECK(pipeline(KC_CAPS, false) == false);
-    CHECK(kv_vim_enabled() == false);         /* toggled off, same as bare Caps */
-    fn_off();
+    /* Fn+Caps：开关 vim */
+    caps_toggle_vim();
+    CHECK(kv_vim_enabled() == true);          /* 开 */
+    caps_toggle_vim();
+    CHECK(kv_vim_enabled() == false);         /* 关 */
 }
 
 /* design.md §4.12 / readme.md §1: Caps long press = momentary Normal, on
@@ -521,11 +528,9 @@ static void test_mode_change_releases_motion(void) {
     CHECK(reg_count(KC_LEFT) == 1);
     /* A real mode transition still releases the held arrow.  Caps tap is no longer
      * a mode transition (caps/readme.md), so use the vim on/off switch instead. */
-    CHECK(pipeline(KC_CAPS, true) == false);
-    CHECK(pipeline(KC_CAPS, false) == false);  /* tap: toggles vim, no mode change */
+    caps_toggle_vim();                         /* Fn+Caps: 关 vim */
     CHECK(kv_vim_enabled() == false);
-    CHECK(pipeline(KC_CAPS, true) == false);
-    CHECK(pipeline(KC_CAPS, false) == false);  /* enable restarts INSERT + release_all */
+    caps_toggle_vim();                         /* 再开：restart INSERT + release_all */
     CHECK(reg_count(KC_LEFT) == 0);
 }
 
@@ -1027,9 +1032,9 @@ static void test_caps_mode(void) {
     g_now = 3000;
     CHECK(pipeline(KC_CAPS, true) == false);
     CHECK(kv_get_mode() == KV_MODE_NORMAL);     /* no preview any more */
-    g_now += 199;                               /* hold_ms - 1 */
+    g_now += 199;                               /* 短按 */
     CHECK(pipeline(KC_CAPS, false) == false);
-    CHECK(kv_vim_enabled() == false);           /* tap toggled vim off */
+    CHECK(kv_vim_enabled() == true);            /* 裸 Caps 不开关 vim */
     CHECK(!sim_held(KC_LCTL));
 
     /* hold: Caps mode; vim stays on and keeps its mode; F-row without Ctrl */
@@ -1487,8 +1492,7 @@ static void test_esc_grace_window(void) {
 static void test_esc_no_window_other_paths(void) {
     reset_engine();
     kv_disable();
-    CHECK(pipeline(KC_CAPS, true) == false);   /* vim off: press owned */
-    CHECK(pipeline(KC_CAPS, false) == false);  /* tap re-enables vim -> INSERT */
+    caps_toggle_vim();                          /* Fn+Caps: 重新开启 vim -> INSERT */
     CHECK(kv_get_mode() == KV_MODE_INSERT);
     /* No window: Esc immediately toggles to NORMAL. */
     CHECK(pipeline(KC_ESC, true) == false);
