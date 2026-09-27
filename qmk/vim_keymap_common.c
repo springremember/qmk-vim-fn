@@ -462,8 +462,12 @@ static void caps_mode_exit(void) {
     // 从未注册过（进入时物理 Ctrl 已按住）就绝不能反注册，否则会卸掉物理按住（§4 不变量 2）。
     // 只反注册本模式的**合成**位；物理 Ctrl 仍按住或本层没注册过都不碰
     // （第 4 轮 P2-1：退出时若物理 LCTL 仍按住，反注册会清掉物理位）。
-    if ((s_caps_ctrl_owned & CAPS_OWN_LCTL) && !s_caps_phys_ctrl) unregister_code(KC_LCTL);
-    if ((s_caps_ctrl_owned & CAPS_OWN_RCTL) && !s_caps_phys_ctrl) unregister_code(KC_RCTL);
+    // 逐位判断：只有"本层合成过该位"且"当前没有被物理 Ctrl 占着该位"时才反注册。
+    // 混用扁平 bool 会在"物理按的是另一侧 Ctrl"时漏清（第 5 轮 P0：RCTL 在位时 LCTL 永久残留）。
+    if ((s_caps_ctrl_owned & CAPS_OWN_LCTL) && !(s_caps_phys_ctrl_held & CAPS_OWN_LCTL))
+        unregister_code(KC_LCTL);
+    if ((s_caps_ctrl_owned & CAPS_OWN_RCTL) && !(s_caps_phys_ctrl_held & CAPS_OWN_RCTL))
+        unregister_code(KC_RCTL);
     s_caps_ctrl_owned = 0;
     s_caps_phys_ctrl_held = 0;
     s_caps_ctrl_n     = 0;
@@ -531,9 +535,10 @@ static bool caps_mode_process(uint16_t keycode, keyrecord_t *record) {
         // 物理 Ctrl 的 release：同样交回 QMK（由 QMK 清位）。
         s_caps_phys_ctrl = false;
         s_caps_phys_ctrl_held &= (base == KC_LCTL) ? (uint8_t)~CAPS_OWN_LCTL : (uint8_t)~CAPS_OWN_RCTL;
-        // 真机 Ctrl 是共享位：物理 release 会连本层合成的同一位一起清掉。若本层仍拥有该位
-        // 且还有非 F 键按住，则重新断言一次（否则后续键会变裸键）。
-        if ((s_caps_ctrl_owned & CAPS_OWN_LCTL) && s_caps_ctrl_n > 0) register_code(KC_LCTL);
+        // 真机 Ctrl 是**共享位**：QMK 会在**同一事件内**（process_action）反注册该位，
+        // 因此在本回调里 register_code 会被立刻抵消（第 5 轮审核证实无效）。
+        // 正确做法：清掉 owned 闩锁，让**下一个**非 F 键按条件重新注册（跨事件，不被抵消）。
+        s_caps_ctrl_owned &= (base == KC_LCTL) ? (uint8_t)~CAPS_OWN_LCTL : (uint8_t)~CAPS_OWN_RCTL;
         return false; // 透传，交给 QMK
     }
 
