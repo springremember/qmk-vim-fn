@@ -22,6 +22,8 @@
 | `s_caps_mode` | 模式是否激活 |
 | `s_caps_held[]` / `s_caps_held_n` | 本模式**实际注册过**的键码有界表（用于退出时全部反注册；容量固定，溢出时该键仍会发出，只是退出时不保证被强制释放） |
 | `s_caps_ctrl_n` | 非 F 键按下计数（Ctrl 的引用计数） |
+| `s_caps_was_pressed` | `Caps` 是否确实按下过（孤立 release 守卫，§3.1-6） |
+| `s_caps_ctrl_owned` | 本模式是否**确实注册过** Ctrl（只有 owned 才反注册，防误卸物理按住） |
 | `s_caps_phys_ctrl` | 进入模式时物理 Ctrl 是否已被按住（是则本模块不注册/不反注册 Ctrl）。**模式内收到物理 Ctrl 抬起时清为 false**，使后续非 F 键重新自注册 Ctrl |
 
 初始化（`vim_keymap_common_init()`）把上述状态全部清零。
