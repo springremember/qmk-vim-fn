@@ -36,8 +36,9 @@
 | **层键**（myfn 键自身及 `MO`/`LT`/`LM`/`TT`/`OSL` 等 QK 层键） | **放行**（press 与 release 都交回 QMK） | — |
 | 其余键 | **吞键**（空跑，不输出） | — |
 
-> **Vim 开关**：不再由 `Fn+Caps` 承担。`Caps`（含 Fn 按住时）现由键盘的**普通 Caps 逻辑**处理
-> （在实现 Vim 的键盘上，Caps 单击=开/关 Vim）；myfn 层不特判 `Caps`。
+> **Vim 开关**：由 **`Fn`+`Caps` 单击**承担（`Fn` 先按住）。**裸 `Caps` 单击无任何效果**；
+> `Caps` 的按下/抬起由共享层的 **Caps 模式**（[`../caps/`](../caps/)）最先接管，myfn 层不特判 `Caps`——
+> 层键在 Caps 模式内被放行，因此 `Fn` 层仍能正常激活。
 
 > **未定义键吞键**：myfn 层内，除上表显式声明者外，**所有键（含修饰键）一律吞键**，以避免 `Fn+Shift+Esc` 之类泄漏。
 > **唯一例外**：原厂 Fn+bootloader 组合键（§2）在**吞键之前**、用**独立记录的物理修饰键影子**判断（不依赖 `get_mods()`）——因此吞掉修饰键不影响它。
@@ -153,8 +154,8 @@ bool process_record_user(uint16_t keycode, keyrecord_t *record) {
             }
             return false;
 
-        /* Caps 由键盘的普通 Caps 逻辑处理（实现 Vim 的键盘：单击开关 Vim）。
-           myfn 层不特判；已声明的 Caps 直接放行到后续 Caps 逻辑。 */
+        /* Caps 由共享层的 Caps 模式最先接管（Fn+Caps = 开关 Vim）。myfn 层不特判；
+           已声明的 Caps 直接放行。 */
         case KC_CAPS:
             return true;
 

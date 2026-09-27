@@ -31,7 +31,7 @@
 > （开机、`Caps` 开启 vim、`i/I/a/A/o/O`、`s/c`）**没有宽限**，其后的 Insert `Esc` 一律进 Normal。
 > 进入 Normal **只由 `Esc` 负责**（`Caps` 长按是 Caps 模式，见 §9）；
 > **vim 开关的唯一键盘入口是 `Fn` + `Caps`**（裸 `Caps` 单击无效果，避免误触）。
-> 记为 `Caps` 开启 vim 的路径同样不亮橙。
+> 记为 `Fn`+`Caps` 开启 vim 的路径同样不亮橙。
 > 多键 pending（如按了 `d`）时按 `Esc`：**仅取消 pending，不发送任何键**（不变）。
 > **任何模式切换都会丢弃未完成的多键命令**（计数/操作符/`g`/`Z` 前缀）：如 `d` 后切模式，
 > 回 Normal 按 `w` 只会执行 `w`，不会残留成 `dw`。
@@ -167,12 +167,12 @@ c w     改到下一词首（进入 Insert）
 | `j` / `k` | `Shift+↓` / `Shift+↑` | `Shift+↓` / `Shift+↑`（整行扩展） |
 | `w` / `e` | `Ctrl+Shift+→` | **`Shift+↓`**（下一行） |
 | `b` | `Ctrl+Shift+←` | **`Shift+↑`**（上一行） |
-| `0` / `^` | `Shift+Home` | `Home`（行首） |
+| `0` / `^` | `Shift+Home` | `Shift+Home`（行首，不折叠已有选区） |
 | `$` | `Shift+End` | `Shift+End`（行尾） |
-| `gg` / `G` | `Ctrl+Shift+Home/End` | `Ctrl+Shift+Home/End`（文首/文末） |
+| `gg` / `G` | `Ctrl+Shift+Home/End` | `Ctrl+Shift+Home/End`（文首/文末；`gg` 两可视模式均实现） |
 | `h` / `l` | `Shift+←/→` | `Shift+←/→`（边界微调） |
 
-> `V` 进入时会先发 `Shift+End`（锚到行尾），所以 `V` 之后立即 `d`/`y` 会作用于**整行**。
+> `V` 进入时会先发 `Home`+`Shift+End`（先回行首再选到行尾 = 选中**整行**），所以 `V` 之后立即 `d`/`y` 作用于整行。
 > **计数**（`3j`、`2w` 等）在两种可视模式都生效：数字先累积，随后**一个移动键**按计数重复
 > （`3j` = 连续 3 次推进）；最多 2 位（同 Normal）。数字累积期间**不产生多键 pending**
 > （Visual 下 `pending` 恒为 false），按 `Esc` 退出可视会丢弃未消费的计数。
@@ -180,7 +180,7 @@ c w     改到下一词首（进入 Insert）
 > `y` = 复制后回 Normal，`d`/`x` = 删除后回 Normal，`c`/`s` = 剪+进 Insert，`p` = 粘贴后回 Normal。
 > 行选是**整行近似**（固件只发按键，读不到编辑器真实选区），做不到精确的跨行列区间选区。
 
-> 未列出的键（如 `i`/`a`、数字、`g`/`Z`、`<`/`>`）在 Visual 内为**非法键**：保持在 Visual
+> 未列出的键（如 `i`/`a`、数字、`Z`、`<`/`>`）在 Visual 内为**非法键**：保持在 Visual
 > （吞键，不退出、不插入、**不产生 pending**）；这不是"非 vim 键透传"规则（`i`/`a` 属 vim 键码集）。
 > 操作完成后（`d/y/c/p` 等）自动回到 Normal。
 

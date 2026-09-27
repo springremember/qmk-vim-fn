@@ -323,7 +323,7 @@ qmk-vim-fn/
                              // 配对表、held motion、Shift 折叠/CAG 透传、emit->register_code、极性封装
     vim_keymap_common.{h,c}  // 共享 keymap 层：vim_pipeline_process 单源拦截链、鼠标模式状态机、
                              // Caps tap/hold、Shift+Esc、§2.1 快捷键表、myfn 骨架、
-                             // vim_task、vim_rgb_state_color 六色计算
+                             // vim_task、vim_rgb_state_color 七色计算
   vim/  fn/                  # 本设计文档与 myfn 约定
 ```
 > 说明：多键状态机（§4.4 的转移表）实现为 `engine.c` 中的显式转移函数（状态 × token 的 `switch`），
@@ -445,21 +445,31 @@ while (queue_has()) {
     | `j` / `k` | `Shift+Down` / `Shift+Up` | 整行向下/向上扩展 |
     | `w` / `e` | `Shift+Down` | 下一行（行选按行走，而非按词） |
     | `b` | `Shift+Up` | 上一行 |
-    | `0` / `^` | `Home` | 行首（按住选区时用 `Shift+Home` 由按下文决定） |
+    | `0` / `^` | `Shift+Home` | 行首（按住选区，不折叠已有选区） |
     | `$` | `Shift+End` | 行尾 |
     | `gg` / `G` | `Ctrl+Shift+Home` / `Ctrl+Shift+End` | 文首 / 文末 |
     | `h` / `l` | `Shift+Left` / `Shift+Right` | 字符级微调（行选下保留，作为边界调整） |
 
   - **计数在可视模式同样生效**（§4.8「独立移动 ×n」）：`Nj`/`Nw` 等把对应基础序列**重复 n 次**
     （`3j` = 3 次行推进/字符推进；两模式一致）。此前实现漏了这条，已修复。
-  - **实现要点**：可视模式由 `feed_visual()` 直通处理、不经过 `feed_normal()` 的 `ST_CNT`,
-    因此**数字必须在 `feed_visual()` 内自行累积**到 `s_ctx.count`（最多 2 位，同 §4.8 上限），
-    非数字键立即消费该计数（空计数 = 1）；`Esc` 退出可视时清空计数。
-    **视觉模式下 `kv_pending()` 恒为 false**（数字累积不算多键 pending）——这条与 §4.9 的
-    「Visual 没有多键 pending」一致，不要因为计数累积而破坏它。
+  - **实现要点（计数）**：可视模式由 `feed_visual()` 直通处理、不经过 `feed_normal()` 的 `ST_CNT`，
+    因此数字必须在 `feed_visual()` 内自行累积：
+    - **上限 2 位（≤99）**，与 §4.8 一致：第 3 位起**忽略**（`123j` ≡ `12j`）。须显式记录已收位数，
+      不可让 `s_ctx.count` 进位到 3 位（否则 `999j` 请求 999 次、撑爆 emit 队列并静默丢键）。
+    - **`0` 在计数中作数字**（`10j`/`30j` 合法；`0` 只在**无计数**时才是"行首"动作）——与 §4.3 同规则。
+    - **非数字键立即消费计数**（含非法键与透传键；空计数 = 1），使其不泄漏到更后面的 motion。
+    - `Esc` 退出可视、`kv_set_mode/kv_cancel` 一律清空计数。
+    **视觉模式下 `kv_pending()` 恒为 false**（数字累积不算多键 pending）——与「Visual 没有多键 pending」一致。
+  - **`gg`**：两可视模式下 `gg` = `Ctrl+Shift+Home`（文首），与 `G` = `Ctrl+Shift+End` 对称；
+    `g` 是**前缀键**（不是非法键），可视模式内须自行处理 `g` 前缀（`gg` 之外的后续键按非法键处理）。
+    `i`/`a`/`Z`/`<`/`>` 等单键仍是非法键（吞键留在 Visual）。
+  - **动作前锚点与已知局限**：`VISUAL_LINE` 的动作（`d`/`y`/`c`/`s`）前发一次 `Home`
+    （`kv_emit_visual_line_anchor`），与动作自带的 `Shift+End` 配对选中整行。**已知局限**：该 `Home`
+    会把已扩展的多行选区折叠到光标行，因此 `V j d` 实际只删光标所在行——纯键码下无法既移动锚点又保留
+    多行选区，需宿主编辑器语义，只能实机确认。
   - **与 VISUAL 的关键差异**：`VISUAL` 的移动一律 `Shift+方向`/`Ctrl+Shift+方向`（字符/词级）；
-    `VISUAL_LINE` 的 `w`/`b`/`e` **改为整行推进**，且进入时先锚定行尾，因此同一串按键在两模式下
-    **输出不同**、选区形态也不同（这是本规格的可测断言）。
+    `VISUAL_LINE` 的 `w`/`b`/`e` **改为整行推进**，且进入时先发 `Home`+`Shift+End` 选中整行，
+    因此同一串按键在两模式下**输出不同**、选区形态也不同（这是本规格的可测断言）。
   - **动作后的模式**（与 Vim 一致，VISUAL 与 VISUAL_LINE 相同）：
     `y`（复制）与 `d`/`x`（删除）**执行完回 NORMAL**；`c`/`s` 回 NORMAL 后进 INSERT；
     `p` 粘贴后回 NORMAL；`Esc` 回 NORMAL。（此前实现漏了"退出"，动作后仍停在可视模式，已修。）
@@ -529,17 +539,17 @@ void vim_glue_release_all(void);          /* 反注册 held motion 方向键（�
 - **`vim_pipeline_process(keycode, record, cfg)` — 单源拦截链**（取代两键盘各自手写的十段顺序）：
    ```
    0 影子更新(vim_glue_mod_update)     ← 先于一切吞键（myfn 吞修饰键后 get_mods 失效）
-   1 cfg->hook_pre                     ← NUT65: pr_boot_combo(影子判定)/电源组合；QK61: NULL
-   2 myfn 骨架                         ← 层键豁免(fn 1.4.0)+未定义(含修饰键)吞键+已声明调 cfg->myfn(返回 bool:消费/放行)
-   3 cfg->hook_post_myfn               ← QK61: 闪灯/Ctrl+Alt+Del/Fn+Esc 复位(3s 用共享 hold helper，
-                                          配对走 glue 表)；NUT65: NULL
-   4 鼠标模式状态机                     ← 见下 vim_mouse_cfg_t
-   5 Shift+Esc(cfg->shift_esc_enable)  ← LSFT+Esc=~/RSFT+Esc=`(仅 Insert)；RSFT 由 glue 懒发送剥离
-   6 Esc 切换(esc_process)             ← Insert<->Normal 切换 + 3s 宽限（仅 Normal->Insert 开启，窗口内重置）
-   7 Caps tap/hold 状态机              ← 单击开关 vim(开=从 Insert 起)/长按临时 Normal/回原模式；Fn+Caps 无特殊
-   8 §2.1 快捷键表                     ← 两键盘完全一致(BSPC/Space/-/Shift+=/Ctrl+F/B//)：
+   1 Caps 触发(caps_process)           ← 按下即进 Caps 模式；Fn+Caps 单击=开关 vim；裸 Caps 无效果
+   2 Caps 模式拦截(caps_mode_process)   ← 模式内接管一切按键（caps/design.md §4）：F 区/Ctrl+键/层键豁免
+   3 cfg->hook_pre                     ← NUT65: pr_boot_combo(影子判定)/电源组合；QK61: NULL
+   4 myfn 骨架                         ← 层键豁免(fn 1.4.0)+未定义(含修饰键)吞键+已声明调 cfg->myfn
+   5 cfg->hook_post_myfn               ← QK61: 闪灯/Ctrl+Alt+Del/Fn+Esc 复位；NUT65: NULL
+   6 鼠标模式状态机                     ← 见下（参数化 vim_cfg_t）
+   7 Shift+Esc(cfg->shift_esc_enable)  ← LSFT+Esc=~/RSFT+Esc=`(仅 Insert)；RSFT 由 glue 懒发送剥离
+   8 Esc 切换(esc_process)             ← Insert<->Normal 切换 + 3s 宽限（仅 Normal->Insert 开启，窗口内重置）
+   9 §2.1 快捷键表                     ← 两键盘完全一致(BSPC/Space/-/Shift+=/Ctrl+F/B//)：
                                           base+mods 匹配+kv_cancel 前置+send_plain_tap
-   9 vim_glue_engine                   ← 右 Shift 懒发送 + 引擎分发（Insert Esc 直落透传）
+  10 vim_glue_engine                   ← 右 Shift 懒发送 + 引擎分发（Insert Esc 直落透传）
    ```
    每段显式命名+前置条件注释（消除 A-P1-7 隐式顺序契约）。
 - **鼠标模式状态机**（参数化；enter/exit、200ms 短/长按、`hjkl`/`Shift+J`/`Shift+K`/`Space`/`Enter`

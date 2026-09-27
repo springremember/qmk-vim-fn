@@ -117,9 +117,16 @@
 ## 7. Visual
 | 用例 | 输入 | 期望 | 关联 |
 |---|---|---|---|
-| 进入并删 | `v` `l` `d` | 扩展选 1 字符→删除 | |
-| 选择复制 | `v` `e` `y` | 扩展选区→复制 | |
-| 整行选择 | `V` `j` `d` | 按行扩展→删除 | |
+| 进入并删 | `v` `l` `d` | `Shift+→` 扩展 → `Shift+End`+`Ctrl+X` 删除 → 回 Normal | §4.9 动作后退出 |
+| 选择复制 | `v` `e` `y` | 扩展选区 → `Ctrl+C` → 回 Normal | §4.9 |
+| 整行选择 | `V` `j` `d` | 进入 `Home`+`Shift+End`；`j` 扩展一行；动作前锚行首；删除后回 Normal | §4.9 |
+| 行选动作（单行） | `V` `y` | `Home`,`Shift+End`,`Ctrl+C` → 回 Normal | §4.9 |
+| 行选计数 | `V` `3` `j` | 3×`Shift+↓` | §4.8 §4.9 |
+| 可视计数 | `v` `3` `j` / `v` `2` `w` | 3×`Shift+↓` / 2×`Ctrl+Shift+→` | §4.8 §4.9 |
+| 计数上限 | `v` `1` `2` `3` `j` | 第 3 位忽略 → 12×`Shift+↓` | §5 ≤2 位 |
+| 计数含 0 | `v` `1` `0` `j` | `0` 续接计数 → 10×`Shift+↓` | §4.3 §5 |
+| 非法键吞计数 | `v` `3` `i` `j` | `i` 吞掉计数 → 1×`Shift+↓` | §4.9 |
+| `gg`（两可视模式） | `v` `g` `g` / `V` `g` `g` | `Ctrl+Shift+Home` | §4.9 |
 | 退出 | `v` `Esc` | 退出选区回 Normal | |
 
 ## 8. Insert
@@ -172,8 +179,9 @@
 | 松开不卡方向键 | 松开 `h` | 宿主 `←` 被释放 | |
 | held motion + 修饰键（仅 hjkl） | Normal `Win`+`h` | `Win+←` 方向键（hold），不把裸 `h` 透传 | |
 | held motion + 修饰键（前缀不例外） | `d` `Ctrl`+`h` | 严格清空 `d`，`Ctrl+h` 透传 | |
-| Caps 单击 | `Caps` 单击 | 切换 vim 开/关（开=Insert 起） | |
-| Caps 长按 | `Caps` 长按 ≥200ms | 临时 Normal，松手回原模式 | |
+| 裸 Caps 单击 | `Caps` 单击（无 Fn） | **无任何效果** | caps/readme §2 |
+| Fn+Caps 单击 | `Fn` 按住 + `Caps` 单击 | 切换 vim 开/关（开=Insert 起） | caps/readme §2 |
+| Caps 按下即入模式 | `Caps` 按下（不等阈值） | 进入 Caps 模式；`1`→`F1` | caps/readme §2 |
 | Esc 三态 | Insert 宽限内 / 宽限外、Normal 空闲 | 见 §8 | |
 | 右Shift 单独 | 右Shift 按/松 | 无输出（不注册 Shift） | |
 | 右Shift+字母 | Insert 下 `右Shift`+`a` | 瞬时 `Shift+a`（=A），无孤立 Shift | |
