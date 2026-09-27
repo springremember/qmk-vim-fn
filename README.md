@@ -11,6 +11,11 @@
   - [`fn/readme.md`](fn/readme.md)：约定内容。
   - [`fn/changes.md`](fn/changes.md)：版本记录。
 - `engine/` —— vim 引擎核心（与 QMK 解耦的纯 C，附主机单测）。
+- `caps/` —— **Caps 长按模块规格**（键盘层模式：长按 Caps 期间的键映射）。
+  - [`caps/readme.md`](caps/readme.md)：目标行为。
+  - [`caps/design.md`](caps/design.md)：设计与实现规格（**唯一权威**）。
+  - [`caps/changes.md`](caps/changes.md)：版本与缺陷记录。
+  - [`caps/testcase.md`](caps/testcase.md)：测试用例。
 - `qmk/` —— QMK 适配层与**流程规范**。
   - [`qmk/README.md`](qmk/README.md)：**共享层 ↔ 键盘分支的同步与验证规范**
     （文档先行顺序、子模块同步、编译归档、验证清单、坑位清单）。
@@ -24,7 +29,8 @@ make -C engine glue-test   # QMK 适配层 / 共享 keymap 层
 
 ## 改动的硬性顺序（文档先行）
 
-1. 先改文档（`vim/design.md` / `vim/readme.md`，必要时 `vim/changes.md`、`vim/testcase.md`）；
+1. 先改文档（`vim/design.md` / `vim/readme.md`、`caps/design.md` / `caps/readme.md`，
+   必要时各自的 `changes.md`、`testcase.md`）；
 2. **文档单独提交**（只含文档，早于源码）；
 3. 再写测试（此阶段应编译失败 = 测试先行的证据）；
 4. 才改 `engine/` + `qmk/` 实现（不得夹带文档）；
