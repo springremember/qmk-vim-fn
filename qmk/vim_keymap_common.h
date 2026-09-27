@@ -88,9 +88,9 @@ void send_plain_tap(uint16_t keycode);
 /* QK layer-key exemption (fn readme §3): press/release must always pass QMK. */
 bool vim_is_layer_key(uint16_t keycode);
 
-/* Six-state RGB colour: red (off) / cyan (mouse) / purple (visual) /
- * yellow (normal pending) / blue (normal) / green (insert).  `pending` never
- * overrides Visual. */
+/* Seven-state RGB colour: cyan (mouse) / red (off) / purple (visual) /
+ * magenta (visual-line) / yellow (normal pending) / blue (normal) / green
+ * (insert).  `pending` never overrides Visual / Visual-Line. */
 void vim_rgb_state_color(bool enabled, kv_mode_t m, bool pending, bool mouse, uint8_t *r, uint8_t *g, uint8_t *b);
 
 /* True while the "back to typing" flash is due (design §4.12): vim is enabled,

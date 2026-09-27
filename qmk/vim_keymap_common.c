@@ -705,9 +705,12 @@ void vim_rgb_state_color(bool enabled, kv_mode_t m, bool pending, bool mouse, ui
     }
     switch (m) {
         case KV_MODE_VISUAL:
-        case KV_MODE_VISUAL_LINE:
             // pending never overrides Visual
             *r = 0x80; *g = 0x00; *b = 0x80; // purple
+            break;
+        case KV_MODE_VISUAL_LINE:
+            // 行选独立配色（design §4.12：七色），与字符选区分
+            *r = 0xFF; *g = 0x00; *b = 0xFF; // magenta
             break;
         case KV_MODE_NORMAL:
             if (pending) {
