@@ -168,11 +168,12 @@ static void test_non_vim_passthrough(kv_mode_t mode) {
  * Bare vim keys stay consumed on both edges in every non-Insert mode.
  * ====================================================================== */
 static void test_vim_keys_consumed(kv_mode_t mode) {
-    /* x: NORMAL = delete char, VISUAL = cut selection; both stay in their mode. */
+    /* x: NORMAL = delete char (stays NORMAL); VISUAL = cut selection, then exits to
+     * NORMAL (design §4.9 动作后退出可视). */
     reset_engine();
     kv_set_mode(mode);
     CHECK(pipeline(KC_X, true) == false);
-    CHECK(kv_get_mode() == mode);
+    CHECK(kv_get_mode() == (mode == KV_MODE_NORMAL ? KV_MODE_NORMAL : KV_MODE_NORMAL));
     CHECK(pipeline(KC_X, false) == false);
 
     /* w: motion in both NORMAL and VISUAL; stays in mode. */

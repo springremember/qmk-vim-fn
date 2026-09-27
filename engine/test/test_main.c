@@ -164,7 +164,7 @@ static void test_visual(void) {
     fresh(); kv_set_mode(KV_MODE_VISUAL); rec_start();
     key(KV_H); CHECK_SEQ(KV_LSFT_KC(KV_LEFT));
     rec_start(); key(KV_D); CHECK_SEQ(KV_LSFT_KC(KV_END), KV_LCTL_KC(KV_X));
-    CHECK(kv_get_mode() == KV_MODE_VISUAL); /* still visual */
+    CHECK(kv_get_mode() == KV_MODE_NORMAL); /* 动作后退出可视（design §4.9） */
     rec_start(); key(KV_ESC); CHECK(kv_get_mode() == KV_MODE_NORMAL);
     /* illegal key stays in visual */
     kv_set_mode(KV_MODE_VISUAL); rec_start();
@@ -563,10 +563,11 @@ static void test_count_drop(void) {
     fresh(); key(KV_3); key(KV_V);
     CHECK(rec_count() == 0); CHECK(kv_get_mode() == KV_MODE_VISUAL); CHECK(kv_pending() == false);
     fresh(); key(KV_3); key(KV_C_V);
-    /* V 进入行选：先锚到行尾（design §4.9 VISUAL_LINE），因此有输出、且与 v 不同 */
-    CHECK_SEQ(KV_LSFT_KC(KV_END)); CHECK(kv_get_mode() == KV_MODE_VISUAL_LINE);
+    /* V 进入行选：Home + Shift+End = 选中"整行"（design §4.9 VISUAL_LINE） */
+    CHECK_SEQ(KV_HOME, KV_LSFT_KC(KV_END)); CHECK(kv_get_mode() == KV_MODE_VISUAL_LINE);
 
     /* 行选下的计数：3j 展开为 3 次整行推进 */
+    /* V 进入会发 Home+Shift+End；rec_start 后只统计 3j 的三次行推进 */
     fresh(); key(KV_C_V); rec_start(); key(KV_3); key(KV_J);
     CHECK_SEQ(KV_LSFT_KC(KV_DOWN), KV_LSFT_KC(KV_DOWN), KV_LSFT_KC(KV_DOWN));
     CHECK(kv_get_mode() == KV_MODE_VISUAL_LINE);
@@ -635,15 +636,17 @@ static void test_visual_commands(void) {
     fresh_visual(); key(KV_2); key(KV_W);
     CHECK_SEQ(KV_CS(KV_RGHT), KV_CS(KV_RGHT));
 
-    /* y: yank selection, stay in Visual */
+    /* y: yank selection, then back to Normal（Vim 语义） */
     fresh_visual(); key(KV_Y);
     CHECK_SEQ(KV_LSFT_KC(KV_END), KV_LCTL_KC(KV_C));
-    CHECK(kv_get_mode() == KV_MODE_VISUAL);
+    CHECK(kv_get_mode() == KV_MODE_NORMAL);
     CHECK(kv_pending() == false);
 
-    /* d / x: cut selection */
+    /* d / x: cut selection, then back to Normal */
     fresh_visual(); key(KV_D); CHECK_SEQ(KV_LSFT_KC(KV_END), KV_LCTL_KC(KV_X));
+    CHECK(kv_get_mode() == KV_MODE_NORMAL);
     fresh_visual(); key(KV_X); CHECK_SEQ(KV_LSFT_KC(KV_END), KV_LCTL_KC(KV_X));
+    CHECK(kv_get_mode() == KV_MODE_NORMAL);
 
     /* c: cut + Insert */
     fresh_visual(); key(KV_C);
@@ -668,27 +671,34 @@ static void test_visual_commands(void) {
 /* design §4.9 — VISUAL_LINE 行选近似：进入锚行尾，移动按整行推进（与 VISUAL 不同）。 */
 static void test_visual_line_commands(void) {
     fresh_vline(); CHECK(kv_get_mode() == KV_MODE_VISUAL_LINE);
-    key(KV_J); CHECK_SEQ(KV_LSFT_KC(KV_DOWN));
+    key(KV_J); CHECK_SEQ(KV_LSFT_KC(KV_DOWN));   /* 整行向下扩展（不前置 Home，否则折叠选区） */
     fresh_vline(); key(KV_K);     CHECK_SEQ(KV_LSFT_KC(KV_UP));
     fresh_vline(); key(KV_W);     CHECK_SEQ(KV_LSFT_KC(KV_DOWN));  /* 行选：下一行（非 Ctrl+Shift+→） */
     fresh_vline(); key(KV_E);     CHECK_SEQ(KV_LSFT_KC(KV_DOWN));
     fresh_vline(); key(KV_B);     CHECK_SEQ(KV_LSFT_KC(KV_UP));    /* 行选：上一行（非 Ctrl+Shift+←） */
     fresh_vline(); key(KV_H);     CHECK_SEQ(KV_LSFT_KC(KV_LEFT));  /* 边界微调 */
     fresh_vline(); key(KV_L);     CHECK_SEQ(KV_LSFT_KC(KV_RGHT));
-    fresh_vline(); key(KV_0);     CHECK_SEQ(KV_LSFT_KC(KV_HOME));
+    fresh_vline(); key(KV_0);     CHECK_SEQ(KV_LSFT_KC(KV_HOME));  /* 行首（按住选区） */
     fresh_vline(); key(KV_C_CARET); CHECK_SEQ(KV_LSFT_KC(KV_HOME));
     fresh_vline(); key(KV_C_DLR); CHECK_SEQ(KV_LSFT_KC(KV_END));
     fresh_vline(); key(KV_C_G);   CHECK_SEQ(KV_CS(KV_END));
-    /* 进入 V（走解析器）：锚到行尾 */
-    fresh(); key(KV_C_V); CHECK_SEQ(KV_LSFT_KC(KV_END)); CHECK(kv_get_mode() == KV_MODE_VISUAL_LINE);
-    fresh_vline(); key(KV_Y);     CHECK_SEQ(KV_LSFT_KC(KV_END), KV_LCTL_KC(KV_C));
-    fresh_vline(); key(KV_D);     CHECK_SEQ(KV_LSFT_KC(KV_END), KV_LCTL_KC(KV_X));
+    /* 进入 V（走解析器）：Home + Shift+End = 整行 */
+    fresh(); key(KV_C_V); CHECK_SEQ(KV_HOME, KV_LSFT_KC(KV_END)); CHECK(kv_get_mode() == KV_MODE_VISUAL_LINE);
+    /* 动作前只补 Home 锚行首（y/d/c 自身发 Shift+End，二者配对即整行）；动作后退出可视。
+     * 序列 = Home,<动作自带 Shift+End>,<动作>。 */
+    fresh_vline(); key(KV_Y);
+    CHECK_SEQ(KV_HOME, KV_LSFT_KC(KV_END), KV_LCTL_KC(KV_C));
+    CHECK(kv_get_mode() == KV_MODE_NORMAL);          /* y 后回 Normal */
+    fresh_vline(); key(KV_D);
+    CHECK_SEQ(KV_HOME, KV_LSFT_KC(KV_END), KV_LCTL_KC(KV_X));
+    CHECK(kv_get_mode() == KV_MODE_NORMAL);          /* d 后回 Normal */
     fresh_vline(); key(KV_P);     CHECK_SEQ(KV_LCTL_KC(KV_V));
+    CHECK(kv_get_mode() == KV_MODE_NORMAL);          /* p 后回 Normal */
     fresh_vline(); key(KV_C);
-    CHECK_SEQ(KV_LSFT_KC(KV_END), KV_LCTL_KC(KV_X));
+    CHECK_SEQ(KV_HOME, KV_LSFT_KC(KV_END), KV_LCTL_KC(KV_X));
     CHECK(kv_get_mode() == KV_MODE_INSERT);
     fresh_vline(); key(KV_S);
-    CHECK_SEQ(KV_LSFT_KC(KV_RGHT), KV_DEL);
+    CHECK_SEQ(KV_HOME, KV_LSFT_KC(KV_RGHT), KV_DEL); /* s 无自带 Shift+End */
     CHECK(kv_get_mode() == KV_MODE_INSERT);
     fresh_vline(); key(KV_ESC); CHECK(kv_get_mode() == KV_MODE_NORMAL);
 }

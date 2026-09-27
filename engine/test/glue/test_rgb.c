@@ -199,7 +199,7 @@ static void test_rgb_normal_pending_yellow(void) {
     (void)pipeline(KC_3, false);
 }
 
-/* Branches: VISUAL -> purple; VISUAL_LINE -> magenta（行选有独立颜色，design §4.12）。 */
+/* Branches: VISUAL -> purple; VISUAL_LINE -> rose #FF0080（行选独立颜色，design §4.12）。 */
 static void test_rgb_visual_purple(void) {
     reset_engine();
     enter_normal();
@@ -215,7 +215,7 @@ static void test_rgb_visual_purple(void) {
     CHECK(pipeline(KC_V, true) == false);   /* Shift+'v' -> Visual-Line */
     CHECK(kv_get_mode() == KV_MODE_VISUAL_LINE);
     CHECK(!kv_pending());
-    CHECK_RGB(color_from_engine(), 0xFF, 0x00, 0xFF); /* 紫红 */
+    CHECK_RGB(color_from_engine(), 0xFF, 0x00, 0x80); /* 洋红 rose */
     (void)pipeline(KC_V, false);
     (void)pipeline(KC_LSFT, false);
 }
@@ -226,7 +226,7 @@ static void test_rgb_visual_purple(void) {
  * reachable through the RGB API itself. */
 static void test_rgb_visual_pending_stays_purple(void) {
     CHECK_RGB(color_raw(true, KV_MODE_VISUAL, true, false), 0x80, 0x00, 0x80);      /* 紫 */
-    CHECK_RGB(color_raw(true, KV_MODE_VISUAL_LINE, true, false), 0xFF, 0x00, 0xFF); /* 紫红，仍不被 pending 覆盖 */
+    CHECK_RGB(color_raw(true, KV_MODE_VISUAL_LINE, true, false), 0xFF, 0x00, 0x80); /* 洋红 rose，仍不被 pending 覆盖 */
 }
 
 /* Branches: MOUSE -> cyan, and cyan wins over the "vim off" red.  The second
