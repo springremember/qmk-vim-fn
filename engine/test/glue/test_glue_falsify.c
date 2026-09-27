@@ -362,13 +362,14 @@ static void test_falsify_hook_pairing(void) {
 }
 
 /* ======================================================================
- * F. Caps long press returns to the exact entry mode (Visual -> Visual)
+ * F. Caps tap = existing short-press semantics; Caps hold = Caps mode
+ *    (caps/readme.md; never changes the vim mode)
  * ====================================================================== */
 static void test_falsify_caps(void) {
-    /* tap (vim on, INSERT): press previews NORMAL, release toggles vim OFF. */
+    /* tap (vim on, INSERT): press consumed, no preview; release toggles vim OFF. */
     reset_engine();
     CHECK(feed(KC_CAPS, true) == false);
-    CHECK(kv_get_mode() == KV_MODE_NORMAL);
+    CHECK(kv_get_mode() == KV_MODE_INSERT);
     CHECK(kv_vim_enabled() == true);
     CHECK(feed(KC_CAPS, false) == false);
     CHECK(kv_vim_enabled() == false);
@@ -383,13 +384,15 @@ static void test_falsify_caps(void) {
 
     reset_engine(); /* leave the suite in a clean INSERT state */
 
-    /* Long press from Visual -> momentary Normal -> release returns to Visual. */
+    /* Long press from Visual -> Caps mode; vim keeps VISUAL and the release
+     * exits the Caps mode without touching the vim mode. */
     reset_engine();
     kv_set_mode(KV_MODE_VISUAL);
     g_now = 2000;
     CHECK(feed(KC_CAPS, true) == false);
-    CHECK(kv_get_mode() == KV_MODE_NORMAL);
+    CHECK(kv_get_mode() == KV_MODE_VISUAL);   /* Caps mode, not NORMAL */
     g_now += 250;
+    vim_keymap_common_task(g_now);            /* entry is evaluated in task() */
     CHECK(feed(KC_CAPS, false) == false);
     if (kv_get_mode() != KV_MODE_VISUAL) {
         g_fail++;
@@ -412,7 +415,6 @@ static void test_falsify_caps(void) {
 static void test_falsify_caps_normal_press_pairing(void) {
     reset_engine(); /* INSERT */
     CHECK(feed(KC_CAPS, true) == false); /* consumed by the non-Fn branch */
-    CHECK(kv_get_mode() == KV_MODE_NORMAL);
     fn_on(); /* Fn pressed while Caps is still held */
     bool pass = feed(KC_CAPS, false);
     if (pass != false) {
@@ -567,7 +569,6 @@ static void test_falsify_caps_fn_ordering(void) {
      * toggles vim off, and the pair is still owned. */
     reset_engine(); /* INSERT, vim on */
     CHECK(feed(KC_CAPS, true) == false);
-    CHECK(kv_get_mode() == KV_MODE_NORMAL);
     fn_on();
     fn_off(); /* Fn released first */
     CHECK(feed(KC_CAPS, false) == false); /* paired release consumed */
@@ -578,7 +579,6 @@ static void test_falsify_caps_fn_ordering(void) {
     /* (2) Caps press -> Fn down -> Caps release (Fn still held) -> Fn up */
     reset_engine();
     CHECK(feed(KC_CAPS, true) == false);
-    CHECK(kv_get_mode() == KV_MODE_NORMAL);
     fn_on();
     CHECK(feed(KC_CAPS, false) == false); /* paired release consumed */
     CHECK(s_orphan == 0);

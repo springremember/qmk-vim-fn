@@ -46,7 +46,11 @@ typedef struct { keyevent_t event; } keyrecord_t;
 #define KC_2 KV_2
 #define KC_3 KV_3
 #define KC_4 KV_4
+#define KC_5 KV_5
 #define KC_6 KV_6
+#define KC_7 KV_7
+#define KC_8 KV_8
+#define KC_9 KV_9
 #define KC_0 KV_0
 
 #define KC_ENT KV_ENT

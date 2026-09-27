@@ -357,13 +357,14 @@ static void test_caps(void) {
     CHECK(kv_vim_enabled() == true);
     CHECK(kv_get_mode() == KV_MODE_INSERT);   /* enable restarts in INSERT */
 
-    /* Normal + pending `d` then Caps: press drops the pending, release toggles */
+    /* Normal + pending `d` then Caps tap: no mode preview any more
+     * (caps/readme.md), so the pending command survives and release toggles vim. */
     reset_engine();
     kv_set_mode(KV_MODE_NORMAL);
     CHECK(pipeline(KC_D, true) == false);      /* operator pending */
     CHECK(kv_pending() == true);
     CHECK(pipeline(KC_CAPS, true) == false);
-    CHECK(kv_pending() == false);              /* mode preview cleared pending */
+    CHECK(kv_pending() == true);               /* no preview -> pending kept */
     CHECK(pipeline(KC_CAPS, false) == false);
     CHECK(kv_vim_enabled() == false);          /* release toggled off */
 
@@ -518,10 +519,14 @@ static void test_mode_change_releases_motion(void) {
     CHECK(pipeline(KC_H, true) == false);
     kv_emit_flush_now();
     CHECK(reg_count(KC_LEFT) == 1);
-    /* Caps switch (mode transition) must release the held arrow */
+    /* A real mode transition still releases the held arrow.  Caps tap is no longer
+     * a mode transition (caps/readme.md), so use the vim on/off switch instead. */
     CHECK(pipeline(KC_CAPS, true) == false);
+    CHECK(pipeline(KC_CAPS, false) == false);  /* tap: toggles vim, no mode change */
+    CHECK(kv_vim_enabled() == false);
+    CHECK(pipeline(KC_CAPS, true) == false);
+    CHECK(pipeline(KC_CAPS, false) == false);  /* enable restarts INSERT + release_all */
     CHECK(reg_count(KC_LEFT) == 0);
-    CHECK(pipeline(KC_CAPS, false) == false);
 }
 
 /* design §4.10 / readme §4: Shift+Esc is gated on kv_vim_enabled() inside
@@ -1006,52 +1011,47 @@ static void test_hook_pre_order_and_pairing(void) {
     fn_off();
 }
 
-/* design §4.9 / §4.12: Caps tap/hold entry-mode handling for VISUAL /
- * VISUAL_LINE / NORMAL and the exact hold_ms boundary. */
-static void test_caps_entry_modes(void) {
-    /* short press from VISUAL -> NORMAL */
-    reset_engine();
-    kv_set_mode(KV_MODE_VISUAL);
-    CHECK(pipeline(KC_CAPS, true) == false);
-    CHECK(kv_get_mode() == KV_MODE_NORMAL);
-    CHECK(pipeline(KC_CAPS, false) == false);
-    CHECK(kv_get_mode() == KV_MODE_NORMAL);
+/* caps/readme.md + caps/design.md §3: Caps tap keeps the keyboard's existing
+ * short-press semantics; Caps hold enters the Caps mode and never changes the
+ * vim mode.  (Detailed mapping cases live in test_rgb.c.) */
+static bool sim_held(uint16_t kc) {
+    for (int i = 0; i < s_reg_n; i++)
+        if (s_reg[i] == kc) return true;
+    return false;
+}
 
-    /* short press from VISUAL_LINE -> NORMAL */
-    reset_engine();
-    kv_set_mode(KV_MODE_VISUAL_LINE);
-    CHECK(pipeline(KC_CAPS, true) == false);
-    CHECK(kv_get_mode() == KV_MODE_NORMAL);
-    CHECK(pipeline(KC_CAPS, false) == false);
-    CHECK(kv_get_mode() == KV_MODE_NORMAL);
-
-    /* long press from NORMAL restores NORMAL */
+static void test_caps_mode(void) {
+    /* tap: toggles vim, no Ctrl, vim mode untouched by the press */
     reset_engine();
     kv_set_mode(KV_MODE_NORMAL);
     g_now = 3000;
     CHECK(pipeline(KC_CAPS, true) == false);
-    CHECK(kv_get_mode() == KV_MODE_NORMAL);
-    g_now += 250;
+    CHECK(kv_get_mode() == KV_MODE_NORMAL);     /* no preview any more */
+    g_now += 199;                               /* hold_ms - 1 */
     CHECK(pipeline(KC_CAPS, false) == false);
-    CHECK(kv_get_mode() == KV_MODE_NORMAL);
-}
+    CHECK(kv_vim_enabled() == false);           /* tap toggled vim off */
+    CHECK(!sim_held(KC_LCTL));
 
-static void test_caps_hold_boundary(void) {
-    /* elapsed == hold_ms => held => restore the entry mode (INSERT) */
+    /* hold: Caps mode; vim stays on and keeps its mode; F-row without Ctrl */
     reset_engine();
+    kv_set_mode(KV_MODE_NORMAL);
     g_now = 4000;
     CHECK(pipeline(KC_CAPS, true) == false);
-    CHECK(kv_get_mode() == KV_MODE_NORMAL);      /* momentary Normal on press */
-    g_now += 200;                                /* hold_ms */
-    CHECK(pipeline(KC_CAPS, false) == false);
-    CHECK(kv_get_mode() == KV_MODE_INSERT);      /* held -> entry mode restored */
-
-    /* elapsed == hold_ms - 1 => tap => stays Normal (Insert -> Normal toggle) */
-    reset_engine();
-    g_now = 4000;
-    CHECK(pipeline(KC_CAPS, true) == false);
-    g_now += 199;
-    CHECK(pipeline(KC_CAPS, false) == false);
+    g_now += 200;                               /* exactly hold_ms */
+    vim_keymap_common_task(g_now);              /* entry is evaluated in task() */
+    CHECK(kv_vim_enabled() == true);
+    CHECK(kv_get_mode() == KV_MODE_NORMAL);
+    CHECK(!sim_held(KC_LCTL));
+    CHECK(pipeline(KC_1, true) == false);
+    CHECK(sim_held(KC_F1) && !sim_held(KC_LCTL));
+    CHECK(pipeline(KC_1, false) == false);
+    CHECK(pipeline(KC_C, true) == false);
+    CHECK(sim_held(KC_LCTL) && sim_held(KC_C));
+    CHECK(pipeline(KC_C, false) == false);
+    CHECK(!sim_held(KC_LCTL));                  /* last non-F key released */
+    CHECK(kv_get_mode() == KV_MODE_NORMAL);     /* engine never saw the keys */
+    CHECK(pipeline(KC_CAPS, false) == false);   /* release Caps exits the mode */
+    CHECK(kv_vim_enabled() == true);
     CHECK(kv_get_mode() == KV_MODE_NORMAL);
 }
 
@@ -1603,8 +1603,7 @@ int main(void) {
     test_myfn_declared_null();
     test_vim_set_enabled_callback();
     test_hook_pre_order_and_pairing();
-    test_caps_entry_modes();
-    test_caps_hold_boundary();
+    test_caps_mode();
     test_mouse_task_threshold();
     test_mouse_h_release();              /* G5 */
     test_mouse_lbtn_threshold();         /* G7 */

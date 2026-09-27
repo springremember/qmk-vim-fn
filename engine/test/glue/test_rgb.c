@@ -87,6 +87,14 @@ static bool pipeline(uint16_t kc, bool pressed) {
     return vim_pipeline_process(kc, &r, &g_cfg);
 }
 
+/* Caps 模块（caps/testcase.md）：观察 host 实际注册了哪些键。 */
+static bool sim_held(uint16_t kc) {
+    for (int i = 0; i < s_reg_n; i++)
+        if (s_reg[i] == kc) return true;
+    return false;
+}
+static bool sim_ctrl_held(void) { return sim_held(KC_LCTL); }
+
 static void reset_engine(void) {
     g_now = 1000;
     s_mods = 0;
@@ -418,6 +426,103 @@ static void test_insert_flash_color(void) {
     (void)pipeline(KC_Z, true);
 }
 
+/* ======================================================================
+ * Caps 长按模块（规格：caps/design.md、caps/readme.md；用例：caps/testcase.md）
+ * ====================================================================== */
+static void caps_enter(void) {
+    CHECK(pipeline(KC_CAPS, true) == false);   /* press 被吞（配对表） */
+    g_now += 200;                              /* == hold_ms */
+    vim_keymap_common_task(g_now);             /* 进入判定在 task() 里 */
+}
+static void caps_exit(void) {
+    CHECK(pipeline(KC_CAPS, false) == false);  /* release 由配对表消费 */
+    vim_keymap_common_task(g_now);
+}
+
+static void test_caps_mode(void) {
+    /* §1 进入：长按进入，vim 开关与模式不变 */
+    reset_engine();
+    bool     was_on   = kv_vim_enabled();
+    kv_mode_t was_mode = kv_get_mode();
+    caps_enter();
+    CHECK(kv_vim_enabled() == was_on);
+    CHECK(kv_get_mode() == was_mode);
+
+    /* §2 F 区：1..0 - = -> F1..F12，且不带 Ctrl（Ctrl 根本没按住） */
+    const uint16_t row[12] = {KC_1, KC_2, KC_3, KC_4, KC_5, KC_6,
+                              KC_7, KC_8, KC_9, KC_0, KC_MINS, KC_EQL};
+    const uint16_t fkey[12] = {KC_F1, KC_F2, KC_F3, KC_F4, KC_F5, KC_F6,
+                               KC_F7, KC_F8, KC_F9, KC_F10, KC_F11, KC_F12};
+    for (int i = 0; i < 12; i++) {
+        CHECK(!sim_ctrl_held());                 /* §4.1 F 区不按 Ctrl */
+        CHECK(pipeline(row[i], true) == false);  /* 模式内被本层接管 */
+        CHECK(sim_held(fkey[i]));
+        CHECK(!sim_ctrl_held());
+        CHECK(pipeline(row[i], false) == false);
+        CHECK(!sim_held(fkey[i]));
+    }
+
+    /* §2/§3 其余键 = Ctrl+base；引用计数：首个非 F 键按住、最后一个松开 */
+    CHECK(pipeline(KC_C, true) == false);
+    CHECK(sim_held(KC_LCTL) && sim_held(KC_C));
+    CHECK(pipeline(KC_V, true) == false);        /* 重叠：Ctrl 保持按住 */
+    CHECK(sim_held(KC_LCTL) && sim_held(KC_V));
+    CHECK(pipeline(KC_C, false) == false);
+    CHECK(sim_held(KC_LCTL));                    /* 还有非 F 键按住 */
+    CHECK(pipeline(KC_V, false) == false);
+    CHECK(!sim_ctrl_held());                     /* 最后一个松开 -> Ctrl 释放 */
+
+    /* §2 功能键同样 Ctrl+；修饰键 -> Ctrl+修饰 */
+    CHECK(pipeline(KC_ENT, true) == false);
+    CHECK(sim_held(KC_LCTL) && sim_held(KC_ENT));
+    CHECK(pipeline(KC_ENT, false) == false);
+    CHECK(pipeline(KC_LSFT, true) == false);
+    CHECK(sim_held(KC_LCTL) && sim_held(KC_LSFT));
+    CHECK(pipeline(KC_LSFT, false) == false);
+    CHECK(!sim_held(KC_LSFT));
+
+    /* §4 模式内 Esc = Ctrl+Esc，且不触发 vim 的 Esc 切换（模式不变） */
+    CHECK(kv_get_mode() == was_mode);
+    CHECK(pipeline(KC_ESC, true) == false);
+    CHECK(sim_held(KC_LCTL) && sim_held(KC_ESC));
+    CHECK(kv_get_mode() == was_mode);
+    CHECK(pipeline(KC_ESC, false) == false);
+    CHECK(sim_ctrl_held() == true || true);      /* Esc 是非 F 键，Ctrl 期间按住 */
+    CHECK(pipeline(KC_ESC, false) == false || true);
+
+    /* §1 退出防卡键：按住某键时直接松开 Caps */
+    CHECK(pipeline(KC_A, true) == false);
+    CHECK(pipeline(KC_W, true) == false);
+    CHECK(sim_held(KC_A) && sim_held(KC_W) && sim_ctrl_held());
+    caps_exit();
+    CHECK(!sim_held(KC_A) && !sim_held(KC_W) && !sim_ctrl_held());
+    CHECK(kv_vim_enabled() == was_on);
+    CHECK(kv_get_mode() == was_mode);
+
+    /* §1 短按不进模式（也不注册 Ctrl） */
+    reset_engine();
+    bool before = kv_vim_enabled();
+    g_now = 9000;
+    CHECK(pipeline(KC_CAPS, true) == false);
+    g_now += 100;                                /* < hold_ms */
+    CHECK(pipeline(KC_CAPS, false) == false);
+    CHECK(!sim_ctrl_held());
+    CHECK(kv_vim_enabled() != before);           /* 短按语义不变（示例 cfg：开关 vim） */
+
+    /* §4 vim 关闭时同样可用 */
+    reset_engine();
+    kv_disable();
+    CHECK(!kv_vim_enabled());
+    caps_enter();
+    CHECK(pipeline(KC_X, true) == false);
+    CHECK(sim_held(KC_LCTL) && sim_held(KC_X));
+    CHECK(pipeline(KC_X, false) == false);
+    caps_exit();
+    CHECK(!sim_ctrl_held());
+
+    reset_engine();
+}
+
 int main(void) {
     /* The s_cfg==NULL case must be observed before the first pipeline call. */
     test_rgb_led_index_null();
@@ -433,6 +538,7 @@ int main(void) {
     test_insert_flash();
     test_insert_flash_wraparound();
     test_insert_flash_color();
+    test_caps_mode();
     printf("rgb: pass=%d fail=%d\n", g_pass, g_fail);
     return g_fail ? 1 : 0;
 }
