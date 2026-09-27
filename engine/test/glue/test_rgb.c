@@ -199,14 +199,14 @@ static void test_rgb_normal_pending_yellow(void) {
     (void)pipeline(KC_3, false);
 }
 
-/* Branches: VISUAL and VISUAL_LINE -> purple. */
+/* Branches: VISUAL -> purple; VISUAL_LINE -> magenta（行选有独立颜色，design §4.12）。 */
 static void test_rgb_visual_purple(void) {
     reset_engine();
     enter_normal();
     CHECK(pipeline(KC_V, true) == false); /* 'v' -> Visual */
     CHECK(kv_get_mode() == KV_MODE_VISUAL);
     CHECK(!kv_pending());
-    CHECK_RGB(color_from_engine(), 0x80, 0x00, 0x80);
+    CHECK_RGB(color_from_engine(), 0x80, 0x00, 0x80); /* 紫 */
     (void)pipeline(KC_V, false);
 
     reset_engine();
@@ -215,7 +215,7 @@ static void test_rgb_visual_purple(void) {
     CHECK(pipeline(KC_V, true) == false);   /* Shift+'v' -> Visual-Line */
     CHECK(kv_get_mode() == KV_MODE_VISUAL_LINE);
     CHECK(!kv_pending());
-    CHECK_RGB(color_from_engine(), 0x80, 0x00, 0x80);
+    CHECK_RGB(color_from_engine(), 0xFF, 0x00, 0xFF); /* 紫红 */
     (void)pipeline(KC_V, false);
     (void)pipeline(KC_LSFT, false);
 }
@@ -225,8 +225,8 @@ static void test_rgb_visual_purple(void) {
  * keys without entering a pending state), so this precedence is only
  * reachable through the RGB API itself. */
 static void test_rgb_visual_pending_stays_purple(void) {
-    CHECK_RGB(color_raw(true, KV_MODE_VISUAL, true, false), 0x80, 0x00, 0x80);
-    CHECK_RGB(color_raw(true, KV_MODE_VISUAL_LINE, true, false), 0x80, 0x00, 0x80);
+    CHECK_RGB(color_raw(true, KV_MODE_VISUAL, true, false), 0x80, 0x00, 0x80);      /* 紫 */
+    CHECK_RGB(color_raw(true, KV_MODE_VISUAL_LINE, true, false), 0xFF, 0x00, 0xFF); /* 紫红，仍不被 pending 覆盖 */
 }
 
 /* Branches: MOUSE -> cyan, and cyan wins over the "vim off" red.  The second
@@ -264,6 +264,7 @@ static void test_rgb_mouse_precedence(void) {
     CHECK_RGB(color_raw(false, KV_MODE_INSERT, false, true), 0x00, 0xFF, 0xFF);
     CHECK_RGB(color_raw(false, KV_MODE_NORMAL, true, true), 0x00, 0xFF, 0xFF);
     CHECK_RGB(color_raw(true, KV_MODE_VISUAL, true, true), 0x00, 0xFF, 0xFF);
+    CHECK_RGB(color_raw(true, KV_MODE_VISUAL_LINE, true, true), 0x00, 0xFF, 0xFF); /* 紫红也让位给青 */
 }
 
 /* vim_insert_flash() — 规格见 design.md §4.12 / readme.md §10：
