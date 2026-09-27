@@ -426,8 +426,29 @@ while (queue_has()) {
   由共享 keymap 层步骤 6 `esc_process()` 决定：非宽限时吞键转 NORMAL，宽限内透传真实 Esc（见 §4.12）。
 - **VISUAL / VISUAL_LINE**：键集 = 移动（含计数 `Nm`）+ `d/y/c/x/s/p`。移动按 Shift 变体扩展选区；
   `d/x`=剪选区、`y`=复制、`c/s`=剪+进 INSERT、`p`=粘贴，完成后回 NORMAL。
+  **VISUAL_LINE 另有行选近似映射（见下条），其移动输出与 VISUAL 不同。**
   **未列键（数字、`g`、`Z`、`<`/`>`、`i`/`a` 等）为非法键 → 吞键留在 Visual**（不退出、不插入、
   不产生 pending）——即 Visual 模式**没有多键 pending**，`kv_pending()` 在 VISUAL 下恒为 false。
+- **VISUAL_LINE（`V`，行选近似）**——必须**可观察到与 VISUAL 的差异**（纯键码下只能近似"行选"）：
+  - **进入 `V`**：除切模式外，**立即发 `Shift+End`**（把选区锚点推到行尾，使行选"含整行"）；
+    进入**不点亮 Emit 之外的东西**，也不改变 vim 开关。
+  - **行选移动映射**（`VISUAL_LINE` 内）：
+
+    | 键 | 发出 | 语义 |
+    | :--- | :--- | :--- |
+    | `j` / `k` | `Shift+Down` / `Shift+Up` | 整行推进 / 回退 |
+    | `w` / `e` | `Shift+Down` | 下一行（行选按行走，而非按词） |
+    | `b` | `Shift+Up` | 上一行 |
+    | `0` / `^` | `Shift+Home` | 行首 |
+    | `$` | `Shift+End` | 行尾 |
+    | `gg` / `G` | `Ctrl+Shift+Home` / `Ctrl+Shift+End` | 文首 / 文末 |
+    | `h` / `l` | `Shift+Left` / `Shift+Right` | 字符级微调（行选下保留，作为边界调整） |
+
+    计数（`Nj` 等）由通用计数展开重复调用，因此与 `VISUAL` 共用计数语义。
+  - **与 VISUAL 的关键差异**：`VISUAL` 的移动一律 `Shift+方向`/`Ctrl+Shift+方向`（字符/词级）；
+    `VISUAL_LINE` 的 `w`/`b`/`e` **改为整行推进**，且进入时先锚定行尾，因此同一串按键在两模式下
+    **输出不同**、选区形态也不同（这是本规格的可测断言）。
+  - `d`/`y`/`c`/`s`/`p`/`Esc` 与 `VISUAL` 完全一致（对当前选区生效）。
 - **MOUSE**：键盘层模式（引擎一律 `KV_PASSTHROUGH`，见 §4.7）。**右 Alt 短按**（阈值 **200ms**，与
   Caps 一致）在 `Insert`/`Normal`/`Visual` 均可进/出（长按=RAlt 修饰）；**进出 MOUSE 视同模式切换，
   先清 pending**。模式内：`hjkl`=指针、`Shift+J`/`Shift+K`=滚轮下/上、`Space`=左键（短按单击/长按

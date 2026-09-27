@@ -149,13 +149,29 @@ c w     改到下一词首（进入 Insert）
 
 | 操作 | 效果 |
 |---|---|
-| `v` / `V` | 进入 Visual / Visual-Line |
-| 移动键（可带计数，如 `3l`） | 扩展选区 |
+| `v` | 进入 Visual（字符级） |
+| `V` | 进入 **Visual-Line（行选）**：进入即选中本行（`Shift+End`），移动按**整行**扩展 |
+| 移动键（可带计数，如 `3l`） | 扩展选区；**两模式的移动输出不同**，见下表 |
 | `d` / `x` | 删除选区（`Ctrl+X`） |
 | `y` | 复制选区（`Ctrl+C`） |
 | `c` / `s` | 修改选区（`Ctrl+X`，进入 Insert） |
 | `p` | 粘贴覆盖选区 |
 | `Esc` | 退出选区回 Normal |
+
+**Visual-Line（`V`）的行选映射**（与 Visual 的差异即在这张表；纯键码下是"行选近似"）：
+
+| 键 | Visual（字符级） | Visual-Line（行选） |
+|---|---|---|
+| `j` / `k` | `Shift+↓` / `Shift+↑` | `Shift+↓` / `Shift+↑`（整行推进/回退） |
+| `w` / `e` | `Ctrl+Shift+→` | **`Shift+↓`**（下一行） |
+| `b` | `Ctrl+Shift+←` | **`Shift+↑`**（上一行） |
+| `0` / `^` | `Shift+Home` | `Shift+Home`（行首） |
+| `$` | `Shift+End` | `Shift+End`（行尾） |
+| `gg` / `G` | `Ctrl+Shift+Home/End` | `Ctrl+Shift+Home/End`（文首/文末） |
+| `h` / `l` | `Shift+←/→` | `Shift+←/→`（边界微调） |
+
+> `V` 进入时会先发 `Shift+End`（锚到行尾），所以 `V` 之后立即 `d`/`y` 会作用于**整行**。
+> `d`/`y`/`c`/`s`/`p`/`Esc` 在两模式下相同（对当前选区生效）。
 
 > 未列出的键（如 `i`/`a`、数字、`g`/`Z`、`<`/`>`）在 Visual 内为**非法键**：保持在 Visual
 > （吞键，不退出、不插入、**不产生 pending**）；这不是"非 vim 键透传"规则（`i`/`a` 属 vim 键码集）。
