@@ -490,7 +490,10 @@ while (queue_has()) {
   否则宿主收到孤立 release（E3 的镜像）。
 - **keymap 层消费 press 的键，其 release 也须一并消费**：keymap 前置分支（如 `Shift+Esc` 组合）在
   按下时消费了某键，必须记住并**无条件吞掉其抬起**（应经 glue 的统一配对表，见 §4.12）。
-- **非 vim 键码一律透传**。
+- **非 vim 键码一律透传**。**注意**：可视模式内已累积的计数（`s_ctx.count`）**必须由 glue 侧显式作废**
+  （与 strict-clear 同一时机：`kv_pending()` 为真 **或** 引擎报告可视计数待用），否则 `v 3 F5 j` 这类
+  "计数后被透传键打断"的序列会把计数泄漏给后面的 motion（见 §4.9 实现要点：非数字键立即消费计数）。
+  引擎为此提供查询（`kv_visual_count_pending()`），glue 在透传分支调用 `kv_cancel()` 清掉它。
 - **修饰键影子**：glue 维护**物理**修饰键影子（记录每个修饰键的物理 down/up，不依赖 `get_mods()`，
   免受 oneshot/锁存干扰），用于 bootloader 组合判定与 Shift 折叠；**不打包、不 `clear_mods`/`set_mods`**
   （键盘层"剥修饰发裸键"属例外，见 §2.1，需临时 clear 并恢复）。
