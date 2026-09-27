@@ -709,8 +709,8 @@ void vim_rgb_state_color(bool enabled, kv_mode_t m, bool pending, bool mouse, ui
             *r = 0x80; *g = 0x00; *b = 0x80; // purple
             break;
         case KV_MODE_VISUAL_LINE:
-            // 行选独立配色（design §4.12：七色），与字符选区分
-            *r = 0xFF; *g = 0x00; *b = 0xFF; // magenta
+            // 行选独立配色（design §4.12：七色），与字符选的紫区分
+            *r = 0xFF; *g = 0x00; *b = 0x80; // rose（洋红）
             break;
         case KV_MODE_NORMAL:
             if (pending) {

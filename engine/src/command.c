@@ -99,19 +99,26 @@ void kv_emit_indent_line(kv_keycode_t ang, int n) {
     kv_emit_tap(ang == KV_C_GT ? KV_TAB : KV_LSFT_KC(KV_TAB));
 }
 
-/* design §4.9 VISUAL_LINE — 进入时把选区锚点推到行尾（行选近似：使选中含整行）。 */
-void kv_emit_visual_line_enter(void) { kv_emit_tap(KV_LSFT_KC(KV_END)); }
+/* design §4.9 VISUAL_LINE — 进入时选中"整行"：先 Home 回行首，再 Shift+End 选到行尾。
+ * （只发 Shift+End 只能选"光标处→行尾"，前半行会漏。） */
+void kv_emit_visual_line_enter(void) {
+    kv_emit_tap(KV_HOME);
+    kv_emit_tap(KV_LSFT_KC(KV_END));
+}
+
+/* 行选动作前的锚点：只回行首。y/d/c 自身的 SHIFT+END 与之配对即选中整行。 */
+void kv_emit_visual_line_anchor(void) { kv_emit_tap(KV_HOME); }
 
 /* design §4.9 VISUAL_LINE — 行选近似：移动按"整行"推进，因此与 VISUAL 的输出不同。
  * 进入 V 由引擎另发 SHIFT+END 锚定行尾（见 engine.c）。 */
 void kv_emit_visual_line_motion(kv_keycode_t kc) {
     switch (kc) {
-        case KV_J: case KV_W: case KV_E:              /* 整行向下 */
+        case KV_J: case KV_W: case KV_E:              /* 整行向下（不前置 Home：会折叠多行选区） */
         case KV_C_W: case KV_C_E:
             kv_emit_tap(KV_LSFT_KC(KV_DOWN));  break;
         case KV_K: case KV_B: case KV_C_B:            /* 整行向上 */
             kv_emit_tap(KV_LSFT_KC(KV_UP));    break;
-        case KV_0: case KV_C_CARET:                   /* 行首 */
+        case KV_0: case KV_C_CARET:                   /* 行首（按住选区，故 Shift+Home） */
             kv_emit_tap(KV_LSFT_KC(KV_HOME));  break;
         case KV_C_DLR:                                /* 行尾 */
             kv_emit_tap(KV_LSFT_KC(KV_END));   break;

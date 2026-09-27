@@ -89,7 +89,7 @@ void send_plain_tap(uint16_t keycode);
 bool vim_is_layer_key(uint16_t keycode);
 
 /* Seven-state RGB colour: cyan (mouse) / red (off) / purple (visual) /
- * magenta (visual-line) / yellow (normal pending) / blue (normal) / green
+ * rose #FF0080 (visual-line) / yellow (normal pending) / blue (normal) / green
  * (insert).  `pending` never overrides Visual / Visual-Line. */
 void vim_rgb_state_color(bool enabled, kv_mode_t m, bool pending, bool mouse, uint8_t *r, uint8_t *g, uint8_t *b);
 

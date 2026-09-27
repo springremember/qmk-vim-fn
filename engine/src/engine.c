@@ -327,11 +327,26 @@ static kv_feed_t feed_visual(kv_keycode_t kc) {
         return R_CONSUMED;
     }
     const int n = kv_ctx_n(&s_ctx);
-    if (kc == KV_D || kc == KV_X) { kv_emit_delete_to_eol(); reset_pending(); return R_CONSUMED; } /* cut selection */
-    if (kc == KV_Y) { kv_emit_yank_to_eol(); reset_pending(); return R_CONSUMED; }
-    if (kc == KV_C) { kv_emit_change_to_eol(); s_mode = KV_MODE_INSERT; reset_pending(); return R_CONSUMED; }
-    if (kc == KV_S) { kv_emit_substitute(); s_mode = KV_MODE_INSERT; reset_pending(); return R_CONSUMED; }
-    if (kc == KV_P) { kv_emit_paste(false); reset_pending(); return R_CONSUMED; }
+    /* design §4.9: 动作后退出可视（Vim 语义）—— y/d/x/p 回 NORMAL，c/s 回 NORMAL 再进 INSERT。
+     * 行选下动作前先把"整行"选中（Home+Shift+End），使 d/y/c/s 作用于整行。 */
+    const bool vline = (s_mode == KV_MODE_VISUAL_LINE);
+    if (kc == KV_D || kc == KV_X) {
+        if (vline) kv_emit_visual_line_anchor();
+        kv_emit_delete_to_eol(); s_mode = KV_MODE_NORMAL; reset_pending(); return R_CONSUMED;
+    }
+    if (kc == KV_Y) {
+        if (vline) kv_emit_visual_line_anchor();
+        kv_emit_yank_to_eol(); s_mode = KV_MODE_NORMAL; reset_pending(); return R_CONSUMED;
+    }
+    if (kc == KV_C) {
+        if (vline) kv_emit_visual_line_anchor();
+        kv_emit_change_to_eol(); s_mode = KV_MODE_INSERT; reset_pending(); return R_CONSUMED;
+    }
+    if (kc == KV_S) {
+        if (vline) kv_emit_visual_line_anchor();
+        kv_emit_substitute(); s_mode = KV_MODE_INSERT; reset_pending(); return R_CONSUMED;
+    }
+    if (kc == KV_P) { kv_emit_paste(false); s_mode = KV_MODE_NORMAL; reset_pending(); return R_CONSUMED; }
     switch (t) {
         case T_MOTION: case T_ZERO: case T_CARET: case T_DOLLAR: case T_G_BIG:
             for (int i = 0; i < n; i++) {

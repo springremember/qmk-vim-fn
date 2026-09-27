@@ -36,9 +36,13 @@ void kv_emit_visual_motion(kv_keycode_t kc);
  * (design §4.9 VISUAL_LINE — must differ observably from VISUAL). */
 void kv_emit_visual_line_motion(kv_keycode_t kc);
 
-/* Entering visual-LINE: anchor the selection at the end of the current line
- * (design §4.9 — "进入 V 立即发 SHIFT+END"). */
+/* Entering visual-LINE: select the whole current line (design §4.9 —
+ * HOME then SHIFT+END; only SHIFT+END would miss the part before the cursor). */
 void kv_emit_visual_line_enter(void);
+
+/* Anchor a visual-LINE action at column 0 (HOME only).  y/d/c already end with
+ * their own SHIFT+END, so the pair selects the whole line. */
+void kv_emit_visual_line_anchor(void);
 
 /* Single-key editing commands. */
 void kv_emit_delete_char(void);     /* x  */
