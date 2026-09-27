@@ -563,7 +563,13 @@ static void test_count_drop(void) {
     fresh(); key(KV_3); key(KV_V);
     CHECK(rec_count() == 0); CHECK(kv_get_mode() == KV_MODE_VISUAL); CHECK(kv_pending() == false);
     fresh(); key(KV_3); key(KV_C_V);
-    CHECK(rec_count() == 0); CHECK(kv_get_mode() == KV_MODE_VISUAL_LINE);
+    /* V 进入行选：先锚到行尾（design §4.9 VISUAL_LINE），因此有输出、且与 v 不同 */
+    CHECK_SEQ(KV_LSFT_KC(KV_END)); CHECK(kv_get_mode() == KV_MODE_VISUAL_LINE);
+
+    /* 行选下的计数：3j 展开为 3 次整行推进 */
+    fresh(); key(KV_C_V); rec_start(); key(KV_3); key(KV_J);
+    CHECK_SEQ(KV_LSFT_KC(KV_DOWN), KV_LSFT_KC(KV_DOWN), KV_LSFT_KC(KV_DOWN));
+    CHECK(kv_get_mode() == KV_MODE_VISUAL_LINE);
 
     /* single-key commands behave exactly as without a count */
     fresh(); key(KV_3); key(KV_S);
@@ -654,12 +660,22 @@ static void test_visual_commands(void) {
     CHECK(rec_count() == 0); CHECK(kv_get_mode() == KV_MODE_VISUAL);
 }
 
-/* design §4.9 — VISUAL_LINE routes through the same feed_visual switch. */
+/* design §4.9 — VISUAL_LINE 行选近似：进入锚行尾，移动按整行推进（与 VISUAL 不同）。 */
 static void test_visual_line_commands(void) {
     fresh_vline(); CHECK(kv_get_mode() == KV_MODE_VISUAL_LINE);
     key(KV_J); CHECK_SEQ(KV_LSFT_KC(KV_DOWN));
-    fresh_vline(); key(KV_B);     CHECK_SEQ(KV_CS(KV_LEFT));
+    fresh_vline(); key(KV_K);     CHECK_SEQ(KV_LSFT_KC(KV_UP));
+    fresh_vline(); key(KV_W);     CHECK_SEQ(KV_LSFT_KC(KV_DOWN));  /* 行选：下一行（非 Ctrl+Shift+→） */
+    fresh_vline(); key(KV_E);     CHECK_SEQ(KV_LSFT_KC(KV_DOWN));
+    fresh_vline(); key(KV_B);     CHECK_SEQ(KV_LSFT_KC(KV_UP));    /* 行选：上一行（非 Ctrl+Shift+←） */
+    fresh_vline(); key(KV_H);     CHECK_SEQ(KV_LSFT_KC(KV_LEFT));  /* 边界微调 */
+    fresh_vline(); key(KV_L);     CHECK_SEQ(KV_LSFT_KC(KV_RGHT));
+    fresh_vline(); key(KV_0);     CHECK_SEQ(KV_LSFT_KC(KV_HOME));
+    fresh_vline(); key(KV_C_CARET); CHECK_SEQ(KV_LSFT_KC(KV_HOME));
     fresh_vline(); key(KV_C_DLR); CHECK_SEQ(KV_LSFT_KC(KV_END));
+    fresh_vline(); key(KV_C_G);   CHECK_SEQ(KV_CS(KV_END));
+    /* 进入 V（走解析器）：锚到行尾 */
+    fresh(); key(KV_C_V); CHECK_SEQ(KV_LSFT_KC(KV_END)); CHECK(kv_get_mode() == KV_MODE_VISUAL_LINE);
     fresh_vline(); key(KV_Y);     CHECK_SEQ(KV_LSFT_KC(KV_END), KV_LCTL_KC(KV_C));
     fresh_vline(); key(KV_D);     CHECK_SEQ(KV_LSFT_KC(KV_END), KV_LCTL_KC(KV_X));
     fresh_vline(); key(KV_P);     CHECK_SEQ(KV_LCTL_KC(KV_V));
