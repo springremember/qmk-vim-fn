@@ -384,6 +384,7 @@ static uint16_t s_caps_held[CAPS_HELD_MAX]; // 本模式注册过的键
 static uint8_t  s_caps_held_n;
 static uint8_t  s_caps_ctrl_n;              // 非 F 键按下的计数（Ctrl 引用计数）
 static bool     s_caps_phys_ctrl;           // 进入时物理 Ctrl 是否已按住
+static bool     s_caps_ctrl_owned;          // 本模式是否注册过 Ctrl（只有 owned 才反注册）
 
 // 1..0 - = -> F1..F12（传入 QMK 基础键码）
 static uint16_t caps_fkey_of(uint16_t keycode) {
@@ -439,10 +440,13 @@ static void caps_mode_exit(void) {
     if (!s_caps_mode) return;
     s_caps_mode = false;
     for (uint8_t i = 0; i < s_caps_held_n; i++) unregister_code(s_caps_held[i]);
-    if (s_caps_ctrl_n && !s_caps_phys_ctrl) unregister_code(KC_LCTL);
-    s_caps_ctrl_n = 0;
+    // 只反注册本模式**确实注册过**的 Ctrl（design §3.1-3 / §4 不变量 2）：
+    // 从未注册过（进入时物理 Ctrl 已按住）就绝不能反注册，否则会卸掉物理按住。
+    if (s_caps_ctrl_owned) unregister_code(KC_LCTL);
+    s_caps_ctrl_owned = false;
+    s_caps_ctrl_n     = 0;
     caps_held_reset();
-    s_caps_phys_ctrl = false;
+    s_caps_phys_ctrl  = false;
 }
 
 // 模式内按键翻译（caps/design.md §4）：拦截在 myfn/鼠标/Esc/快捷键/引擎之前。
@@ -467,7 +471,10 @@ static bool caps_mode_process(uint16_t keycode, keyrecord_t *record) {
             register_code(fkey); // F 区：不带 Ctrl（引用计数不变）
             caps_held_add(fkey);
         } else {
-            if (s_caps_ctrl_n++ == 0 && !s_caps_phys_ctrl) register_code(KC_LCTL);
+            if (s_caps_ctrl_n++ == 0 && !s_caps_phys_ctrl) {
+                register_code(KC_LCTL);
+                s_caps_ctrl_owned = true; // 记录"这个 Ctrl 是本模式注册的"
+            }
             // 含修饰键：Shift -> Ctrl+Shift（对称反注册，不会卸掉物理按住）
             register_code(base);
             caps_held_add(base);
@@ -476,10 +483,18 @@ static bool caps_mode_process(uint16_t keycode, keyrecord_t *record) {
         return true;
     }
 
-    // 物理 Ctrl 在模式内被松开（caps/design.md §3.1-3）：清标志，使后续非 F 键按引用计数
-    // 重新注册 Ctrl，保证「其余键 = Ctrl+键」在整段模式内都成立。
-    if ((base == KC_LCTL || base == KC_RCTL) && s_caps_phys_ctrl) {
-        s_caps_phys_ctrl = false;
+    // 物理 Ctrl 在模式内按/松（caps/design.md §3.1-3）：只更新 baseline，绝不改变引用计数，
+    // 也绝不反注册本模式的 Ctrl 位（真机 Ctrl 是位图，误反注册会把合成位一起清掉）。
+    if (base == KC_LCTL || base == KC_RCTL) {
+        // 物理 Ctrl：只更新 baseline，绝不改引用计数、也绝不反注册本模式的合成 Ctrl 位。
+        //  - 本模式注册过该键（模式内按下 Ctrl）：own 为真，后面走通用路径反注册（安全，因为
+        //    此后 s_caps_ctrl_owned 变 false，下一个非 F 键会重新注册）。
+        //  - 物理 press 早于进入（未进 held 表）：绝不反注册（那是物理按住的键），只清 baseline。
+        if (!caps_held_remove(base)) {
+            s_caps_phys_ctrl = false; // 物理 Ctrl 已不可见 -> 下一个非 F 键须重新注册
+            return false;             // 交配对表消费
+        }
+        s_caps_phys_ctrl = false;     // 模式内按下的 Ctrl 也已抬起
     }
 
     // release 过滤（caps/design.md §3.1-2）：只有本实例注册过的键才反注册/改引用计数；
@@ -487,8 +502,10 @@ static bool caps_mode_process(uint16_t keycode, keyrecord_t *record) {
     const uint16_t sent = (fkey != KC_NO) ? fkey : base;
     if (!caps_held_remove(sent)) return false;
     unregister_code(sent);
-    if (fkey == KC_NO && s_caps_ctrl_n && --s_caps_ctrl_n == 0 && !s_caps_phys_ctrl) {
+    if (fkey == KC_NO && s_caps_ctrl_n && --s_caps_ctrl_n == 0 && s_caps_ctrl_owned &&
+        !s_caps_phys_ctrl) {
         unregister_code(KC_LCTL);
+        s_caps_ctrl_owned = false;
     }
     return false; // release 交配对表消费
 }
@@ -518,6 +535,10 @@ static bool caps_process(uint16_t keycode, keyrecord_t *record) {
         s_caps_was_pressed = true;
         // Fn 在按下这一刻已激活 -> Fn+Caps（单击语义）；否则立即进入 Caps 模式。
         s_caps_armed = !fn_layer_active();
+        // 重入清理（caps/design.md §3.1-1）：模式已激活时再次按下 Caps，必须先反注册
+        // 上一实例登记过的键与 Ctrl。进入模式本身（caps_mode_enter）也会做一次清理，
+        // 故"模式未激活"的情形无需在此重复处理。
+        if (s_caps_mode) caps_mode_exit();
         if (s_caps_armed) caps_mode_enter();
         vim_glue_swallow(KC_CAPS); // Caps 始终被消费，永不作 Caps Lock
         return true;
@@ -698,6 +719,7 @@ void vim_keymap_common_init(void) {
     s_caps_held_n      = 0;
     s_caps_ctrl_n      = 0;
     s_caps_phys_ctrl   = false;
+    s_caps_ctrl_owned  = false;
     s_esc_grace        = 0;
     vim_glue_init();
 }
