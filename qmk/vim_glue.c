@@ -246,7 +246,7 @@ void vim_glue_init(void) {
 void vim_glue_task(uint32_t now_ms) { kv_task(now_ms); }
 
 // --------------------------------------------------------------------------
-// Engine dispatch tail (pipeline step 8).
+// Engine dispatch tail (pipeline step 10).
 // --------------------------------------------------------------------------
 bool vim_glue_engine(uint16_t keycode, keyrecord_t *record) {
     int mi = motion_index(keycode);
@@ -279,7 +279,7 @@ bool vim_glue_engine(uint16_t keycode, keyrecord_t *record) {
 
     // Modifiers never feed the engine and never clear pending: their physical
     // state is already captured in step 0's shadow.  Clearing here would break
-    // e.g. `d` then Shift then `$` (d$).  (Under Fn, step 2 already handled
+    // e.g. `d` then Shift then `$` (d$).  (Under Fn, step 4 already handled
     // them, so this is only reached for the Normal/Insert/Visual case.)
     if (IS_MODIFIER_KEYCODE(keycode)) return true;
 

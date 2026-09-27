@@ -73,7 +73,7 @@ void send_plain_tap(uint16_t keycode) {
 }
 
 // ==========================================================================
-// Step 7 — §2.1 keyboard-layer shortcut table
+// Step 9 — §2.1 keyboard-layer shortcut table
 // ==========================================================================
 static void sc_left(void) { send_plain_tap(KC_LEFT); }
 static void sc_right(void) { send_plain_tap(KC_RGHT); }
@@ -103,7 +103,7 @@ const vim_shortcut_t vim_default_shortcuts[] = {
 };
 
 // ==========================================================================
-// Step 4 — mouse-mode state machine (design §4.9)
+// Step 6 — mouse-mode state machine (design §4.9)
 // ==========================================================================
 static const vim_cfg_t *s_cfg;
 
@@ -292,7 +292,7 @@ static bool mouse_process(uint16_t keycode, keyrecord_t *record) {
 }
 
 // ==========================================================================
-// Step 5 — Shift+Esc (Insert only, design §4.10 / readme §4)
+// Step 7 — Shift+Esc (Insert only, design §4.10 / readme §4)
 // ==========================================================================
 static bool shift_esc_process(uint16_t keycode, keyrecord_t *record) {
     if (!kv_vim_enabled()) return false; // vim off: never hijack Shift+Esc
@@ -317,7 +317,7 @@ static bool shift_esc_process(uint16_t keycode, keyrecord_t *record) {
 }
 
 // ==========================================================================
-// Step 6 — Esc toggle (Insert <-> Normal) + escape grace window
+// Step 8 — Esc toggle (Insert <-> Normal) + escape grace window
 // ==========================================================================
 //
 // With vim on, Esc toggles typing <-> command:
@@ -566,7 +566,7 @@ static bool caps_process(uint16_t keycode, keyrecord_t *record) {
 }
 
 // ==========================================================================
-// Step 2 — myfn skeleton (fn readme §3)
+// Step 4 — myfn skeleton (fn readme §3)
 // ==========================================================================
 // Returns true when the key is consumed here.
 //
@@ -614,7 +614,7 @@ static bool myfn_process(uint16_t keycode, keyrecord_t *record) {
 }
 
 // ==========================================================================
-// Step 7 — shortcut dispatch
+// Step 9 — shortcut dispatch
 // ==========================================================================
 static bool shortcuts_process(uint16_t keycode, keyrecord_t *record) {
     if (!record->event.pressed) return false;

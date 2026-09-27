@@ -25,10 +25,8 @@
 | 删到行尾 | `D` | 选到行尾→`Ctrl+X` | |
 | 复制到行尾 | `Y` | 选到行尾→`Ctrl+C` | |
 | 整行改 | `S` | `Home`,`Home`,`Shift+End`,change(+Insert) | |
-| 粘贴（字符） | `p` | `Ctrl+V` | |
-| 粘贴（行） | `p`（`yanked_line`） | `End`,`→`,`Ctrl+V` | |
-| 向前粘（字符） | `P`（非行） | `←`,`Ctrl+V` | |
-| 向前粘（行） | `P`（`yanked_line`） | `End`,`→`,`↑`,`Ctrl+V` | |
+| 粘贴 | `p` | `Ctrl+V`（光标后粘） | |
+| 向前粘 | `P` | `←`,`Ctrl+V`（光标前粘；**不做行选定位**） | |
 | 合并 | `J` | `End`,`Delete` | |
 | 撤销 | `u` | `Ctrl+Z`（**单次**） | E4 |
 | 重复 | `.` | 重放上一命令 token | A2 |

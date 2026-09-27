@@ -30,7 +30,7 @@ void vim_glue_mod_update(uint16_t keycode, bool pressed);
 /* Read-only shadow query in QMK's 8-bit modifier mask (design §4.10). */
 uint8_t vim_glue_mods(void);
 
-/* Engine dispatch tail — pipeline step 8.  Performs the Shift-fold / CAG
+/* Engine dispatch tail — pipeline step 10.  Performs the Shift-fold / CAG
  * passthrough decision, feeds kv_kbd(), records consumed presses and services
  * their releases plus the held-motion h/j/k/l exception.
  * Returns true when QMK should keep processing the key (QMK polarity:

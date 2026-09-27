@@ -493,10 +493,18 @@ while (queue_has()) {
   否则宿主收到孤立 release（E3 的镜像）。
 - **keymap 层消费 press 的键，其 release 也须一并消费**：keymap 前置分支（如 `Shift+Esc` 组合）在
   按下时消费了某键，必须记住并**无条件吞掉其抬起**（应经 glue 的统一配对表，见 §4.12）。
-- **非 vim 键码一律透传**。**注意**：可视模式内已累积的计数（`s_ctx.count`）**必须由 glue 侧显式作废**
-  （与 strict-clear 同一时机：`kv_pending()` 为真 **或** 引擎报告可视计数待用），否则 `v 3 F5 j` 这类
-  "计数后被透传键打断"的序列会把计数泄漏给后面的 motion（见 §4.9 实现要点：非数字键立即消费计数）。
-  引擎为此提供查询（`kv_visual_count_pending()`），glue 在透传分支调用 `kv_cancel()` 清掉它。
+- **非 vim 键码一律透传**。**注意**：可视模式内已累积的输入（计数位数 **或** `g` 前缀）必须在**每一处**
+  可能截断输入的路径上作废，否则 `v 3 F5 j` / `v g F5 g` 这类序列会把计数/前缀泄漏给后面的按键
+  （见 §4.9 实现要点）。引擎提供两个接口：
+  - `kv_visual_count_pending()`：可视计数或 `g` 前缀是否待用（glue/keymap 的判定条件）；
+  - `kv_visual_cancel()`：作废可视输入（等价 `kv_cancel()`：清计数/前缀并丢弃 repeat 记录）。
+
+  **三处调用点**（缺一即漏洞）：
+  1. glue 的 CAG 分支（带 Ctrl/Alt/GUI 的透传键，`vim_glue.c`）；
+  2. glue 的非 vim 键透传分支（F 键、层键、普通打字等）；
+  3. keymap 共享层的 **myfn 吞键**路径（未声明键被吞时，`vim_keymap_common.c` 步骤 4）。
+
+  统一写法：`if (kv_pending() || kv_visual_count_pending()) kv_visual_cancel();`
 - **修饰键影子**：glue 维护**物理**修饰键影子（记录每个修饰键的物理 down/up，不依赖 `get_mods()`，
   免受 oneshot/锁存干扰），用于 bootloader 组合判定与 Shift 折叠；**不打包、不 `clear_mods`/`set_mods`**
   （键盘层"剥修饰发裸键"属例外，见 §2.1，需临时 clear 并恢复）。
