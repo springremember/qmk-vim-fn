@@ -658,6 +658,30 @@ static void test_visual_commands(void) {
     CHECK_SEQ(KV_LSFT_KC(KV_RGHT), KV_DEL);
     CHECK(kv_get_mode() == KV_MODE_INSERT);
 
+    /* ---- 计数（design §4.9 实现要点 / readme §5） ---- */
+    /* 上限 2 位：第 3 位起忽略 → 123j ≡ 12j */
+    fresh_visual(); key(KV_1); key(KV_2); key(KV_3); key(KV_J);
+    CHECK(rec_count() == 12);
+    CHECK(rec_at(0) == KV_LSFT_KC(KV_DOWN) && rec_at(11) == KV_LSFT_KC(KV_DOWN));
+    /* 99 上限 */
+    fresh_visual(); key(KV_9); key(KV_9); key(KV_9); key(KV_J);
+    CHECK(rec_count() == 99);
+    /* 0 在计数中作数字：10j = 10 次推进（不是 1 次 Shift+Home + 1 次推进） */
+    fresh_visual(); key(KV_1); key(KV_0); key(KV_J);
+    CHECK(rec_count() == 10);
+    CHECK(rec_at(0) == KV_LSFT_KC(KV_DOWN) && rec_at(9) == KV_LSFT_KC(KV_DOWN));
+    /* 非法键立即消费计数：i / g 之后 j 只推进 1 次 */
+    fresh_visual(); key(KV_3); key(KV_C_I); key(KV_J); CHECK_SEQ(KV_LSFT_KC(KV_DOWN));
+    fresh_visual(); key(KV_3); key(KV_G);   key(KV_J); CHECK_SEQ(KV_LSFT_KC(KV_DOWN));
+    /* gg：两可视模式都发 Ctrl+Shift+Home */
+    fresh_visual(); key(KV_G); key(KV_G); CHECK_SEQ(KV_CS(KV_HOME));
+    fresh_vline();  key(KV_G); key(KV_G); CHECK_SEQ(KV_CS(KV_HOME));
+    /* G 丢弃计数（readme §5）：3G = 1 次 Ctrl+Shift+End */
+    fresh_visual(); key(KV_3); key(KV_C_G); CHECK_SEQ(KV_CS(KV_END));
+    /* 计数不跨模式残留：3 后 Esc 退出，再进可视按 j 只推进 1 次 */
+    fresh_visual(); key(KV_3); key(KV_ESC); key(KV_V); key(KV_J);
+    CHECK_SEQ(KV_LSFT_KC(KV_DOWN));
+
     /* p: paste */
     fresh_visual(); key(KV_P); CHECK_SEQ(KV_LCTL_KC(KV_V));
 

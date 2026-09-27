@@ -8,6 +8,7 @@
  */
 #include "qmk_stub.h"
 #include "qmk-vim-fn/engine/include/kv.h"
+#include "qmk-vim-fn/engine/src/emit.h"   /* kv_emit_flush_now（队列式 emit 的冲刷） */
 #include "qmk-vim-fn/qmk/vim_glue.h"
 #include "qmk-vim-fn/qmk/vim_keymap_common.h"
 
@@ -94,6 +95,12 @@ static bool sim_held(uint16_t kc) {
     return false;
 }
 static bool sim_ctrl_held(void) { return sim_held(KC_LCTL); }
+static int sim_arrow_count(void) {
+    int n = 0;
+    for (int i = 0; i < s_reg_n; i++)
+        if (s_reg[i] == KC_DOWN || s_reg[i] == KC_UP || s_reg[i] == KC_LEFT || s_reg[i] == KC_RGHT) n++;
+    return n;
+}
 
 static void reset_engine(void) {
     g_now = 1000;
@@ -575,6 +582,27 @@ static void test_caps_mode(void) {
     reset_engine();
 }
 
+/* design §4.10 + §4.9：可视模式已累积的计数必须被透传的非 vim 键作废。
+ * 复现：v 3 F5 j 曾把 3 泄漏给 j（3 次推进），期望 1 次。 */
+static void test_visual_count_passthrough(void) {
+    reset_engine();
+    enter_normal();
+    CHECK(pipeline(KC_V, true) == false);   /* 进 Visual */
+    CHECK(kv_get_mode() == KV_MODE_VISUAL);
+    (void)pipeline(KC_V, false);
+    CHECK(pipeline(KC_3, true) == false);   /* 计数 3 */
+    CHECK(kv_visual_count_pending() == true);
+    CHECK(pipeline(KC_F5, true) == true);   /* F5 是非 vim 键：透传 */
+    CHECK(kv_visual_count_pending() == false); /* 并且计数被作废（design §4.10） */
+    CHECK(pipeline(KC_F5, false) == true);
+    CHECK(pipeline(KC_J, true) == false);   /* 只推进 1 次（计数没泄漏） */
+    kv_emit_flush_now();                    /* 队列式 emit：冲刷后再看宿主注册 */
+    CHECK(sim_arrow_count() == 0);          /* 点按已配对，不留按住的方向键 */
+    CHECK(kv_get_mode() == KV_MODE_VISUAL);
+    (void)pipeline(KC_J, false);
+    reset_engine();
+}
+
 /* Caps 模块的卡键/发错键修复（caps/design.md §3.1；审计发现）：
  * 重入清理、过期 release 过滤、物理 Ctrl 中途松开、层键豁免、溢出吞吐一致、孤立 release 守卫。 */
 static void test_caps_cleanup(void) {
@@ -674,6 +702,7 @@ int main(void) {
     test_insert_flash();
     test_insert_flash_wraparound();
     test_insert_flash_color();
+    test_visual_count_passthrough();
     test_caps_mode();
     test_caps_trigger();
     test_caps_cleanup();
