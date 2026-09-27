@@ -74,20 +74,31 @@ Caps release-> 若 !s_caps_armed（Fn+Caps）：set_vim_enabled(!vim_enabled()) 
 press   base = keycode & 0xFF（QMK 基础键码）
         fkey = map(base)                      // 1..0 - = -> F1..F12，其余 KC_NO
         fkey != KC_NO : register(fkey)        // 不带 Ctrl；Ctrl 计数不变
-        否则           : ctrl_n++；若 ctrl_n == 1 且无物理 Ctrl -> register(Ctrl)
-                        register(base)        // 含修饰键：Shift -> Ctrl+Shift
+        否则           : 若 (!phys_ctrl && !ctrl_owned) -> register(Ctrl); ctrl_owned = true
+                         ctrl_n++
+                         register(base)        // 含修饰键：Shift -> Ctrl+Shift
         消费该 press（配对表）
-release sent = fkey != KC_NO ? fkey : base
+release 若 base 是 Ctrl（物理 Ctrl 的按/松）:
+        phys_ctrl = false；从 held 表移除该键（若登记过）；交配对表消费
+        // 绝不反注册合成位、也绝不动 ctrl_n —— 真机 Ctrl 是位图（§3.1-3）
+否则 sent = fkey != KC_NO ? fkey : base
+        若该键不在 held 表（press 早于进入 / 属上一实例）: 交配对表消费，结束
         unregister(sent)
         若为 F 键：无 Ctrl 动作
-        否则      : ctrl_n--；若 ctrl_n == 0 且无物理 Ctrl -> unregister(Ctrl)
+        否则      : ctrl_n--
+                     若 ctrl_n == 0 且 ctrl_owned -> unregister(Ctrl); ctrl_owned = false
 ```
+
+> **注意**：Ctrl 的注册条件是 `(!phys_ctrl && !ctrl_owned)` 而**不是** `ctrl_n == 1`——这样"物理 Ctrl
+> 中途松开、但仍有非 F 键按住"时，下一个非 F 键会重新注册 Ctrl（第 2 轮 P0-2）。反注册则只依据
+> `ctrl_n == 0 && ctrl_owned`，保证不误卸物理按住的 Ctrl（第 2 轮 P0-3）。
 
 **不变量**
 
 1. **F 区不带 Ctrl**：F 键路径完全不碰 Ctrl（既不注册也不因它改变引用计数）。
 2. **修饰键对称**：模式内注册过的修饰键，在它自己的 release 上原样反注册（不会把物理按住卸掉）。
-3. **退出必清**：退出模式时，`s_caps_held[]` 中记录的所有键与 Ctrl 一律反注册，即使其 release 尚未到达。
+3. **退出必清**：退出模式时，`s_caps_held[]` 中记录的所有键一律反注册（即使其 release 尚未到达）；
+   Ctrl 仅当 `s_caps_ctrl_owned` 为真（本模式确实注册过）才反注册——否则会卸掉物理按住的 Ctrl。
 4. **不碰 vim**：模式期间不调用引擎、不改变 vim 开关/模式、不重置 pending（模式内的键根本没进引擎）。
 5. **边沿配对**：模式内被本层消费的 press，其 release 由共享配对表无条件消费（不会漏出孤立 release）。
 
