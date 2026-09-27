@@ -1016,6 +1016,26 @@ static void test_hook_pre_order_and_pairing(void) {
     fn_off();
 }
 
+/* vim/design.md §4.10：被 myfn 吞掉的键（未声明键）必须作废可视模式已累积的输入。
+ * 用 ord_declared（未声明 X 之外的键）+ ord_myfn 构造"Fn 层内未声明键被吞"的场景。 */
+static void test_visual_cancel_myfn_swallow(void) {
+    vim_cfg_t cfg = g_cfg;
+    cfg.myfn_declared = ord_declared;   /* 只声明 F1 / X */
+    cfg.myfn          = ord_myfn;
+    reset_engine();
+    kv_set_mode(KV_MODE_VISUAL);          /* 直接置于可视模式 */
+    keyrecord_t r = {0};
+    r.event.pressed = true;
+    CHECK(vim_pipeline_process(KC_3, &r, &cfg) == false);   /* 累积计数 */
+    CHECK(kv_visual_count_pending() == true);
+    /* Fn 层激活后按未声明键 Z：被 myfn 吞掉，计数必须作废 */
+    fn_on();
+    CHECK(vim_pipeline_process(KC_Z, &r, &cfg) == false);
+    CHECK(kv_visual_count_pending() == false);
+    fn_off();
+    reset_engine();
+}
+
 /* caps/readme.md + caps/design.md §3: Caps tap keeps the keyboard's existing
  * short-press semantics; Caps hold enters the Caps mode and never changes the
  * vim mode.  (Detailed mapping cases live in test_rgb.c.) */
@@ -1607,6 +1627,7 @@ int main(void) {
     test_myfn_declared_null();
     test_vim_set_enabled_callback();
     test_hook_pre_order_and_pairing();
+    test_visual_cancel_myfn_swallow();
     test_caps_mode();
     test_mouse_task_threshold();
     test_mouse_h_release();              /* G5 */
