@@ -629,6 +629,11 @@ static void test_visual_commands(void) {
     fresh_visual(); key(KV_C_CARET); CHECK_SEQ(KV_LSFT_KC(KV_HOME));
     fresh_visual(); key(KV_C_DLR);   CHECK_SEQ(KV_LSFT_KC(KV_END));
     fresh_visual(); key(KV_C_G);     CHECK_SEQ(KV_CS(KV_END));
+    /* 计数展开（design §4.8 独立移动 ×n）：VISUAL 与 VISUAL_LINE 都重复 n 次 */
+    fresh_visual(); key(KV_3); key(KV_J);
+    CHECK_SEQ(KV_LSFT_KC(KV_DOWN), KV_LSFT_KC(KV_DOWN), KV_LSFT_KC(KV_DOWN));
+    fresh_visual(); key(KV_2); key(KV_W);
+    CHECK_SEQ(KV_CS(KV_RGHT), KV_CS(KV_RGHT));
 
     /* y: yank selection, stay in Visual */
     fresh_visual(); key(KV_Y);
