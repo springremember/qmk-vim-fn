@@ -320,6 +320,15 @@ static kv_feed_t feed_normal(kv_keycode_t kc) {
 
 static kv_feed_t feed_visual(kv_keycode_t kc) {
     kv_token_t t = kv_classify(kc);
+    // Esc 永远退出可视（design §4.9），**必须先于 g 前缀分支**：否则 `v g Esc` 会被
+    // 当作"g 后接非法键"吞掉、退不出可视（第 3 轮对抗审核 D）。
+    if (KV_BASIC(kc) == KV_ESC) {
+        s_mode = KV_MODE_NORMAL;
+        s_visual_digits = 0;
+        s_visual_gp     = false;
+        reset_pending();
+        return R_CONSUMED;
+    }
     // g 前缀已按下：第二击 g = gg（发 Ctrl+Shift+Home）；其它键按非法键吞掉。
     // 必须先于 T_g_LOWER 分支判定，否则第二个 g 只会再次设置前缀。
     if (s_visual_gp) {
@@ -338,13 +347,6 @@ static kv_feed_t feed_visual(kv_keycode_t kc) {
     }
     // 0 在计数中作数字（design §4.3/§4.9）：已有位数时把 0 当数字处理
     if (t == T_ZERO && s_visual_digits > 0) t = T_COUNT;
-    if (KV_BASIC(kc) == KV_ESC) {
-        s_mode = KV_MODE_NORMAL;
-        s_visual_digits = 0;
-        s_visual_gp     = false;
-        reset_pending(); /* 退出可视：丢弃未消费的计数 */
-        return R_CONSUMED;
-    }
     /* design §4.8/§4.9: 可视模式同样支持"独立移动 ×n" —— 计数以 s_ctx.count 累积
      * （ST_CNT 在 feed_normal 里收集），这里按 n 重复对应基础序列。 */
     // design §4.9: 数字先在可视模式内累积（与 §4.8 一致，最多 2 位）；

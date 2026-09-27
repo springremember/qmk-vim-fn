@@ -386,7 +386,10 @@ static uint16_t s_caps_held[CAPS_HELD_MAX]; // 本模式注册过的键
 static uint8_t  s_caps_held_n;
 static uint8_t  s_caps_ctrl_n;              // 非 F 键按下的计数（Ctrl 引用计数）
 static bool     s_caps_phys_ctrl;           // 进入时物理 Ctrl 是否已按住
-static bool     s_caps_ctrl_owned;          // 本模式是否注册过 Ctrl（只有 owned 才反注册）
+static uint8_t  s_caps_ctrl_owned;          // 本模式注册过哪些 Ctrl 键码（LCTL/RCTL 位掩码）
+#define CAPS_OWN_LCTL 0x1
+#define CAPS_OWN_RCTL 0x2
+static uint8_t  s_caps_phys_ctrl_held;      // 模式内**物理**按住的 Ctrl 键码位（退出时不得反注册）
 
 // 1..0 - = -> F1..F12（传入 QMK 基础键码）
 static uint16_t caps_fkey_of(uint16_t keycode) {
@@ -442,11 +445,19 @@ static void caps_mode_enter(void) {
 static void caps_mode_exit(void) {
     if (!s_caps_mode) return;
     s_caps_mode = false;
-    for (uint8_t i = 0; i < s_caps_held_n; i++) unregister_code(s_caps_held[i]);
-    // 只反注册本模式**确实注册过**的 Ctrl（design §3.1-3 / §4 不变量 2）：
-    // 从未注册过（进入时物理 Ctrl 已按住）就绝不能反注册，否则会卸掉物理按住。
-    if (s_caps_ctrl_owned) unregister_code(KC_LCTL);
-    s_caps_ctrl_owned = false;
+    for (uint8_t i = 0; i < s_caps_held_n; i++) {
+        const uint16_t k = s_caps_held[i];
+        // 物理 Ctrl 仍按住的位不能反注册（第 3 轮对抗审核 C：否则退出会清掉物理位，
+        // 真机 Ctrl 失效到重按）。它随后由 QMK 自己的 release 处理。
+        if ((k == KC_LCTL || k == KC_RCTL) && s_caps_phys_ctrl_held) continue;
+        unregister_code(k);
+    }
+    // 只反注册本模式**确实注册过**的 Ctrl，且按实际键码逐位处理（LCTL/RCTL 在真机是**不同 bit**）：
+    // 从未注册过（进入时物理 Ctrl 已按住）就绝不能反注册，否则会卸掉物理按住（§4 不变量 2）。
+    if (s_caps_ctrl_owned & CAPS_OWN_LCTL) unregister_code(KC_LCTL);
+    if (s_caps_ctrl_owned & CAPS_OWN_RCTL) unregister_code(KC_RCTL);
+    s_caps_ctrl_owned = 0;
+    s_caps_phys_ctrl_held = 0;
     s_caps_ctrl_n     = 0;
     caps_held_reset();
     s_caps_phys_ctrl  = false;
@@ -459,6 +470,9 @@ static bool caps_mode_process(uint16_t keycode, keyrecord_t *record) {
     // 层键豁免且放行（caps/design.md §3.1-4）：层键（MO/LT/LM/TT/OSL/TO/...）的低字节不是键位语义，
     // 绝不能按 `& 0xFF` 翻译成宿主键；不消费 press，使 Fn 层仍能正常激活（与 myfn 层键豁免一致）。
     if (vim_is_layer_key(keycode)) return false;
+    // 非基础键码（自定义键 0x7E00+/QK_KB_*/厂商键码）的低字节不是键位语义：
+    // 同层键一样豁免并放行，否则 Caps 模式内按它会在宿主发出无关的 Ctrl+低字节（第 3 轮 P3-V）。
+    if ((keycode & 0xFF00) != 0) return false;
 
     const bool     pressed = record->event.pressed;
     // 按下期间夹了键 -> 抬起时不再撤销（caps/design.md §3）
@@ -474,13 +488,23 @@ static bool caps_mode_process(uint16_t keycode, keyrecord_t *record) {
             register_code(fkey); // F 区：不带 Ctrl（引用计数不变）
             caps_held_add(fkey);
         } else {
-            // 需要合成 Ctrl 的条件：物理位当前不可用（未按住或已松开）且本模式尚未注册过。
-            // 不能只看 ctrl_n==0 —— 物理 Ctrl 中途松开时若已有非 F 键按住，也必须补注册。
-            if (!s_caps_phys_ctrl && !s_caps_ctrl_owned) {
-                register_code(KC_LCTL);
-                s_caps_ctrl_owned = true; // 记录"这个 Ctrl 是本模式注册的"
+            // 物理 Ctrl 的按键（LCTL/RCTL）：由"真实按住的修饰键"承担，不参与合成引用计数，
+            // 否则一次点按会让 ctrl_n 永久 +1（第 3 轮对抗审核 A/Y：F 区带 Ctrl、Ctrl 卡到退出）。
+            if (base == KC_LCTL || base == KC_RCTL) {
+                s_caps_phys_ctrl = true; // 物理 Ctrl 现在确实按住
+                s_caps_phys_ctrl_held |= (base == KC_LCTL) ? CAPS_OWN_LCTL : CAPS_OWN_RCTL;
+                register_code(base);     // 对称反注册在 release 分支按实际键码处理
+                caps_held_add(base);
+            } else {
+                // 需要合成 Ctrl 的条件：物理位当前不可用（未按住或已松开）且本模式尚未注册过。
+                if (!s_caps_phys_ctrl && !s_caps_ctrl_owned) {
+                    register_code(KC_LCTL);
+                    s_caps_ctrl_owned = CAPS_OWN_LCTL;
+                }
+                s_caps_ctrl_n++;
+                register_code(base);
+                caps_held_add(base);
             }
-            s_caps_ctrl_n++;
             // 含修饰键：Shift -> Ctrl+Shift（对称反注册，不会卸掉物理按住）
             register_code(base);
             caps_held_add(base);
@@ -492,12 +516,12 @@ static bool caps_mode_process(uint16_t keycode, keyrecord_t *record) {
     // 物理 Ctrl 在模式内按/松（caps/design.md §3.1-3）：只更新 baseline，绝不改变引用计数，
     // 也绝不反注册本模式的 Ctrl 位（真机 Ctrl 是位图，误反注册会把合成位一起清掉）。
     if (base == KC_LCTL || base == KC_RCTL) {
-        // 物理 Ctrl 的按/松只更新 baseline：**绝不**反注册本模式的合成 Ctrl 位、也不动引用计数
-        // （真机 Ctrl 是位图，误反注册会把合成位一起清掉 —— 第 2 轮 P0-3）。
-        // 一旦物理位不可见，下一个非 F 键会按 press 分支的条件补注册（P0-2）。
-        s_caps_phys_ctrl = false;
-        caps_held_remove(base); // 若本模式登记过该键则移除，避免 held 表残留
-        return false;           // 交配对表消费
+        s_caps_phys_ctrl = false; // 物理位不可见 -> 下一个非 F 键按条件补注册（P0-2）
+        s_caps_phys_ctrl_held &= (base == KC_LCTL) ? (uint8_t)~CAPS_OWN_LCTL : (uint8_t)~CAPS_OWN_RCTL;
+        // 只反注册**本模式注册过**的 Ctrl 键码（第 3 轮 P0-S：RCTL 与 LCTL 是不同 bit，
+        // 只清 LCTL 会永久卡住 RCTL）；物理按键若从未由本模式注册，则从 held 移除即可、不反注册。
+        if (caps_held_remove(base)) unregister_code(base);
+        return false; // 交配对表消费
     }
 
     // release 过滤（caps/design.md §3.1-2）：只有本实例注册过的键才反注册/改引用计数；
@@ -507,9 +531,9 @@ static bool caps_mode_process(uint16_t keycode, keyrecord_t *record) {
     unregister_code(sent);
     if (fkey == KC_NO && s_caps_ctrl_n) {
         s_caps_ctrl_n--;
-        if (s_caps_ctrl_n == 0 && s_caps_ctrl_owned) {
+        if (s_caps_ctrl_n == 0 && (s_caps_ctrl_owned & CAPS_OWN_LCTL)) {
             unregister_code(KC_LCTL);
-            s_caps_ctrl_owned = false;
+            s_caps_ctrl_owned &= (uint8_t)~CAPS_OWN_LCTL;
         }
     }
     return false; // release 交配对表消费
@@ -655,6 +679,9 @@ static bool hook_process(uint16_t keycode, keyrecord_t *record, bool (*hook)(uin
     if (!hook) return false;
     if (!hook(keycode, record)) return false;
     if (record->event.pressed) {
+        // 被键盘 hook（hook_pre/hook_post_myfn）消费的键也是"非 vim 键"，同样要作废可视输入
+        // （design §4.10 第 4 条路径：QK61 的 CAD / Fn+Esc，NUT65 的 boot combo）。
+        if (kv_pending() || kv_visual_count_pending()) kv_visual_cancel();
         vim_glue_swallow(keycode);
         return true;
     }
@@ -726,7 +753,8 @@ void vim_keymap_common_init(void) {
     s_caps_held_n      = 0;
     s_caps_ctrl_n      = 0;
     s_caps_phys_ctrl   = false;
-    s_caps_ctrl_owned  = false;
+    s_caps_ctrl_owned  = 0;
+    s_caps_phys_ctrl_held = 0;
     s_esc_grace        = 0;
     vim_glue_init();
 }
