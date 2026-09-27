@@ -82,10 +82,21 @@ static bool pipeline_cfg(uint16_t kc, bool pressed, const vim_cfg_t *cfg) {
     return vim_pipeline_process(kc, &r, cfg);
 }
 
+/* 真机语义：若本层"放行"（返回 true），则由 QMK 处理该键 —— 修饰键按位注册/反注册。
+ * 真实的 keymap.c 是 `return vim_pipeline_process(...)`，返回 true 时 QMK 的 process_action
+ * 会为修饰键调 add_mods/del_mods。此前的桩**漏了这一步**，导致：
+ *   ① s_mods 里永远没有"物理修饰键的位"，② Caps 与物理/合成 Ctrl 交错的场景无法表达，
+ *   ③ 位图用例退化为恒真假绿（第 5 轮审核点名）。
+ * 现在补上：放行的修饰键也走 register_code/unregister_code，使 s_mods 成为真机位图。 */
 static bool pipeline(uint16_t kc, bool pressed) {
     keyrecord_t r = {0};
     r.event.pressed = pressed;
-    return vim_pipeline_process(kc, &r, &g_cfg);
+    const bool pass = vim_pipeline_process(kc, &r, &g_cfg);
+    if (pass) {
+        if (pressed) register_code(kc);
+        else         unregister_code(kc);
+    }
+    return pass;
 }
 
 /* Caps 模块（caps/testcase.md）：观察 host 实际注册了哪些键。 */
@@ -691,6 +702,23 @@ static void test_caps_ctrl_bitmodel(void) {
     (void)pipeline(KC_RCTL, false);
     (void)pipeline(KC_CAPS, false);
     CHECK(s_mods == 0x00);
+    /* (A) 退出保护：模式内按物理 LCTL 后又按住非 F 键 -> owned 与 phys 同时为真；
+     *     扁平化 exit 守卫会把仍按住的物理位清掉（变异 1 的判别用例）。 */
+    reset_engine();
+    (void)pipeline(KC_CAPS, true);
+    (void)pipeline(KC_LCTL, true);
+    (void)pipeline(KC_A, true);
+    (void)pipeline(KC_CAPS, false);
+    CHECK(s_mods & 0x01);
+    /* (B) owned 闩锁：物理 Ctrl 释放必须让下一个非 F 键重新注册 Ctrl（变异 3 的判别用例）。 */
+    reset_engine();
+    (void)pipeline(KC_CAPS, true);
+    (void)pipeline(KC_A, true);
+    (void)pipeline(KC_LCTL, true);
+    (void)pipeline(KC_LCTL, false);
+    (void)pipeline(KC_B, true);
+    CHECK(s_mods & 0x01);
+    reset_engine();
 }
 
 /* 干净状态下的溢出语义（design §3.1-5）：压满 12 键后，第 13 键既不注册、也不让后续流水线看到。 */
@@ -776,7 +804,9 @@ static void test_caps_cleanup(void) {
     CHECK(pipeline(KC_CAPS, true) == false);
     uint16_t layer_kc = (uint16_t)MO(4);
     CHECK(pipeline(layer_kc, true) == true);   /* 放行给 QMK（Fn 层可激活） */
-    CHECK(!sim_held(layer_kc) && !sim_held(KC_LCTL) && !sim_held((uint16_t)(layer_kc & 0xFF)));
+    /* 真机语义下"放行"会把该键码交给 QMK；层键由 QMK 的层系统处理（不产生键码），
+     * 这里要防的是低字节被当成普通键注册、以及多余合成 Ctrl。 */
+    CHECK(!sim_held(KC_LCTL) && !sim_held((uint16_t)(layer_kc & 0xFF)));
     CHECK(pipeline(layer_kc, false) == true);
     CHECK(!sim_held(KC_LCTL));
     /* Caps 的 release：press 被吞时由配对表消费（false），层键放行时透传（true）——
