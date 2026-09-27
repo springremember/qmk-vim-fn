@@ -637,6 +637,20 @@ static void test_caps_cleanup(void) {
     CHECK(!sim_held(KC_LCTL));
     CHECK(pipeline(KC_CAPS, false) == false);
 
+    /* §3.1-3b 物理 Ctrl 松开时**已有非 F 键按住**（ctrl_n>0）：后续键仍须带 Ctrl
+     *（第 2 轮审核 P0-2：原实现只在 ctrl_n==0 时补注册） */
+    reset_engine();
+    pipeline(KC_LCTL, true);                   /* 物理 Ctrl 按住 */
+    CHECK(pipeline(KC_CAPS, true) == false);   /* 进模式（phys_ctrl=true） */
+    CHECK(pipeline(KC_A, true) == false);      /* A 按住（物理 Ctrl 可见，无需合成） */
+    pipeline(KC_LCTL, false);                  /* 物理 Ctrl 松开 */
+    CHECK(pipeline(KC_B, true) == false);      /* B：必须补注册 Ctrl */
+    CHECK(sim_held(KC_LCTL));
+    CHECK(pipeline(KC_B, false) == false);
+    CHECK(pipeline(KC_A, false) == false);
+    CHECK(!sim_held(KC_LCTL));                 /* 最后一个非 F 键松开 -> 反注册 */
+    CHECK(pipeline(KC_CAPS, false) == false);
+
     /* §3.1-3 物理 Ctrl 中途松开：后续非 F 键必须仍带 Ctrl */
     reset_engine();
     pipeline(KC_LCTL, true);                   /* 物理 Ctrl 按住（透传） */
