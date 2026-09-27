@@ -17,7 +17,8 @@
 
 | 状态 | 含义 |
 | :--- | :--- |
-| `s_caps_timer` | `Caps` 按下时刻（`>= hold_ms` 即视为长按）；0 = 无进行中的 tap/hold |
+| `s_caps_armed` | `Caps` 按下时未按 `Fn`（→ 走 Caps 模式语义）；`false` 表示这是 `Fn+Caps`（release 时开关 vim） |
+| `s_caps_touched` | 本次 `Caps` 按下期间是否已按过其它键（决定快速抬起时是否撤销） |
 | `s_caps_mode` | 模式是否激活 |
 | `s_caps_held[]` / `s_caps_held_n` | 本模式**实际注册过**的键码有界表（用于退出时全部反注册；容量固定，溢出时该键仍会发出，只是退出时不保证被强制释放） |
 | `s_caps_ctrl_n` | 非 F 键按下计数（Ctrl 的引用计数） |
@@ -27,17 +28,25 @@
 
 ## 3. 判定流程
 
-进入与退出**都在共享层的 tap/hold 状态机**里完成，键盘侧无需任何钩子：
+进入与退出**都在共享层的状态机**里完成，键盘侧无需任何钩子：
 
 ```
-Caps press  -> s_caps_timer = now；消费该 press（配对表）
-task()      -> 若 s_caps_timer != 0 且未进入模式 且 now - timer >= hold_ms：
-                 进入模式（记录物理 Ctrl 状态、清空 held 表与计数）
-Caps release-> 若 now - timer >= hold_ms：退出模式（反注册 held 表全部键 + Ctrl）
-               否则：短按语义（键盘既有的 Caps 短按行为，本模块不改动）
+Caps press  -> 若 Fn 层在按下这一刻已激活：
+                 s_caps_armed = false            // Fn+Caps：单击语义（release 时开关 vim）
+               否则：
+                 s_caps_armed = true；s_caps_touched = false
+                 立即进入 Caps 模式（记录物理 Ctrl 状态、清空 held 表与计数）
+               消费该 press（配对表）
+模式内按键  -> 每按一个键置 s_caps_touched = true（见 §4），并正常注册/反注册
+Caps release-> 若 !s_caps_armed（Fn+Caps）：set_vim_enabled(!vim_enabled())  // 单击开关 vim
+               否则若 !s_caps_touched：撤销本次进入（反注册 held 表 + Ctrl）
+               否则：正常退出（反注册 held 表 + Ctrl）
 ```
 
-- 进入判定放在 `task()`（共享层例行任务）里，使 `hold_ms` 一到、**随后立刻按下的键**就已按模式映射。
+- **不等 `hold_ms`**：进入发生在按下瞬间，因此"按下 Caps 后立刻按 1"必然是 `F1`（而不是 Normal 的计数）。
+  代价：若按下期间未按任何其它键就抬起，本模式会短暂进入再撤销——撤销只反注册本模式发出的键，
+  不改变 vim 开关/模式；**未撤销**的是"按下期间夹了键"的情况（那些键已按模式映射发出，属预期）。
+- **裸 `Caps` 单击无任何效果**（不开关 vim）；**`Fn` + `Caps` 单击 = 开关 vim**（`Fn` 必须先按住）。
 - 键盘层若在 `Caps` 按住期间对 `Fn` 等键有既有处理，其顺序不受影响：Caps 模式只接管模式**激活期间**的按键。
 
 ## 4. 模式内按键翻译

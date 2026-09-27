@@ -3,7 +3,7 @@
 > 面向使用。描述 vim 引擎的**目标行为**（键盘无关）。技术细节见 [`design.md`](design.md)。
 > 引擎以**纯键码**工作：把 vim 命令翻译成宿主按键序列发送，不依赖编辑器插件。
 > 文末与前文出现的键盘名（如 QK61/NUT65）仅为**参考示例**；本仓库共享层不含任何键盘专属实现或测试。
-> 键盘**开机默认进入 Insert（照常打字）**；按 `Esc` 在 Insert/Normal 间切换，单击 `Caps` 开关 vim。
+> 键盘**开机默认进入 Insert（照常打字）**；按 `Esc` 在 Insert/Normal 间切换；`Fn`+`Caps` 单击开关 vim。
 
 ---
 
@@ -22,14 +22,16 @@
 | `Esc`（Insert，3s 宽限内） | 发送真实 `Esc`，留在 Insert，并**重置 3s 宽限** |
 | `Esc`（Normal 空闲） | 发送真实 `Esc`，**进入 Insert**，并**开启 3s 宽限** |
 | `Esc`（Visual/Visual-Line） | 退出选区回 Normal（不发送 Esc） |
-| `Caps` 单击 | **切换 vim 开/关**（开=从 Insert 起；关=禁用 vim）|
-| `Caps` 长按（≥200ms） | 临时进入 Normal，松手回到原模式 |
-| `Fn+Caps` | 与裸 `Caps` **完全相同**（无特殊处理）|
+| `Fn` + `Caps` 单击 | **切换 vim 开/关**（开=从 Insert 起；关=禁用 vim；`Fn` 先按住）|
+| `Caps` 单击（裸按） | **无任何效果**（不开关 vim，也不进入 Normal）|
+| `Caps` 长按 | **按下即进入 Caps 模式**（`1`–`0`/`-`/`=`=`F1`–`F12`，其余键=`Ctrl+键`），松开退出（见 §9）|
 
 > **Esc 宽限（3s）**：只由「Normal 空闲按 Esc 回到 Insert」这一条路径开启，且窗口内再按 `Esc` 会重置计时。
 > 用途：连续按 Esc（如从 shell 提示符退出、多次退出全屏）仍是真实 Esc；其余进入 Insert 的路径
 > （开机、`Caps` 开启 vim、`i/I/a/A/o/O`、`s/c`）**没有宽限**，其后的 Insert `Esc` 一律进 Normal。
-> `Caps` 单击**不再进入 Normal**，它只开关 vim；进入 Normal 现由 `Esc`（或 `Caps` 长按）负责。
+> 进入 Normal **只由 `Esc` 负责**（`Caps` 长按是 Caps 模式，见 §9）；
+> **vim 开关的唯一键盘入口是 `Fn` + `Caps`**（裸 `Caps` 单击无效果，避免误触）。
+> 记为 `Caps` 开启 vim 的路径同样不亮橙。
 > 多键 pending（如按了 `d`）时按 `Esc`：**仅取消 pending，不发送任何键**（不变）。
 > **任何模式切换都会丢弃未完成的多键命令**（计数/操作符/`g`/`Z` 前缀）：如 `d` 后切模式，
 > 回 Normal 按 `w` 只会执行 `w`，不会残留成 `dw`。
@@ -189,7 +191,7 @@ c w     改到下一词首（进入 Insert）
 由**右 `Alt` 短按切换**（`Insert` / `Normal` / `Visual` **均可**进出）；退出后回到进入前的模式。
 
 - **短按**右 `Alt` = 进/出鼠标模式（不输出键）；
-- **长按**右 `Alt` = 作为普通 `RAlt` 修饰键（阈值 200ms，与 `Caps` 一致）。
+- **长按**右 `Alt` = 作为普通 `RAlt` 修饰键（阈值 200ms）。
 
 | 键 | 行为 |
 |---|---|
@@ -204,7 +206,25 @@ c w     改到下一词首（进入 Insert）
 
 ---
 
-## 9. 键盘层交互（键盘层实现）
+## 9. Caps 长按模式（Caps mode）
+
+**按下 `Caps` 立即进入**（**不等** 200ms）：`1`–`0`/`-`/`=` = `F1`–`F12`（**不带 Ctrl**），
+**其余全部键** = `Ctrl+该键`（修饰键即 `Ctrl+Shift`）；**松开 `Caps` 退出**（momentary），
+退出时反注册本模式发出过的所有键与 Ctrl（防卡键）。模式内按键**不经过 vim 引擎**，
+vim 开关/模式完全不变，vim 关闭时同样可用；模式内 `Esc` 发 `Ctrl+Esc`（不触发 Esc 切换）。
+
+| 操作 | 效果 |
+| :--- | :--- |
+| `Caps` 按下 | 立即进入 Caps 模式（随之按下的键按本模式映射） |
+| 按下期间**未按其它键**就抬起 | 撤销本次进入（不误发键、不改 vim 状态） |
+| `Caps` 单击（裸按） | **无任何效果** |
+| `Fn` + `Caps` 单击 | **切换 vim 开/关**（`Fn` 先按住） |
+
+> 完整规格与用例见共享层 [`caps/readme.md`](../caps/readme.md)、[`caps/design.md`](../caps/design.md)、
+> [`caps/testcase.md`](../caps/testcase.md)。别名冲突自担：`Ctrl+M`=Enter、`Ctrl+I`=Tab、
+> `Ctrl+H`=Backspace、`Ctrl+[`=Esc。
+
+## 9b. 鼠标模式（键盘层实现）
 
 | 键 | Normal 下行为 |
 |---|---|
