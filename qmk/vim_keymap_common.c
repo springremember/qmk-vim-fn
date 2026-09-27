@@ -481,9 +481,14 @@ static bool caps_mode_process(uint16_t keycode, keyrecord_t *record) {
     const uint16_t fkey    = caps_fkey_of(base);
 
     if (pressed) {
-        // 溢出吞吐一致（caps/design.md §3.1-5）：held 表满时既不注册也不消费（透传），
-        // 绝不出现"注册了但没记表"的键 —— 那是退出时无法反注册的卡键来源。
-        if (s_caps_held_n >= CAPS_HELD_MAX) return false;
+        // 溢出（caps/design.md §3.1-5）：held 表满时**既不注册、也不让键继续走后续流水线**
+        // （否则会被快捷键表/引擎劫持 —— 第 3 轮对抗审核 K/O2：第 13 键按 Space 会发裸 →
+        // 按 d 会执行 dd 删行）。做法：两沿都吞掉（press 记入配对表、release 由配对表消费），
+        // 宿主什么也收不到，且绝不会出现"注册了但没记表"的卡键。
+        if (s_caps_held_n >= CAPS_HELD_MAX) {
+            if (pressed) vim_glue_swallow(keycode);
+            return true;
+        }
         if (fkey != KC_NO) {
             register_code(fkey); // F 区：不带 Ctrl（引用计数不变）
             caps_held_add(fkey);

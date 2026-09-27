@@ -720,12 +720,11 @@ static void test_caps_cleanup(void) {
     for (int i = 0; i < 13; i++) {
         if (pipeline(many[i], true) == false) consumed++; else passed++;
     }
-    /* 该用例运行到此处时 held 表已被前面小节占用了若干格，故不硬编码容量；
-     * 断言"确实发生了溢出（有键被透传）"且"退出后无残留"。精确容量边界由
-     * /tmp 的位图桩与 clean-state 用例覆盖。 */
-    CHECK(consumed >= 1);
-    CHECK(passed >= 1);
-    CHECK(consumed + passed == 13);
+    /* 表满后：超出的键**被本模式吞掉**（既不注册也不让后续流水线看到它 —— 第 3 轮 K/O2：
+     * 否则会被快捷键表/引擎劫持）。故 consumed 应为全部 13 个；退出后无残留。
+     * 精确容量边界由 /tmp 的位图桩与 clean-state 覆盖。 */
+    CHECK(consumed == 13);
+    CHECK(passed == 0);
     for (int i = 0; i < 13; i++) (void)pipeline(many[i], false);
     CHECK(pipeline(KC_CAPS, false) == false);
     for (int i = 0; i < 13; i++) CHECK(!sim_held(many[i]));
