@@ -672,9 +672,12 @@ static void test_visual_commands(void) {
     CHECK(rec_at(0) == KV_LSFT_KC(KV_DOWN) && rec_at(9) == KV_LSFT_KC(KV_DOWN));
     /* 非法键立即消费计数：i / g 之后 j 只推进 1 次 */
     fresh_visual(); key(KV_3); key(KV_C_I); key(KV_J); CHECK_SEQ(KV_LSFT_KC(KV_DOWN));
-    fresh_visual(); key(KV_3); key(KV_G);   key(KV_J); CHECK_SEQ(KV_LSFT_KC(KV_DOWN));
+    /* g 后接非 g：按 design §4.9 视为非法键 -> 吞掉、0 输出（并消费计数） */
+    fresh_visual(); key(KV_3); key(KV_G);   key(KV_J); CHECK(rec_count() == 0);
     /* gg：两可视模式都发 Ctrl+Shift+Home */
     fresh_visual(); key(KV_G); key(KV_G); CHECK_SEQ(KV_CS(KV_HOME));
+    /* gG（Shift+G）不是 gg：按非法键吞掉，0 输出 */
+    fresh_visual(); key(KV_G); key(KV_C_G); CHECK(rec_count() == 0);
     fresh_vline();  key(KV_G); key(KV_G); CHECK_SEQ(KV_CS(KV_HOME));
     /* G 丢弃计数（readme §5）：3G = 1 次 Ctrl+Shift+End */
     fresh_visual(); key(KV_3); key(KV_C_G); CHECK_SEQ(KV_CS(KV_END));

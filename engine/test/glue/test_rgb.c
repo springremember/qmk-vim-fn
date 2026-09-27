@@ -584,6 +584,37 @@ static void test_caps_mode(void) {
 
 /* design §4.10 + §4.9：可视模式已累积的计数必须被透传的非 vim 键作废。
  * 复现：v 3 F5 j 曾把 3 泄漏给 j（3 次推进），期望 1 次。 */
+/* design §4.10：可视输入必须在**所有**截断路径上作废（CAG 分支 / myfn 吞键 / g 前缀）。 */
+static void test_visual_cancel_all_paths(void) {
+    /* CAG 分支：v 3 后按 Ctrl+C（带修饰的透传），计数必须作废 */
+    reset_engine();
+    enter_normal();
+    (void)pipeline(KC_V, true); (void)pipeline(KC_V, false);   /* Visual */
+    CHECK(pipeline(KC_3, true) == false);
+    CHECK(kv_visual_count_pending() == true);
+    CHECK(pipeline(KC_LCTL, true) == true);                    /* 物理 Ctrl 透传 */
+    CHECK(pipeline(KC_C, true) == true);                       /* CAG 分支：透传 */
+    CHECK(kv_visual_count_pending() == false);
+    (void)pipeline(KC_C, false); (void)pipeline(KC_LCTL, false);
+    CHECK(pipeline(KC_J, true) == false);                      /* 只推进 1 次 */
+    CHECK(kv_get_mode() == KV_MODE_VISUAL);
+    (void)pipeline(KC_J, false);
+
+    /* g 前缀：v g 后按非 g 的透传键 -> 前缀必须作废，不能残留成伪 gg */
+    reset_engine();
+    enter_normal();
+    (void)pipeline(KC_V, true); (void)pipeline(KC_V, false);
+    CHECK(pipeline(KC_G, true) == false);                      /* g 前缀 */
+    CHECK(kv_visual_count_pending() == true);                  /* 计数查询覆盖前缀 */
+    CHECK(pipeline(KC_F5, true) == true);                      /* 透传 -> 作废前缀 */
+    CHECK(kv_visual_count_pending() == false);
+    CHECK(pipeline(KC_G, true) == false);                      /* 新的 g 前缀（不是 gg） */
+    CHECK(kv_visual_count_pending() == true);
+    (void)pipeline(KC_G, false);
+    (void)pipeline(KC_F5, false);
+    reset_engine();
+}
+
 static void test_visual_count_passthrough(void) {
     reset_engine();
     enter_normal();
@@ -680,17 +711,18 @@ static void test_caps_cleanup(void) {
     /* §3.1-5 溢出吞吐一致：表满后新键既不注册也不消费；退出后无残留 */
     reset_engine();
     CHECK(pipeline(KC_CAPS, true) == false);
-    /* 用 12 键（超过 CAPS_HELD_MAX 表容量的旧值/足以压满 held 表；不超过共享配对表容量） */
-    const uint16_t many[12] = {KC_A, KC_B, KC_C, KC_D, KC_E, KC_F,
-                              KC_G, KC_H, KC_I, KC_J, KC_K, KC_L};
+    /* 压满 held 表（CAPS_HELD_MAX=12）再超出：必须"既不注册也不消费"，且退出后无残留 */
+    const uint16_t many[14] = {KC_A, KC_B, KC_C, KC_D, KC_E, KC_F, KC_G,
+                              KC_H, KC_I, KC_J, KC_K, KC_L, KC_O, KC_P};
     int consumed = 0, passed = 0;
-    for (int i = 0; i < 12; i++) {
+    for (int i = 0; i < 14; i++) {
         if (pipeline(many[i], true) == false) consumed++; else passed++;
     }
-    CHECK(consumed > 0);
-    for (int i = 0; i < 12; i++) (void)pipeline(many[i], false);
+    CHECK(consumed == 12);   /* 表容量 */
+    CHECK(passed == 2);      /* 超出部分透传（不注册也不消费） */
+    for (int i = 0; i < 14; i++) (void)pipeline(many[i], false);
     CHECK(pipeline(KC_CAPS, false) == false);
-    for (int i = 0; i < 12; i++) CHECK(!sim_held(many[i]));
+    for (int i = 0; i < 14; i++) CHECK(!sim_held(many[i]));
     CHECK(!sim_held(KC_LCTL));
 
     /* §3.1-6 孤立 release 守卫：没有 press 的 Caps 抬起不开关 vim */
@@ -716,6 +748,7 @@ int main(void) {
     test_insert_flash();
     test_insert_flash_wraparound();
     test_insert_flash_color();
+    test_visual_cancel_all_paths();
     test_visual_count_passthrough();
     test_caps_mode();
     test_caps_trigger();
