@@ -374,10 +374,11 @@ static bool esc_process(uint16_t keycode, keyrecord_t *record) {
 // ==========================================================================
 #define CAPS_FKEY_COUNT 12
 // 模式内实际注册过的键（有界表；溢出时该键仍会发出，仅退出时不保证被强制释放）
-#define CAPS_HELD_MAX 12
+#define CAPS_HELD_MAX 24
 
 static bool     s_caps_armed;               // 本按下不是 Fn+Caps（走 Caps 模式语义）
 static bool     s_caps_touched;             // 本次按下期间是否已按过其它键（决定快速抬起是否撤销）
+static bool     s_caps_was_pressed;         // Caps 是否确实按下过（release 守卫，design §3.1-6）
 static bool     s_caps_mode;                // 模式是否激活
 static uint16_t s_caps_held[CAPS_HELD_MAX]; // 本模式注册过的键
 static uint8_t  s_caps_held_n;
@@ -419,8 +420,14 @@ static bool caps_held_remove(uint16_t keycode) {
     return false;
 }
 
+static void caps_mode_exit(void); // 前向声明：重入清理需要先退出上一实例
+
 // 进入模式（caps/design.md §3）：不碰 vim 状态，也不重置引擎 —— 模式内的键不进引擎。
 static void caps_mode_enter(void) {
+    // 重入清理（caps/design.md §3.1-1）：上一实例的 release 可能丢失（或一次按抬被上报两次、
+    // 两个物理键都映射 KC_CAPS）。若模式已激活，必须先把上一实例登记过的键与 Ctrl 反注册，
+    // 否则 held 表被重置后它们永远无法反注册 —— 宿主键永久卡住。
+    if (s_caps_mode) caps_mode_exit();
     s_caps_mode      = true;
     s_caps_phys_ctrl = (vim_glue_mods() & (MOD_BIT(KC_LCTL) | MOD_BIT(KC_RCTL))) != 0;
     s_caps_ctrl_n    = 0;
@@ -442,6 +449,10 @@ static void caps_mode_exit(void) {
 static bool caps_mode_process(uint16_t keycode, keyrecord_t *record) {
     if (!s_caps_mode) return false;
 
+    // 层键豁免且放行（caps/design.md §3.1-4）：层键（MO/LT/LM/TT/OSL/TO/...）的低字节不是键位语义，
+    // 绝不能按 `& 0xFF` 翻译成宿主键；不消费 press，使 Fn 层仍能正常激活（与 myfn 层键豁免一致）。
+    if (vim_is_layer_key(keycode)) return false;
+
     const bool     pressed = record->event.pressed;
     // 按下期间夹了键 -> 抬起时不再撤销（caps/design.md §3）
     if (pressed) s_caps_touched = true;
@@ -449,6 +460,9 @@ static bool caps_mode_process(uint16_t keycode, keyrecord_t *record) {
     const uint16_t fkey    = caps_fkey_of(base);
 
     if (pressed) {
+        // 溢出吞吐一致（caps/design.md §3.1-5）：held 表满时既不注册也不消费（透传），
+        // 绝不出现"注册了但没记表"的键 —— 那是退出时无法反注册的卡键来源。
+        if (s_caps_held_n >= CAPS_HELD_MAX) return false;
         if (fkey != KC_NO) {
             register_code(fkey); // F 区：不带 Ctrl（引用计数不变）
             caps_held_add(fkey);
@@ -462,13 +476,20 @@ static bool caps_mode_process(uint16_t keycode, keyrecord_t *record) {
         return true;
     }
 
-    // release：先松该键；只有最后一个非 F 键松开才松 Ctrl（caps/design.md §4）
+    // 物理 Ctrl 在模式内被松开（caps/design.md §3.1-3）：清标志，使后续非 F 键按引用计数
+    // 重新注册 Ctrl，保证「其余键 = Ctrl+键」在整段模式内都成立。
+    if ((base == KC_LCTL || base == KC_RCTL) && s_caps_phys_ctrl) {
+        s_caps_phys_ctrl = false;
+    }
+
+    // release 过滤（caps/design.md §3.1-2）：只有本实例注册过的键才反注册/改引用计数；
+    // 否则（press 早于本次进入、或属于上一实例）只交配对表消费。
     const uint16_t sent = (fkey != KC_NO) ? fkey : base;
+    if (!caps_held_remove(sent)) return false;
     unregister_code(sent);
     if (fkey == KC_NO && s_caps_ctrl_n && --s_caps_ctrl_n == 0 && !s_caps_phys_ctrl) {
         unregister_code(KC_LCTL);
     }
-    caps_held_remove(sent);
     return false; // release 交配对表消费
 }
 
@@ -493,7 +514,8 @@ static bool caps_process(uint16_t keycode, keyrecord_t *record) {
     if (keycode != KC_CAPS) return false;
 
     if (record->event.pressed) {
-        s_caps_touched = false;
+        s_caps_touched    = false;
+        s_caps_was_pressed = true;
         // Fn 在按下这一刻已激活 -> Fn+Caps（单击语义）；否则立即进入 Caps 模式。
         s_caps_armed = !fn_layer_active();
         if (s_caps_armed) caps_mode_enter();
@@ -501,20 +523,20 @@ static bool caps_process(uint16_t keycode, keyrecord_t *record) {
         return true;
     }
 
+    // release 守卫（caps/design.md §3.1-6）：只有"确实按下过"的 release 才做开关 vim 的动作；
+    // 孤立 release 不做。但**模式的退出/撤销必须照常执行**（否则模式会残留）。
+    const bool had_press = s_caps_was_pressed;
+    s_caps_was_pressed = false;
+
     if (s_caps_armed) {
-        if (!s_caps_touched) {
-            caps_mode_exit(); // 未夹键就抬起：撤销本次进入（不误发键）
-        } else {
-            caps_mode_exit(); // 正常退出（模式内发出的键已生效）
-        }
+        // 未夹键就抬起 = 撤销本次进入；夹过键 = 正常退出。两条路径都反注册本实例的键，
+        // 差别只在于"未夹键时本来就没有已发出的键"（caps/design.md §3）。
+        caps_mode_exit();
         s_caps_armed = false;
-    } else if (s_caps_touched) {
-        // Fn+Caps 在模式内夹了键？不会：Fn+Caps 不进模式，此处仅为对称保险
-        s_caps_touched = false;
-    } else {
+    } else if (had_press) {
         set_vim_enabled(!kv_vim_enabled()); // Fn+Caps 单击 = 开关 vim
     }
-    return false; // 配对 release 由共享表消费
+    return false; // press 交给配对表消费 release
 }
 
 // ==========================================================================
@@ -671,6 +693,7 @@ void vim_keymap_common_init(void) {
     for (int i = 0; i < MV_COUNT; i++) s_move_reg[i] = KC_NO;
     s_caps_armed       = false;
     s_caps_touched     = false;
+    s_caps_was_pressed = false;
     s_caps_mode        = false;
     s_caps_held_n      = 0;
     s_caps_ctrl_n      = 0;
