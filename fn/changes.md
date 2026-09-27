@@ -1,4 +1,4 @@
-# 变更记录 — qmk-myfn
+# 变更记录 — myfn 约定（qmk-vim-fn/fn）
 
 本库所有重要改动记录于此。格式参考 [Keep a Changelog](https://keepachangelog.com/)，
 版本遵循语义化版本。
@@ -86,7 +86,7 @@
 
 - **目录与工程文件**
   - `src/myfn.h`、`src/myfn.c`
-  - `rules.mk`（提示通过 `SRC += qmk-myfn/src/myfn.c` 接入）
+  - `rules.mk`（提示通过 `SRC += myfn 约定（qmk-vim-fn/fn）/src/myfn.c` 接入）
   - `readme.md`（完整中文文档）
   - `changes.md`（本文件）
   - `LICENSE`（MIT）

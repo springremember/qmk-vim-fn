@@ -69,7 +69,7 @@ typedef struct {
     const vim_shortcut_t *shortcuts;
 } vim_cfg_t;
 
-/* Single-source interception chain (pipeline steps 0..9, design §4.12).
+/* Single-source interception chain (pipeline steps 0..10, design §4.12).
  * Returns true when QMK should keep processing the key (QMK polarity). */
 bool vim_pipeline_process(uint16_t keycode, keyrecord_t *record, const vim_cfg_t *cfg);
 
