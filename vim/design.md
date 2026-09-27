@@ -505,6 +505,11 @@ while (queue_has()) {
   3. keymap 共享层的 **myfn 吞键**路径（未声明键被吞时，`vim_keymap_common.c` 步骤 4）。
 
   统一写法：`if (kv_pending() || kv_visual_count_pending()) kv_visual_cancel();`
+
+  **例外（规格明确）**：**纯修饰键**（`Shift`/`Ctrl`/`Alt`/`GUI` 自身的按下/抬起）**不作废**可视输入——
+  它们是"与后续键组合"的暂态，用户按住 Shift 再按 `j`（`Shift+j`）是合法组合，若按住 Ctrl 就清掉
+  计数会让 `3` 之后的组合无法完成。`Ctrl+<key>` 这类**带修饰的透传键**仍按 CAG 分支作废计数
+  （因为它是完整的"非 vim 键"，会截断输入）。
 - **修饰键影子**：glue 维护**物理**修饰键影子（记录每个修饰键的物理 down/up，不依赖 `get_mods()`，
   免受 oneshot/锁存干扰），用于 bootloader 组合判定与 Shift 折叠；**不打包、不 `clear_mods`/`set_mods`**
   （键盘层"剥修饰发裸键"属例外，见 §2.1，需临时 clear 并恢复）。
