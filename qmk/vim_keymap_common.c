@@ -528,9 +528,12 @@ static bool caps_mode_process(uint16_t keycode, keyrecord_t *record) {
     // 物理 Ctrl 在模式内按/松（caps/design.md §3.1-3）：只更新 baseline，绝不改变引用计数，
     // 也绝不反注册本模式的 Ctrl 位（真机 Ctrl 是位图，误反注册会把合成位一起清掉）。
     if (base == KC_LCTL || base == KC_RCTL) {
-        // 物理 Ctrl 的 release：同样交回 QMK（由 QMK 清位），本层只降基线。
+        // 物理 Ctrl 的 release：同样交回 QMK（由 QMK 清位）。
         s_caps_phys_ctrl = false;
         s_caps_phys_ctrl_held &= (base == KC_LCTL) ? (uint8_t)~CAPS_OWN_LCTL : (uint8_t)~CAPS_OWN_RCTL;
+        // 真机 Ctrl 是共享位：物理 release 会连本层合成的同一位一起清掉。若本层仍拥有该位
+        // 且还有非 F 键按住，则重新断言一次（否则后续键会变裸键）。
+        if ((s_caps_ctrl_owned & CAPS_OWN_LCTL) && s_caps_ctrl_n > 0) register_code(KC_LCTL);
         return false; // 透传，交给 QMK
     }
 

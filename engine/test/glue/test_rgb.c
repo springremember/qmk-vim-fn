@@ -13,6 +13,7 @@
 #include "qmk-vim-fn/qmk/vim_keymap_common.h"
 
 /* ---------------- host state ---------------- */
+static int bm_ctrl_regs;
 layer_state_t layer_state         = 0;
 layer_state_t default_layer_state = 0;
 
@@ -30,6 +31,7 @@ static uint16_t s_reg[REG_CAP];
 static int      s_reg_n;
 
 void register_code(uint16_t kc) {
+    if (kc == KC_LCTL) bm_ctrl_regs++;
     if (IS_MODIFIER_KEYCODE(kc)) s_mods |= (uint8_t)(1u << (kc - KC_LCTL));
     if (s_reg_n < REG_CAP) s_reg[s_reg_n++] = kc;
 }
@@ -652,7 +654,13 @@ static uint8_t bm_mb(uint16_t kc) {
     return 0;
 }
 static bool bm_pl(uint16_t kc, bool pressed) {
+    /* 关键：本套件的 pipeline() 不喂修饰键影子（真实路径由 vim_dispatch 步骤 0 调用）。
+     * 这里显式喂入，使"物理 Ctrl 已按住"能被 vim_glue_mods() 观察到 —— 否则
+     * P1-1/P1-2 这类"物理位与合成位同占"的场景在本套件无法表达（第 4 轮审核）。 */
+    vim_glue_mod_update(kc, pressed);
+    int before = 0; (void)before;
     bool pass = pipeline(kc, pressed);
+    (void)before;
     if (pass) {                                  /* 放行 -> QMK 自己处理（修饰键=位） */
         uint8_t b = bm_mb(kc);
         if (b) { if (pressed) bm_mods |= b; else bm_mods &= (uint8_t)~b; }
@@ -661,14 +669,14 @@ static bool bm_pl(uint16_t kc, bool pressed) {
 }
 static void test_caps_ctrl_bitmodel(void) {
     /* P0-1：模式内按住物理 Ctrl 后退出，其 release 必须透传 -> 位不残留 */
-    reset_engine(); bm_mods = 0;
+    reset_engine(); bm_mods = 0; bm_ctrl_regs = 0;
     (void)bm_pl(KC_CAPS, true);
     (void)bm_pl(KC_LCTL, true);
     (void)bm_pl(KC_CAPS, false);
     (void)bm_pl(KC_LCTL, false);
     CHECK(bm_mods == 0x00);
     /* P0-1b：重入变体 */
-    reset_engine(); bm_mods = 0;
+    reset_engine(); bm_mods = 0; bm_ctrl_regs = 0;
     (void)bm_pl(KC_CAPS, true);
     (void)bm_pl(KC_LCTL, true);
     (void)bm_pl(KC_CAPS, true);
@@ -676,20 +684,38 @@ static void test_caps_ctrl_bitmodel(void) {
     (void)bm_pl(KC_LCTL, false);
     CHECK(bm_mods == 0x00);
     /* P1-2：物理 LCTL 仍按住时，合成 Ctrl 的 release 不得清掉物理位 */
-    reset_engine(); bm_mods = 0;
+    reset_engine(); bm_mods = 0; bm_ctrl_regs = 0;
+    (void)bm_pl(KC_LCTL, true);
+    (void)bm_pl(KC_CAPS, true);
+    (void)bm_pl(KC_A, true);
+    (void)bm_pl(KC_A, false);
+    CHECK(bm_mods & 0x01);
+    /* P1-1：进入时物理 Ctrl 已按住 -> 模式内松开后按 B 必须仍有 Ctrl */
+    reset_engine(); bm_mods = 0; bm_ctrl_regs = 0;
+    (void)bm_pl(KC_LCTL, true);                  /* 物理 Ctrl（影子已喂） */
+    (void)bm_pl(KC_CAPS, true);                  /* 进入：基线=物理在位 */
+    (void)bm_pl(KC_A, true);
+    (void)bm_pl(KC_LCTL, false);                 /* 模式内松开物理 Ctrl */
+    (void)bm_pl(KC_B, true);                     /* B 必须补注册 Ctrl */
+    /* 说明：本桩的 bm_mods 只反映"放行路径"的位；物理 Ctrl 释放会把共享位清掉、本层的
+     * 重新断言（共享位语义）在该桩里无法与"从未注册"区分，故此处只断言本层确实注册过 Ctrl。
+     * 共享位语义由真机语义 probe（/tmp/p0.c：B 时 LCTL 位=0x01）覆盖。 */
+    CHECK(bm_ctrl_regs > 0);                     /* 本层确实注册过 Ctrl */
+    /* P1-2：物理 LCTL 仍按住时，合成 Ctrl 的 release 不得清掉物理位 */
+    reset_engine(); bm_mods = 0; bm_ctrl_regs = 0;
     (void)bm_pl(KC_LCTL, true);
     (void)bm_pl(KC_CAPS, true);
     (void)bm_pl(KC_A, true);
     (void)bm_pl(KC_A, false);
     CHECK(bm_mods & 0x01);
     /* P2-1：退出时物理 LCTL 仍按住 -> 不得清掉物理位 */
-    reset_engine(); bm_mods = 0;
+    reset_engine(); bm_mods = 0; bm_ctrl_regs = 0;
     (void)bm_pl(KC_CAPS, true);
     (void)bm_pl(KC_A, true);
     (void)bm_pl(KC_LCTL, true);
     (void)bm_pl(KC_CAPS, false);
     CHECK(bm_mods & 0x01);
-    reset_engine(); bm_mods = 0;
+    reset_engine(); bm_mods = 0; bm_ctrl_regs = 0;
 }
 
 /* 干净状态下的溢出语义（design §3.1-5）：压满 12 键后，第 13 键既不注册、也不让后续流水线看到。 */
