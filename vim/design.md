@@ -562,9 +562,9 @@ void vim_glue_release_all(void);          /* 反注册 held motion 方向键（�
       bool   (*link_ok)(void);  /* NUT65=mouse_link_ok；QK61=NULL 恒真 */
       uint16_t hold_ms;         /* 200 */
       bool     shift_esc_enable;/* Shift+Esc 组合开关 */
-  } vim_mouse_cfg_t;            /* cfg 同时携带 hook_pre/hook_post_myfn/myfn 分发 */
-  bool vim_mouse_process(uint16_t kc, keyrecord_t *r, const vim_mouse_cfg_t *cfg);
-  void vim_mouse_release_all(void);
+  } vim_mouse_cfg_t;            /* 仅示意鼠标子集；实际传入的统一类型是 vim_cfg_t */
+  static bool mouse_process(uint16_t kc, keyrecord_t *r);
+  static void mouse_release_all(void);
   ```
   > 上面是**鼠标子集**的视图；实际传入共享层的完整结构是 `vim_cfg_t`（`qmk/vim_keymap_common.h`），
   > 它还带 `led_index`（模式色灯位）与 `insert_flash_color`（`Normal--Esc-->Insert` 3s 提示色，见下）。
@@ -605,7 +605,7 @@ void vim_glue_release_all(void);          /* 反注册 held motion 方向键（�
   返回 `true`=消费（press 入配对表、release 交配对表）、`false`=放行给 QMK（F 区/音量、NUT65 厂商 `EE_CLR`/`BT` 等）。
 
 **键盘层保留**（真·键盘专属）：RGB **灯位索引**、vendor 组合键**骨架**（Fn+Esc 复位、bootloader、
-CAD 的触发检测+厂商调用）、底排键位与触发键**定义**、VIA、`vim_mouse_cfg_t` 实例。
+CAD 的触发检测+厂商调用）、底排键位与触发键**定义**、VIA、`vim_cfg_t` 实例的填写。
 > vendor 组合键只留骨架：Fn+Esc 复位在 QK61 属 keymap 自建、在 NUT65 由厂商 `nut65.c` 全权
 > （`_FN[0,0]=EE_CLR` 真键码+厂商 3s 计时，keymap 零行）——两家不在同一层，共享骨架只服务一家故不抽；
 > 但其 **press/release 配对必须走 glue 统一配对表**（禁止自建旗标，A-P0-2）、**长按计时必须用共享
