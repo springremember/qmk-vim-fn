@@ -658,6 +658,14 @@ static void test_visual_commands(void) {
     CHECK_SEQ(KV_LSFT_KC(KV_RGHT), KV_DEL);
     CHECK(kv_get_mode() == KV_MODE_INSERT);
 
+    /* 用户实测缺陷回归：行选多行时动作前的锚点必须是 Shift+Home（扩展、不折叠），
+     * 否则 `V j y` 只会复制光标所在行。 */
+    fresh(); key(KV_C_V);                 /* 进入 VISUAL_LINE：Home,Shift+End */
+    key(KV_J);                            /* 扩展一行 */
+    key(KV_Y);                            /* 复制：Shift+Home,Shift+End,Ctrl+C */
+    CHECK_SEQ(KV_HOME, KV_LSFT_KC(KV_END), KV_LSFT_KC(KV_DOWN),
+              KV_LSFT_KC(KV_HOME), KV_LSFT_KC(KV_END), KV_LCTL_KC(KV_C));
+
     /* ---- 计数（design §4.9 实现要点 / readme §5） ---- */
     /* 上限 2 位：第 3 位起忽略 → 123j ≡ 12j */
     fresh_visual(); key(KV_1); key(KV_2); key(KV_3); key(KV_J);
@@ -714,18 +722,18 @@ static void test_visual_line_commands(void) {
     /* 动作前只补 Home 锚行首（y/d/c 自身发 Shift+End，二者配对即整行）；动作后退出可视。
      * 序列 = Home,<动作自带 Shift+End>,<动作>。 */
     fresh_vline(); key(KV_Y);
-    CHECK_SEQ(KV_HOME, KV_LSFT_KC(KV_END), KV_LCTL_KC(KV_C));
+    CHECK_SEQ(KV_LSFT_KC(KV_HOME), KV_LSFT_KC(KV_END), KV_LCTL_KC(KV_C));
     CHECK(kv_get_mode() == KV_MODE_NORMAL);          /* y 后回 Normal */
     fresh_vline(); key(KV_D);
-    CHECK_SEQ(KV_HOME, KV_LSFT_KC(KV_END), KV_LCTL_KC(KV_X));
+    CHECK_SEQ(KV_LSFT_KC(KV_HOME), KV_LSFT_KC(KV_END), KV_LCTL_KC(KV_X));
     CHECK(kv_get_mode() == KV_MODE_NORMAL);          /* d 后回 Normal */
     fresh_vline(); key(KV_P);     CHECK_SEQ(KV_LCTL_KC(KV_V));
     CHECK(kv_get_mode() == KV_MODE_NORMAL);          /* p 后回 Normal */
     fresh_vline(); key(KV_C);
-    CHECK_SEQ(KV_HOME, KV_LSFT_KC(KV_END), KV_LCTL_KC(KV_X));
+    CHECK_SEQ(KV_LSFT_KC(KV_HOME), KV_LSFT_KC(KV_END), KV_LCTL_KC(KV_X));
     CHECK(kv_get_mode() == KV_MODE_INSERT);
     fresh_vline(); key(KV_S);
-    CHECK_SEQ(KV_HOME, KV_LSFT_KC(KV_RGHT), KV_DEL); /* s 无自带 Shift+End */
+    CHECK_SEQ(KV_LSFT_KC(KV_HOME), KV_LSFT_KC(KV_RGHT), KV_DEL); /* s 无自带 Shift+End */
     CHECK(kv_get_mode() == KV_MODE_INSERT);
     fresh_vline(); key(KV_ESC); CHECK(kv_get_mode() == KV_MODE_NORMAL);
 }

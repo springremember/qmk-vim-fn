@@ -107,7 +107,11 @@ void kv_emit_visual_line_enter(void) {
 }
 
 /* 行选动作前的锚点：只回行首。y/d/c 自身的 SHIFT+END 与之配对即选中整行。 */
-void kv_emit_visual_line_anchor(void) { kv_emit_tap(KV_HOME); }
+void kv_emit_visual_line_anchor(void) {
+    // 必须用 Shift+Home（"扩展选区到行首"）：裸 Home 会**折叠**已扩展的多行选区，
+    // 导致 `V j y` 只复制光标所在行（用户实测报告的缺陷）。
+    kv_emit_tap(KV_LSFT_KC(KV_HOME));
+}
 
 /* design §4.9 VISUAL_LINE — 行选近似：移动按"整行"推进，因此与 VISUAL 的输出不同。
  * 进入 V 由引擎另发 SHIFT+END 锚定行尾（见 engine.c）。 */
