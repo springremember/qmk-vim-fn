@@ -40,6 +40,7 @@ bool vim_glue_engine(uint16_t keycode, keyrecord_t *record);
 /* Register a keyboard-layer consumed press so its release is consumed by the
  * shared pairing table (design §4.10). */
 void vim_glue_swallow(uint16_t keycode);
+void vim_glue_pair_drop(uint16_t keycode);
 
 /* Drain the engine's non-blocking emit queue (design #7). */
 void vim_glue_task(uint32_t now_ms);

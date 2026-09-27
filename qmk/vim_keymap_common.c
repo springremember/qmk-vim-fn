@@ -437,6 +437,10 @@ static void caps_mode_enter(void) {
     s_caps_mode      = true;
     // 物理影子里 Ctrl 是否按住（影子在第 0 步更新，不受合成位影响）。
     s_caps_phys_ctrl = (vim_glue_mods() & (MOD_BIT(KC_LCTL) | MOD_BIT(KC_RCTL))) != 0;
+    // 进入时物理 Ctrl 已按住 -> 同时记入 held 掩码，避免模式内首个非 F 键又合成一个 Ctrl
+    // （第 4 轮 P1-1：否则"进入时已按 Ctrl"后松开，后续键会丢 Ctrl）。
+    s_caps_phys_ctrl_held = 0;
+    if (s_caps_phys_ctrl) s_caps_phys_ctrl_held = (uint8_t)(CAPS_OWN_LCTL | CAPS_OWN_RCTL);
     s_caps_ctrl_n    = 0;
     caps_held_reset();
 }
@@ -445,17 +449,14 @@ static void caps_mode_enter(void) {
 static void caps_mode_exit(void) {
     if (!s_caps_mode) return;
     s_caps_mode = false;
-    for (uint8_t i = 0; i < s_caps_held_n; i++) {
-        const uint16_t k = s_caps_held[i];
-        // 物理 Ctrl 仍按住的位不能反注册（第 3 轮对抗审核 C：否则退出会清掉物理位，
-        // 真机 Ctrl 失效到重按）。它随后由 QMK 自己的 release 处理。
-        if ((k == KC_LCTL || k == KC_RCTL) && s_caps_phys_ctrl_held) continue;
-        unregister_code(k);
-    }
+    // 反注册本实例登记过的键（物理 Ctrl 不再入表 —— 它走透传分支由 QMK 处理）
+    for (uint8_t i = 0; i < s_caps_held_n; i++) unregister_code(s_caps_held[i]);
     // 只反注册本模式**确实注册过**的 Ctrl，且按实际键码逐位处理（LCTL/RCTL 在真机是**不同 bit**）：
     // 从未注册过（进入时物理 Ctrl 已按住）就绝不能反注册，否则会卸掉物理按住（§4 不变量 2）。
-    if (s_caps_ctrl_owned & CAPS_OWN_LCTL) unregister_code(KC_LCTL);
-    if (s_caps_ctrl_owned & CAPS_OWN_RCTL) unregister_code(KC_RCTL);
+    // 只反注册本模式的**合成**位；物理 Ctrl 仍按住或本层没注册过都不碰
+    // （第 4 轮 P2-1：退出时若物理 LCTL 仍按住，反注册会清掉物理位）。
+    if ((s_caps_ctrl_owned & CAPS_OWN_LCTL) && !s_caps_phys_ctrl) unregister_code(KC_LCTL);
+    if ((s_caps_ctrl_owned & CAPS_OWN_RCTL) && !s_caps_phys_ctrl) unregister_code(KC_RCTL);
     s_caps_ctrl_owned = 0;
     s_caps_phys_ctrl_held = 0;
     s_caps_ctrl_n     = 0;
@@ -496,37 +497,34 @@ static bool caps_mode_process(uint16_t keycode, keyrecord_t *record) {
             // 物理 Ctrl 的按键（LCTL/RCTL）：由"真实按住的修饰键"承担，不参与合成引用计数，
             // 否则一次点按会让 ctrl_n 永久 +1（第 3 轮对抗审核 A/Y：F 区带 Ctrl、Ctrl 卡到退出）。
             if (base == KC_LCTL || base == KC_RCTL) {
-                s_caps_phys_ctrl = true; // 物理 Ctrl 现在确实按住
+                // 物理 Ctrl 的按下：**两沿都交回 QMK**（不消费、不入配对表）。真机修饰键是位图，
+                // 若本层吞掉它的 release，QMK 永远收不到释放 -> 位永久卡住（第 4 轮 P0-1）。
+                // 本层只更新基线状态（当前物理 Ctrl 可见）。
+                s_caps_phys_ctrl = true;
                 s_caps_phys_ctrl_held |= (base == KC_LCTL) ? CAPS_OWN_LCTL : CAPS_OWN_RCTL;
-                register_code(base);     // 对称反注册在 release 分支按实际键码处理
-                caps_held_add(base);
-            } else {
-                // 需要合成 Ctrl 的条件：物理位当前不可用（未按住或已松开）且本模式尚未注册过。
-                if (!s_caps_phys_ctrl_held && !s_caps_ctrl_owned) {
-                    register_code(KC_LCTL);
-                    s_caps_ctrl_owned = CAPS_OWN_LCTL;
-                }
-                s_caps_ctrl_n++;
-                register_code(base);
-                caps_held_add(base);
+                return false;
             }
-            // 含修饰键：Shift -> Ctrl+Shift（对称反注册，不会卸掉物理按住）
-            register_code(base);
+            // 非 Ctrl 键：需要合成 Ctrl 的条件是"当前没有可用的物理 Ctrl 位"且本模式尚未注册过。
+            // （物理 Ctrl 已按住时由它承担 Ctrl，本层不合成 —— 第 3 轮 P0-3/P1-A/Y）
+            if (!s_caps_phys_ctrl && !s_caps_ctrl_owned) {
+                register_code(KC_LCTL);
+                s_caps_ctrl_owned = CAPS_OWN_LCTL;
+            }
+            s_caps_ctrl_n++;
+            register_code(base);     // 含修饰键：Shift -> Ctrl+Shift
             caps_held_add(base);
         }
-        vim_glue_swallow(keycode); // 消费 press，release 由配对表无条件消费
+        vim_glue_swallow(keycode); // 非 Ctrl 键：消费 press，release 由配对表消费
         return true;
     }
 
     // 物理 Ctrl 在模式内按/松（caps/design.md §3.1-3）：只更新 baseline，绝不改变引用计数，
     // 也绝不反注册本模式的 Ctrl 位（真机 Ctrl 是位图，误反注册会把合成位一起清掉）。
     if (base == KC_LCTL || base == KC_RCTL) {
-        s_caps_phys_ctrl = false; // 物理位不可见 -> 下一个非 F 键按条件补注册（P0-2）
+        // 物理 Ctrl 的 release：同样交回 QMK（由 QMK 清位），本层只降基线。
+        s_caps_phys_ctrl = false;
         s_caps_phys_ctrl_held &= (base == KC_LCTL) ? (uint8_t)~CAPS_OWN_LCTL : (uint8_t)~CAPS_OWN_RCTL;
-        // 只反注册**本模式注册过**的 Ctrl 键码（第 3 轮 P0-S：RCTL 与 LCTL 是不同 bit，
-        // 只清 LCTL 会永久卡住 RCTL）；物理按键若从未由本模式注册，则从 held 移除即可、不反注册。
-        if (caps_held_remove(base)) unregister_code(base);
-        return false; // 交配对表消费
+        return false; // 透传，交给 QMK
     }
 
     // release 过滤（caps/design.md §3.1-2）：只有本实例注册过的键才反注册/改引用计数；
@@ -536,7 +534,11 @@ static bool caps_mode_process(uint16_t keycode, keyrecord_t *record) {
     unregister_code(sent);
     if (fkey == KC_NO && s_caps_ctrl_n) {
         s_caps_ctrl_n--;
-        if (s_caps_ctrl_n == 0 && (s_caps_ctrl_owned & CAPS_OWN_LCTL)) {
+        // 只有"本模式注册的合成位"且"当前没有物理 Ctrl 在位"时才反注册
+        // （第 4 轮 P1-2：物理 LCTL 仍按住时反注册会把它一起清掉）。
+        // 注意判据是 s_caps_phys_ctrl_held（"物理 Ctrl 当前是否在位"），而不是进入时的快照。
+        if (s_caps_ctrl_n == 0 && (s_caps_ctrl_owned & CAPS_OWN_LCTL) &&
+            !s_caps_phys_ctrl && !s_caps_phys_ctrl_held) {
             unregister_code(KC_LCTL);
             s_caps_ctrl_owned &= (uint8_t)~CAPS_OWN_LCTL;
         }

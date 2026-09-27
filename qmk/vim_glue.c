@@ -135,6 +135,10 @@ static bool pair_take(uint16_t keycode) {
 
 void vim_glue_swallow(uint16_t keycode) { pair_add(keycode); }
 
+/* 移除某键的配对记录（不消费宿主键）：使该键的 release 透传给 QMK。
+ * 用于 Caps 模式：物理按住的 Ctrl 要由 QMK 自己处理其 release（否则位会永久卡住）。 */
+void vim_glue_pair_drop(uint16_t keycode) { (void)pair_take(keycode); }
+
 // --------------------------------------------------------------------------
 // Right-Shift lazy send (design §4.10 / readme §1).
 //
