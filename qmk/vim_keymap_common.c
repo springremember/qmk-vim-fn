@@ -416,6 +416,13 @@ static void caps_held_add(uint16_t keycode) {
     if (s_caps_held_n < CAPS_HELD_MAX) s_caps_held[s_caps_held_n++] = keycode;
 }
 
+// 本实例是否登记过该键（用于 release 过滤；不修改表）
+static bool caps_held_is_registered(uint16_t keycode) {
+    for (uint8_t i = 0; i < s_caps_held_n; i++)
+        if (s_caps_held[i] == keycode) return true;
+    return false;
+}
+
 static bool caps_held_remove(uint16_t keycode) {
     for (uint8_t i = 0; i < s_caps_held_n; i++) {
         if (s_caps_held[i] == keycode) {
@@ -528,9 +535,12 @@ static bool caps_mode_process(uint16_t keycode, keyrecord_t *record) {
     }
 
     // release 过滤（caps/design.md §3.1-2）：只有本实例注册过的键才反注册/改引用计数；
-    // 否则（press 早于本次进入、或属于上一实例）只交配对表消费。
+    // 否则（press 早于本次进入、或属于上一实例、或曾经溢出未入表）只交配对表消费。
+    // 第 4 轮 P2-3：用"本实例实际登记过的键"判定，避免溢出键的 release 命中陈旧同名表项
+    // 而误减 ctrl_n、把仍按住的键变成裸键。
     const uint16_t sent = (fkey != KC_NO) ? fkey : base;
-    if (!caps_held_remove(sent)) return false;
+    if (!caps_held_is_registered(sent)) return false;
+    caps_held_remove(sent);
     unregister_code(sent);
     if (fkey == KC_NO && s_caps_ctrl_n) {
         s_caps_ctrl_n--;

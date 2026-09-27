@@ -499,10 +499,11 @@ while (queue_has()) {
   - `kv_visual_count_pending()`：可视计数或 `g` 前缀是否待用（glue/keymap 的判定条件）；
   - `kv_visual_cancel()`：作废可视输入（等价 `kv_cancel()`：清计数/前缀并丢弃 repeat 记录）。
 
-  **三处调用点**（缺一即漏洞）：
+  **四处调用点**（缺一即漏洞）：
   1. glue 的 CAG 分支（带 Ctrl/Alt/GUI 的透传键，`vim_glue.c`）；
   2. glue 的非 vim 键透传分支（F 键、层键、普通打字等）；
-  3. keymap 共享层的 **myfn 吞键**路径（未声明键被吞时，`vim_keymap_common.c` 步骤 4）。
+  3. keymap 共享层的 **myfn 吞键**路径（未声明键被吞时，`vim_keymap_common.c` 步骤 4）；
+  4. keymap 共享层的 **hook 吞键**路径（`hook_pre`/`hook_post_myfn` 消费的键，如 CAD / Fn+Esc）。
 
   统一写法：`if (kv_pending() || kv_visual_count_pending()) kv_visual_cancel();`
 
