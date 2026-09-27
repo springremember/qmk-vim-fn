@@ -575,6 +575,90 @@ static void test_caps_mode(void) {
     reset_engine();
 }
 
+/* Caps 模块的卡键/发错键修复（caps/design.md §3.1；审计发现）：
+ * 重入清理、过期 release 过滤、物理 Ctrl 中途松开、层键豁免、溢出吞吐一致、孤立 release 守卫。 */
+static void test_caps_cleanup(void) {
+    /* §3.1-1 重入清理：模式已激活时再按 Caps，必须先把上一实例的键/Ctrl 反注册。
+     * 复现原缺陷：Caps↓ C↓ Caps↓ Caps↑ → 宿主永久卡住 Ctrl+C。 */
+    reset_engine();
+    CHECK(pipeline(KC_CAPS, true) == false);   /* 进模式 */
+    CHECK(pipeline(KC_C, true) == false);      /* Ctrl+C */
+    CHECK(sim_held(KC_LCTL) && sim_held(KC_C));
+    CHECK(pipeline(KC_CAPS, true) == false);   /* 第二次按下（release 丢失场景） */
+    CHECK(!sim_held(KC_LCTL) && !sim_held(KC_C)); /* 上一实例必须先被清掉 */
+    CHECK(pipeline(KC_CAPS, false) == false);  /* 抬起 */
+    CHECK(!sim_held(KC_LCTL) && !sim_held(KC_C));
+    /* 之后仍可正常使用，且退出不留残留 */
+    CHECK(pipeline(KC_CAPS, true) == false);
+    CHECK(pipeline(KC_1, true) == false);
+    CHECK(sim_held(KC_F1));
+    CHECK(pipeline(KC_1, false) == false);
+    CHECK(pipeline(KC_CAPS, false) == false);
+    CHECK(!sim_held(KC_F1) && !sim_held(KC_LCTL));
+
+    /* §3.1-2 过期 release 过滤：模式前按住的键在模式内抬起，不得改 Ctrl 计数 */
+    reset_engine();
+    CHECK(pipeline(KC_A, true) == true);       /* 普通打字（透传） */
+    CHECK(pipeline(KC_CAPS, true) == false);   /* 进模式 */
+    CHECK(pipeline(KC_B, true) == false);      /* Ctrl+B */
+    CHECK(sim_held(KC_LCTL) && sim_held(KC_B));
+    /* 模式前那个键是普通透传键：其 release 也应透传（引擎不吞它） */
+    CHECK(pipeline(KC_A, false) == true);
+    CHECK(sim_held(KC_LCTL));                  /* Ctrl 必须仍按住（B 还按着） */
+    CHECK(pipeline(KC_B, false) == false);
+    CHECK(!sim_held(KC_LCTL));
+    CHECK(pipeline(KC_CAPS, false) == false);
+
+    /* §3.1-3 物理 Ctrl 中途松开：后续非 F 键必须仍带 Ctrl */
+    reset_engine();
+    pipeline(KC_LCTL, true);                   /* 物理 Ctrl 按住（透传） */
+    CHECK(pipeline(KC_CAPS, true) == false);   /* 进模式：phys_ctrl=true */
+    pipeline(KC_LCTL, false);                  /* 模式内松开物理 Ctrl */
+    CHECK(pipeline(KC_C, true) == false);
+    CHECK(sim_held(KC_LCTL) && sim_held(KC_C)); /* 必须重新自注册 Ctrl */
+    CHECK(pipeline(KC_C, false) == false);
+    CHECK(!sim_held(KC_LCTL));
+    CHECK(pipeline(KC_CAPS, false) == false);
+
+    /* §3.1-4 层键豁免且放行：模式内层键不注册任何宿主键、且不消费 */
+    reset_engine();
+    CHECK(pipeline(KC_CAPS, true) == false);
+    uint16_t layer_kc = (uint16_t)MO(4);
+    CHECK(pipeline(layer_kc, true) == true);   /* 放行给 QMK（Fn 层可激活） */
+    CHECK(!sim_held(layer_kc) && !sim_held(KC_LCTL) && !sim_held((uint16_t)(layer_kc & 0xFF)));
+    CHECK(pipeline(layer_kc, false) == true);
+    CHECK(!sim_held(KC_LCTL));
+    /* Caps 的 release：press 被吞时由配对表消费（false），层键放行时透传（true）——
+     * 两种都自洽；此处只断言"不残留键、不残留模式" */
+    (void)pipeline(KC_CAPS, false);
+    CHECK(!sim_held(KC_LCTL));
+    CHECK(pipeline(KC_1, true) == true);   /* 模式已退出：1 是普通键 */
+    (void)pipeline(KC_1, false);
+
+    /* §3.1-5 溢出吞吐一致：表满后新键既不注册也不消费；退出后无残留 */
+    reset_engine();
+    CHECK(pipeline(KC_CAPS, true) == false);
+    /* 用 12 键（超过 CAPS_HELD_MAX 表容量的旧值/足以压满 held 表；不超过共享配对表容量） */
+    const uint16_t many[12] = {KC_A, KC_B, KC_C, KC_D, KC_E, KC_F,
+                              KC_G, KC_H, KC_I, KC_J, KC_K, KC_L};
+    int consumed = 0, passed = 0;
+    for (int i = 0; i < 12; i++) {
+        if (pipeline(many[i], true) == false) consumed++; else passed++;
+    }
+    CHECK(consumed > 0);
+    for (int i = 0; i < 12; i++) (void)pipeline(many[i], false);
+    CHECK(pipeline(KC_CAPS, false) == false);
+    for (int i = 0; i < 12; i++) CHECK(!sim_held(many[i]));
+    CHECK(!sim_held(KC_LCTL));
+
+    /* §3.1-6 孤立 release 守卫：没有 press 的 Caps 抬起不开关 vim */
+    reset_engine();
+    bool was = kv_vim_enabled();
+    (void)pipeline(KC_CAPS, false);            /* 孤立 release：吞掉即可，不得改 vim 状态 */
+    CHECK(kv_vim_enabled() == was);
+    reset_engine();
+}
+
 int main(void) {
     /* The s_cfg==NULL case must be observed before the first pipeline call. */
     test_rgb_led_index_null();
@@ -592,6 +676,7 @@ int main(void) {
     test_insert_flash_color();
     test_caps_mode();
     test_caps_trigger();
+    test_caps_cleanup();
     printf("rgb: pass=%d fail=%d\n", g_pass, g_fail);
     return g_fail ? 1 : 0;
 }
