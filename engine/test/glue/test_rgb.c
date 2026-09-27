@@ -462,7 +462,6 @@ static void test_caps_trigger(void) {
 
     /* Fn(层已激活) + Caps 单击：切换 vim */
     reset_engine();
-    CHECK(!kv_vim_enabled() || kv_vim_enabled());     /* 读一次，清掉编译器告警 */
     layer_state |= (1UL << g_cfg.fn_layer);
     bool before = kv_vim_enabled();
     CHECK(pipeline(KC_CAPS, true) == false);
@@ -542,8 +541,8 @@ static void test_caps_mode(void) {
     CHECK(sim_held(KC_LCTL) && sim_held(KC_ESC));
     CHECK(kv_get_mode() == was_mode);
     CHECK(pipeline(KC_ESC, false) == false);
-    CHECK(sim_ctrl_held() == true || true);      /* Esc 是非 F 键，Ctrl 期间按住 */
-    CHECK(pipeline(KC_ESC, false) == false || true);
+    /* 模式内 Esc 是非 F 键：按下时应带 Ctrl（上面已断言）。此处不再重复喂同一 release
+     * （那在现实中不可能出现，旧代码用恒真断言掩盖了它）。 */
 
     /* §1 退出防卡键：按住某键时直接松开 Caps */
     CHECK(pipeline(KC_A, true) == false);
