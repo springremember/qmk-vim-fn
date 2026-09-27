@@ -502,7 +502,7 @@ static bool caps_mode_process(uint16_t keycode, keyrecord_t *record) {
                 caps_held_add(base);
             } else {
                 // 需要合成 Ctrl 的条件：物理位当前不可用（未按住或已松开）且本模式尚未注册过。
-                if (!s_caps_phys_ctrl && !s_caps_ctrl_owned) {
+                if (!s_caps_phys_ctrl_held && !s_caps_ctrl_owned) {
                     register_code(KC_LCTL);
                     s_caps_ctrl_owned = CAPS_OWN_LCTL;
                 }

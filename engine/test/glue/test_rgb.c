@@ -637,6 +637,75 @@ static void test_visual_count_passthrough(void) {
 
 /* Caps 模块的卡键/发错键修复（caps/design.md §3.1；审计发现）：
  * 重入清理、过期 release 过滤、物理 Ctrl 中途松开、层键豁免、溢出吞吐一致、孤立 release 守卫。 */
+/* 干净状态下的溢出语义（design §3.1-5）：压满 12 键后，第 13 键既不注册、也不让后续流水线看到。 */
+/* 真机 mods 位图语义：本套件的 host stub 把 register/unregister 当多重集，
+ * 无法表达"物理键仍按住但位被清掉""位永久卡住"这类缺陷（第 3 轮对抗审核 S/A/Y/C）。
+ * 这里用小段位图模型复算：修饰键 = 位，普通键 = 计数。 */
+static uint8_t bm_mods;
+static int     bm_lctl, bm_c, bm_rctl;
+static void bm_reset(void) { bm_mods = 0; bm_lctl = bm_c = bm_rctl = 0; }
+static bool bm_pl(uint16_t kc, bool pressed) {
+    bool pass = pipeline(kc, pressed);
+    if (pass && pressed) {
+        switch (kc) {
+            case KC_LCTL: bm_mods |= 0x01; bm_lctl++; break;
+            case KC_RCTL: bm_mods |= 0x10; bm_rctl++; break;
+            case KC_C:    bm_c++; break;
+            default: break;
+        }
+    } else if (pass && !pressed) {
+        switch (kc) {
+            case KC_LCTL: bm_mods &= (uint8_t)~0x01; bm_lctl--; break;
+            case KC_RCTL: bm_mods &= (uint8_t)~0x10; bm_rctl--; break;
+            case KC_C:    bm_c--; break;
+            default: break;
+        }
+    }
+    return pass;
+}
+static void test_caps_ctrl_bitmodel(void) {
+    /* S：模式内点按物理右 Ctrl，退出后 RCTL 位必须为 0（旧实现会永久卡住） */
+    reset_engine(); bm_reset();
+    (void)bm_pl(KC_CAPS, true);
+    (void)bm_pl(KC_RCTL, true); (void)bm_pl(KC_RCTL, false);
+    (void)bm_pl(KC_CAPS, false);
+    CHECK(bm_mods == 0x00);
+    /* A/Y：模式内点按物理左 Ctrl 后再按 1，不得让 Ctrl 留在宿主/污染引用计数 */
+    reset_engine(); bm_reset();
+    (void)bm_pl(KC_CAPS, true);
+    (void)bm_pl(KC_LCTL, true); (void)bm_pl(KC_LCTL, false);
+    (void)bm_pl(KC_1, true); (void)bm_pl(KC_1, false);
+    CHECK(bm_mods == 0x00);
+    /* C：物理 Ctrl 仍按住时退出 caps，其位不得被清掉。
+     * 注意：glue 桩不为"放行给 QMK 的物理键"调用 register_code，因此 glib 的影子
+     * （vim_glue_mods）看不到物理 Ctrl，本套件无法表达"物理位已被宿主置起"的前提；
+     * 该场景由位图桩（/tmp）与实机验证覆盖，此处只断言"退出后本模式不残留合成位"。 */
+    reset_engine(); bm_reset();
+    (void)bm_pl(KC_CAPS, true);
+    (void)bm_pl(KC_LCTL, true);              /* 模式内按下并保持 */
+    (void)bm_pl(KC_CAPS, false);             /* 退出 */
+    CHECK(bm_lctl == 0);                     /* 本模式不残留合成的 LCTL */
+    reset_engine(); bm_reset();
+}
+
+static void test_caps_overflow_clean(void) {
+    reset_engine();
+    CHECK(pipeline(KC_CAPS, true) == false);
+    const uint16_t many[13] = {KC_A, KC_B, KC_C, KC_D, KC_E, KC_F, KC_G,
+                              KC_H, KC_I, KC_J, KC_K, KC_L, KC_O};
+    int consumed = 0, passed = 0;
+    for (int i = 0; i < 13; i++) {
+        if (pipeline(many[i], true) == false) consumed++; else passed++;
+    }
+    CHECK(consumed == 13);   /* 表满前 12 个 + 溢出被吞的第 13 个 */
+    CHECK(passed == 0);
+    for (int i = 0; i < 13; i++) (void)pipeline(many[i], false);
+    CHECK(pipeline(KC_CAPS, false) == false);
+    for (int i = 0; i < 13; i++) CHECK(!sim_held(many[i]));
+    CHECK(!sim_held(KC_LCTL));
+    reset_engine();
+}
+
 static void test_caps_cleanup(void) {
     /* §3.1-1 重入清理：模式已激活时再按 Caps，必须先把上一实例的键/Ctrl 反注册。
      * 复现原缺陷：Caps↓ C↓ Caps↓ Caps↑ → 宿主永久卡住 Ctrl+C。 */
@@ -756,6 +825,8 @@ int main(void) {
     test_visual_count_passthrough();
     test_caps_mode();
     test_caps_trigger();
+    test_caps_ctrl_bitmodel();
+    test_caps_overflow_clean();
     test_caps_cleanup();
     printf("rgb: pass=%d fail=%d\n", g_pass, g_fail);
     return g_fail ? 1 : 0;
