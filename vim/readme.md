@@ -234,11 +234,15 @@ c w     改到下一词首（进入 Insert）
 | **Insert（`Normal --Esc--> Insert` 后 3s 内）** | **橙**（键盘可配置；见下） |
 | Normal（空闲） | 蓝 |
 | Normal 多键 pending（计数/操作符/缩进/`g`/`Z` 待结束） | 黄 |
-| Visual / Visual-Line | 紫（Visual **没有**多键 pending：非法键直接吞键，因此不显示黄） |
+| Visual（`v`） | 紫 |
+| **Visual-Line（`V`）** | **紫红** |
+
 | 鼠标模式 | 青（cyan） |
 | vim 关闭 | 红 |
 
-> pending 黄**不覆盖** Visual / Visual-Line：Visual 内做多键时仍显示紫。
+> pending 黄**不覆盖** Visual / Visual-Line：两种可视模式都不显示黄
+> （Visual 内**没有**多键 pending：非法键直接吞键；计数累积也不算 pending，见 §7）。
+> **Visual 紫（`#800080`）与 Visual-Line 紫红（`#FF00FF`）是两种颜色**，用于区分字符选与行选。
 >
 > **回到打字提示（橙）**：`Normal` 空闲按 `Esc` 回到 `Insert` 后 **3 秒内**，模式色由 Insert 绿**替换**为
 > 键盘配置的提示色（两键盘均为橙 `#FF8000`），3 秒后自动回到 Insert 绿。

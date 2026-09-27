@@ -556,8 +556,22 @@ void vim_glue_release_all(void);          /* 反注册 held motion 方向键（�
   > （持续打字 65.5s 后出现 3s 假命中）。凡窗口长度可能被"长时间不检查"跨越的计时，一律 32 位。
 - **`send_plain_tap(kc)`**："剥修饰发裸键"（§2.1 例外：临时 clear+恢复）；
 - **`vim_task(now_ms)`** = `vim_glue_task` + 鼠标长按检查（拖动/长按修饰进入）；
-- **`vim_rgb_state_color(enabled, m, pending, mouse, &r,&g,&b)`**：六色计算（绿/蓝/黄/紫/青/红、
-  pending 不覆盖 Visual）——spec 级；键盘只提供**灯位索引**（`cfg->led_index`）。
+- **`vim_rgb_state_color(enabled, m, pending, mouse, &r,&g,&b)`**：状态色计算 —— spec 级；
+  键盘只提供**灯位索引**（`cfg->led_index`）。**七色**与优先级（高 → 低）：
+
+  | 条件 | 颜色 | 值 |
+  | :--- | :--- | :--- |
+  | 鼠标模式（`mouse`，最先判定） | 青 | `#00FFFF` |
+  | vim 关闭 | 红 | `#FF0000` |
+  | Visual（`KV_MODE_VISUAL`） | 紫 | `#800080` |
+  | **Visual-Line（`KV_MODE_VISUAL_LINE`）** | **紫红** | **`#FF00FF`** |
+  | Normal + `pending` | 黄 | `#FFFF00` |
+  | Normal（空闲） | 蓝 | `#0000FF` |
+  | Insert（及其它/默认） | 绿 | `#00FF00` |
+
+  - **VISUAL 与 VISUAL_LINE 必须是两种颜色**（紫 / 紫红）——行选是独立模式，灯色要能区分。
+  - `pending` **不覆盖** Visual / Visual-Line（Visual 内无多键 pending，见 §4.9）；
+    Mouse 与 vim-off 仍优先于一切模式色。
 - **`vim_insert_flash(void)`**：`Normal --Esc--> Insert` 的「回到打字」提示色窗口判据（spec 级）。
   定义：**vim 已开启 + 当前模式为 INSERT + §4.12 步骤 6 的 Esc 宽限窗口（`VIM_ESC_GRACE_MS` = 3000ms）
   仍未过期** 时为真。该窗口**只**由 `esc_process()` 的「Normal 空闲 Esc → INSERT」开启、由窗口内的 `Esc`
