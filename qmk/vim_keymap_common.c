@@ -430,6 +430,7 @@ static void caps_mode_enter(void) {
     // 否则 held 表被重置后它们永远无法反注册 —— 宿主键永久卡住。
     if (s_caps_mode) caps_mode_exit();
     s_caps_mode      = true;
+    // 物理影子里 Ctrl 是否按住（影子在第 0 步更新，不受合成位影响）。
     s_caps_phys_ctrl = (vim_glue_mods() & (MOD_BIT(KC_LCTL) | MOD_BIT(KC_RCTL))) != 0;
     s_caps_ctrl_n    = 0;
     caps_held_reset();
@@ -471,10 +472,13 @@ static bool caps_mode_process(uint16_t keycode, keyrecord_t *record) {
             register_code(fkey); // F 区：不带 Ctrl（引用计数不变）
             caps_held_add(fkey);
         } else {
-            if (s_caps_ctrl_n++ == 0 && !s_caps_phys_ctrl) {
+            // 需要合成 Ctrl 的条件：物理位当前不可用（未按住或已松开）且本模式尚未注册过。
+            // 不能只看 ctrl_n==0 —— 物理 Ctrl 中途松开时若已有非 F 键按住，也必须补注册。
+            if (!s_caps_phys_ctrl && !s_caps_ctrl_owned) {
                 register_code(KC_LCTL);
                 s_caps_ctrl_owned = true; // 记录"这个 Ctrl 是本模式注册的"
             }
+            s_caps_ctrl_n++;
             // 含修饰键：Shift -> Ctrl+Shift（对称反注册，不会卸掉物理按住）
             register_code(base);
             caps_held_add(base);
@@ -486,15 +490,12 @@ static bool caps_mode_process(uint16_t keycode, keyrecord_t *record) {
     // 物理 Ctrl 在模式内按/松（caps/design.md §3.1-3）：只更新 baseline，绝不改变引用计数，
     // 也绝不反注册本模式的 Ctrl 位（真机 Ctrl 是位图，误反注册会把合成位一起清掉）。
     if (base == KC_LCTL || base == KC_RCTL) {
-        // 物理 Ctrl：只更新 baseline，绝不改引用计数、也绝不反注册本模式的合成 Ctrl 位。
-        //  - 本模式注册过该键（模式内按下 Ctrl）：own 为真，后面走通用路径反注册（安全，因为
-        //    此后 s_caps_ctrl_owned 变 false，下一个非 F 键会重新注册）。
-        //  - 物理 press 早于进入（未进 held 表）：绝不反注册（那是物理按住的键），只清 baseline。
-        if (!caps_held_remove(base)) {
-            s_caps_phys_ctrl = false; // 物理 Ctrl 已不可见 -> 下一个非 F 键须重新注册
-            return false;             // 交配对表消费
-        }
-        s_caps_phys_ctrl = false;     // 模式内按下的 Ctrl 也已抬起
+        // 物理 Ctrl 的按/松只更新 baseline：**绝不**反注册本模式的合成 Ctrl 位、也不动引用计数
+        // （真机 Ctrl 是位图，误反注册会把合成位一起清掉 —— 第 2 轮 P0-3）。
+        // 一旦物理位不可见，下一个非 F 键会按 press 分支的条件补注册（P0-2）。
+        s_caps_phys_ctrl = false;
+        caps_held_remove(base); // 若本模式登记过该键则移除，避免 held 表残留
+        return false;           // 交配对表消费
     }
 
     // release 过滤（caps/design.md §3.1-2）：只有本实例注册过的键才反注册/改引用计数；
@@ -502,10 +503,12 @@ static bool caps_mode_process(uint16_t keycode, keyrecord_t *record) {
     const uint16_t sent = (fkey != KC_NO) ? fkey : base;
     if (!caps_held_remove(sent)) return false;
     unregister_code(sent);
-    if (fkey == KC_NO && s_caps_ctrl_n && --s_caps_ctrl_n == 0 && s_caps_ctrl_owned &&
-        !s_caps_phys_ctrl) {
-        unregister_code(KC_LCTL);
-        s_caps_ctrl_owned = false;
+    if (fkey == KC_NO && s_caps_ctrl_n) {
+        s_caps_ctrl_n--;
+        if (s_caps_ctrl_n == 0 && s_caps_ctrl_owned) {
+            unregister_code(KC_LCTL);
+            s_caps_ctrl_owned = false;
+        }
     }
     return false; // release 交配对表消费
 }
