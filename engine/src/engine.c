@@ -24,9 +24,17 @@ static bool         s_replaying;
 typedef enum { R_CONSUMED = 0, R_PASSTHROUGH, R_REIDENTIFY } kv_feed_t;
 
 /* ------------------------------------------------------------------ helpers */
+/* 可视模式内的输入状态（reset_pending 会一并清掉）：
+ *   s_visual_digits = 已累积的计数位数（上限 2，design §4.9/§4.8）
+ *   s_visual_gp     = 可视模式内的 g 前缀（gg，design §4.9） */
+static uint8_t s_visual_digits;
+static bool    s_visual_gp;
+
 static void reset_pending(void) {
     kv_ctx_reset(&s_ctx);
     s_state = ST_IDLE;
+    s_visual_digits = 0; /* 可视模式计数随输入一起作废（design §4.9/§4.10） */
+    s_visual_gp     = false;
 }
 
 static int digit_of(kv_keycode_t kc) {
@@ -312,8 +320,28 @@ static kv_feed_t feed_normal(kv_keycode_t kc) {
 
 static kv_feed_t feed_visual(kv_keycode_t kc) {
     kv_token_t t = kv_classify(kc);
+    // g 前缀已按下：第二击 g = gg（发 Ctrl+Shift+Home）；其它键按非法键吞掉。
+    // 必须先于 T_g_LOWER 分支判定，否则第二个 g 只会再次设置前缀。
+    if (s_visual_gp) {
+        s_visual_gp     = false;
+        s_visual_digits = 0;
+        s_ctx.count     = 0;
+        if (KV_BASIC(kc) == KV_G) { // gg：发 Ctrl+Shift+Home
+            kv_emit_tap(KV_CS(KV_HOME));
+            reset_pending();
+            return R_CONSUMED;
+        }
+        reset_pending();
+        // 第一个 g 视为非法键（吞掉、并已清计数）；当前键按正常规则重新处理
+        t = kv_classify(kc);
+        if (t == T_ZERO && s_visual_digits > 0) t = T_COUNT;
+    }
+    // 0 在计数中作数字（design §4.3/§4.9）：已有位数时把 0 当数字处理
+    if (t == T_ZERO && s_visual_digits > 0) t = T_COUNT;
     if (KV_BASIC(kc) == KV_ESC) {
         s_mode = KV_MODE_NORMAL;
+        s_visual_digits = 0;
+        s_visual_gp     = false;
         reset_pending(); /* 退出可视：丢弃未消费的计数 */
         return R_CONSUMED;
     }
@@ -322,10 +350,20 @@ static kv_feed_t feed_visual(kv_keycode_t kc) {
     // design §4.9: 数字先在可视模式内累积（与 §4.8 一致，最多 2 位）；
     // 累积不算多键 pending（kv_pending() 在 Visual 下恒为 false）。
     if (t == T_COUNT) {
-        if (s_ctx.count < 10) s_ctx.count = s_ctx.count * 10 + digit_of(kc);
-        else if (s_ctx.count < 100) s_ctx.count = s_ctx.count * 10 + digit_of(kc);
+        if (s_visual_digits < 2) { // 上限 2 位（≤99）；第 3 位起忽略
+            s_ctx.count = (s_ctx.count < 100 ? s_ctx.count : 99) * 10 + digit_of(kc);
+            if (s_ctx.count > 99) s_ctx.count = 99;
+            s_visual_digits++;
+        }
         return R_CONSUMED;
     }
+    if (t == T_g_LOWER) { // gg 前缀（design §4.9）：可视模式内自行处理
+        s_visual_gp = true;
+        return R_CONSUMED;
+    }
+    // 非数字键立即消费计数（design §4.9）：含非法键与透传键；
+    // 计数位数清 0，使其不泄漏到更后面的 motion。
+    s_visual_digits = 0;
     const int n = kv_ctx_n(&s_ctx);
     /* design §4.9: 动作后退出可视（Vim 语义）—— y/d/x/p 回 NORMAL，c/s 回 NORMAL 再进 INSERT。
      * 行选下动作前先把"整行"选中（Home+Shift+End），使 d/y/c/s 作用于整行。 */
@@ -348,7 +386,7 @@ static kv_feed_t feed_visual(kv_keycode_t kc) {
     }
     if (kc == KV_P) { kv_emit_paste(false); s_mode = KV_MODE_NORMAL; reset_pending(); return R_CONSUMED; }
     switch (t) {
-        case T_MOTION: case T_ZERO: case T_CARET: case T_DOLLAR: case T_G_BIG:
+        case T_MOTION: case T_ZERO: case T_CARET: case T_DOLLAR:
             for (int i = 0; i < n; i++) {
                 if (s_mode == KV_MODE_VISUAL_LINE) {
                     kv_emit_visual_line_motion(kc); /* 行选：整行推进 */
@@ -356,9 +394,21 @@ static kv_feed_t feed_visual(kv_keycode_t kc) {
                     kv_emit_visual_motion(kc);      /* 字符/词级 */
                 }
             }
-            reset_pending(); /* 计数已消费 */
+            s_visual_digits = 0; /* 计数已消费 */
+            reset_pending();
+            return R_CONSUMED;
+        case T_G_BIG: /* G 丢计数（readme §5）：无论 n 都只发一次 */
+            if (s_mode == KV_MODE_VISUAL_LINE) {
+                kv_emit_visual_line_motion(kc);
+            } else {
+                kv_emit_visual_motion(kc);
+            }
+            s_visual_digits = 0;
+            reset_pending();
             return R_CONSUMED;
         default:
+            s_visual_digits = 0; /* 非法键立即消费计数（design §4.9） */
+            reset_pending();
             return R_CONSUMED; /* illegal key: stay in Visual (swallow) */
     }
 }
@@ -426,6 +476,7 @@ void kv_task(uint32_t now_ms) {
 kv_mode_t kv_get_mode(void) { return s_mode; }
 bool      kv_vim_enabled(void) { return s_enabled; }
 bool      kv_pending(void) { return s_state != ST_IDLE; }
+bool      kv_visual_count_pending(void) { return s_visual_digits > 0; }
 
 void kv_set_mode(kv_mode_t m) { s_mode = m; abort_input(); }
 void kv_enable(void) { s_enabled = true; abort_input(); s_mode = KV_MODE_INSERT; }

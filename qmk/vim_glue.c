@@ -315,7 +315,9 @@ bool vim_glue_engine(uint16_t keycode, keyrecord_t *record) {
     // the physical keycode (not KV_BASIC, which would catch layer keys whose
     // low byte happens to be 0x29).
     if (!kv_is_vim_key(kc) && keycode != KC_ESC) {
-        if (kv_pending()) kv_cancel();
+        // strict-clear: 未完成的多键命令被放弃；可视模式已累积的计数同样必须作废
+        // （design §4.10；否则 `v 3 F5 j` 会把 3 泄漏给后面的 motion）。
+        if (kv_pending() || kv_visual_count_pending()) kv_cancel();
         if (rshift_held() && !rshift_exempt(keycode)) rshift_lazy_assert(); // Shift+key
         return true;
     }
