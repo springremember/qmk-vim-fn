@@ -32,6 +32,14 @@ void kv_emit_indent_line(kv_keycode_t ang, int n);
 /* Emit a visual-mode motion: extend the selection by one step. */
 void kv_emit_visual_motion(kv_keycode_t kc);
 
+/* Emit a visual-LINE (行选) motion: extend the selection by whole lines
+ * (design §4.9 VISUAL_LINE — must differ observably from VISUAL). */
+void kv_emit_visual_line_motion(kv_keycode_t kc);
+
+/* Entering visual-LINE: anchor the selection at the end of the current line
+ * (design §4.9 — "进入 V 立即发 SHIFT+END"). */
+void kv_emit_visual_line_enter(void);
+
 /* Single-key editing commands. */
 void kv_emit_delete_char(void);     /* x  */
 void kv_emit_backspace_char(void);  /* X  */

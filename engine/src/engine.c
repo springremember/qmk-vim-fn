@@ -150,7 +150,10 @@ static kv_feed_t feed_normal(kv_keycode_t kc) {
                 case T_G_BIG:  kv_emit_motion(M_G_BIG, 1); return R_CONSUMED;
                 case T_S_BIG:  kv_emit_line_op(KV_C, 1); s_mode = KV_MODE_INSERT; return R_CONSUMED;
                 case T_INSERT: kv_emit_enter_insert(kc); s_mode = KV_MODE_INSERT; return R_CONSUMED;
-                case T_VISUAL: s_mode = (kc == KV_C_V) ? KV_MODE_VISUAL_LINE : KV_MODE_VISUAL; return R_CONSUMED;
+                case T_VISUAL:
+                    s_mode = (kc == KV_C_V) ? KV_MODE_VISUAL_LINE : KV_MODE_VISUAL;
+                    if (s_mode == KV_MODE_VISUAL_LINE) kv_emit_visual_line_enter(); /* 锚行尾 */
+                    return R_CONSUMED;
                 case T_X: case T_XUP: case T_s: case T_C_BIG: case T_D_BIG:
                 case T_Y_BIG: case T_P: case T_PUP: case T_JOIN: case T_UNDO:
                     do_single(t, kc); return R_CONSUMED;
@@ -175,7 +178,11 @@ static kv_feed_t feed_normal(kv_keycode_t kc) {
                 case T_Z_BIG:  s_state = ST_ZP; return R_CONSUMED;
                 case T_S_BIG:  kv_emit_line_op(KV_C, n); s_mode = KV_MODE_INSERT; reset_pending(); return R_CONSUMED;
                 case T_INSERT: kv_emit_enter_insert(kc); s_mode = KV_MODE_INSERT; reset_pending(); return R_CONSUMED;
-                case T_VISUAL: s_mode = (kc == KV_C_V) ? KV_MODE_VISUAL_LINE : KV_MODE_VISUAL; reset_pending(); return R_CONSUMED;
+                case T_VISUAL:
+                    s_mode = (kc == KV_C_V) ? KV_MODE_VISUAL_LINE : KV_MODE_VISUAL;
+                    if (s_mode == KV_MODE_VISUAL_LINE) kv_emit_visual_line_enter(); /* 锚行尾 */
+                    reset_pending();
+                    return R_CONSUMED;
                 default: /* drop count, re-identify */
                     reset_pending();
                     return R_REIDENTIFY;
@@ -305,15 +312,36 @@ static kv_feed_t feed_normal(kv_keycode_t kc) {
 
 static kv_feed_t feed_visual(kv_keycode_t kc) {
     kv_token_t t = kv_classify(kc);
-    if (KV_BASIC(kc) == KV_ESC) { s_mode = KV_MODE_NORMAL; return R_CONSUMED; }
-    if (kc == KV_D || kc == KV_X) { kv_emit_delete_to_eol(); return R_CONSUMED; } /* cut selection */
-    if (kc == KV_Y) { kv_emit_yank_to_eol(); return R_CONSUMED; }
-    if (kc == KV_C) { kv_emit_change_to_eol(); s_mode = KV_MODE_INSERT; return R_CONSUMED; }
-    if (kc == KV_S) { kv_emit_substitute(); s_mode = KV_MODE_INSERT; return R_CONSUMED; }
-    if (kc == KV_P) { kv_emit_paste(false); return R_CONSUMED; }
+    if (KV_BASIC(kc) == KV_ESC) {
+        s_mode = KV_MODE_NORMAL;
+        reset_pending(); /* 退出可视：丢弃未消费的计数 */
+        return R_CONSUMED;
+    }
+    /* design §4.8/§4.9: 可视模式同样支持"独立移动 ×n" —— 计数以 s_ctx.count 累积
+     * （ST_CNT 在 feed_normal 里收集），这里按 n 重复对应基础序列。 */
+    // design §4.9: 数字先在可视模式内累积（与 §4.8 一致，最多 2 位）；
+    // 累积不算多键 pending（kv_pending() 在 Visual 下恒为 false）。
+    if (t == T_COUNT) {
+        if (s_ctx.count < 10) s_ctx.count = s_ctx.count * 10 + digit_of(kc);
+        else if (s_ctx.count < 100) s_ctx.count = s_ctx.count * 10 + digit_of(kc);
+        return R_CONSUMED;
+    }
+    const int n = kv_ctx_n(&s_ctx);
+    if (kc == KV_D || kc == KV_X) { kv_emit_delete_to_eol(); reset_pending(); return R_CONSUMED; } /* cut selection */
+    if (kc == KV_Y) { kv_emit_yank_to_eol(); reset_pending(); return R_CONSUMED; }
+    if (kc == KV_C) { kv_emit_change_to_eol(); s_mode = KV_MODE_INSERT; reset_pending(); return R_CONSUMED; }
+    if (kc == KV_S) { kv_emit_substitute(); s_mode = KV_MODE_INSERT; reset_pending(); return R_CONSUMED; }
+    if (kc == KV_P) { kv_emit_paste(false); reset_pending(); return R_CONSUMED; }
     switch (t) {
         case T_MOTION: case T_ZERO: case T_CARET: case T_DOLLAR: case T_G_BIG:
-            kv_emit_visual_motion(kc);
+            for (int i = 0; i < n; i++) {
+                if (s_mode == KV_MODE_VISUAL_LINE) {
+                    kv_emit_visual_line_motion(kc); /* 行选：整行推进 */
+                } else {
+                    kv_emit_visual_motion(kc);      /* 字符/词级 */
+                }
+            }
+            reset_pending(); /* 计数已消费 */
             return R_CONSUMED;
         default:
             return R_CONSUMED; /* illegal key: stay in Visual (swallow) */
