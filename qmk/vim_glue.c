@@ -299,7 +299,8 @@ bool vim_glue_engine(uint16_t keycode, keyrecord_t *record) {
             }
             return false;
         }
-        if (kv_pending()) kv_cancel(); // strict clear: non-vim key abandons pending
+        // strict clear：未完成的多键命令与可视模式已累积的输入都要作废（design §4.10）
+        if (kv_pending() || kv_visual_count_pending()) kv_visual_cancel();
         if (rshift_held() && !rshift_exempt(keycode)) rshift_lazy_assert(); // Shift wins
         return true;                   // CAG: QMK handles it
     }
@@ -317,7 +318,7 @@ bool vim_glue_engine(uint16_t keycode, keyrecord_t *record) {
     if (!kv_is_vim_key(kc) && keycode != KC_ESC) {
         // strict-clear: 未完成的多键命令被放弃；可视模式已累积的计数同样必须作废
         // （design §4.10；否则 `v 3 F5 j` 会把 3 泄漏给后面的 motion）。
-        if (kv_pending() || kv_visual_count_pending()) kv_cancel();
+        if (kv_pending() || kv_visual_count_pending()) kv_visual_cancel();
         if (rshift_held() && !rshift_exempt(keycode)) rshift_lazy_assert(); // Shift+key
         return true;
     }

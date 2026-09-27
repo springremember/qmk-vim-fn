@@ -374,7 +374,9 @@ static bool esc_process(uint16_t keycode, keyrecord_t *record) {
 // ==========================================================================
 #define CAPS_FKEY_COUNT 12
 // 模式内实际注册过的键（有界表；溢出时该键仍会发出，仅退出时不保证被强制释放）
-#define CAPS_HELD_MAX 24
+// held 表容量：必须 **< glue 的配对表容量（PAIR_CAP=16）**，否则同时按住的键会把 Caps 的
+// 配对记录挤出配对表，导致 release 变成孤立 key-up（design §4.10）。12 已远超正常同时按键数。
+#define CAPS_HELD_MAX 12
 
 static bool     s_caps_armed;               // 本按下不是 Fn+Caps（走 Caps 模式语义）
 static bool     s_caps_touched;             // 本次按下期间是否已按过其它键（决定快速抬起是否撤销）
@@ -589,6 +591,8 @@ static bool myfn_process(uint16_t keycode, keyrecord_t *record) {
         // press is never registered, so its paired release is harmless).  This
         // fixes "Shift down -> Fn -> Shift up" leaving Shift stuck.
         if (record->event.pressed) {
+            // 被 myfn 吞掉的键也是"非 vim 键"，必须作废可视模式已累积的输入（design §4.10）。
+            if (kv_pending() || kv_visual_count_pending()) kv_visual_cancel();
             vim_glue_swallow(keycode);
             return true;
         }

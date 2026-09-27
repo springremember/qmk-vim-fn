@@ -53,6 +53,7 @@ kv_mode_t kv_get_mode(void);        /* current mode */
 bool      kv_vim_enabled(void);     /* vim master switch */
 bool      kv_pending(void);         /* any pending (count/op/prefix/indent) */
 bool      kv_visual_count_pending(void); /* visual-mode count digits collected */
+void      kv_visual_cancel(void);        /* 作废可视模式内已累积的输入（计数 + g 前缀） */
 void      kv_set_mode(kv_mode_t m); /* set mode directly */
 void      kv_enable(void);          /* enable vim */
 void      kv_disable(void);         /* disable vim（不含 held-motion 反注册；键盘须经 set_vim_enabled 包装调 vim_glue_release_all） */

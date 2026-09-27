@@ -326,15 +326,15 @@ static kv_feed_t feed_visual(kv_keycode_t kc) {
         s_visual_gp     = false;
         s_visual_digits = 0;
         s_ctx.count     = 0;
-        if (KV_BASIC(kc) == KV_G) { // gg：发 Ctrl+Shift+Home
+        if (t == T_g_LOWER) { // gg：只认小写 g（Shift+G 不是 gg 的第二击）
             kv_emit_tap(KV_CS(KV_HOME));
             reset_pending();
             return R_CONSUMED;
         }
+        // design §4.9：`gg` 之外的第二击按非法键处理 —— 吞掉、不产生任何输出，
+        // 并（按"非法键立即消费计数"）清掉计数与 g 前缀。
         reset_pending();
-        // 第一个 g 视为非法键（吞掉、并已清计数）；当前键按正常规则重新处理
-        t = kv_classify(kc);
-        if (t == T_ZERO && s_visual_digits > 0) t = T_COUNT;
+        return R_CONSUMED;
     }
     // 0 在计数中作数字（design §4.3/§4.9）：已有位数时把 0 当数字处理
     if (t == T_ZERO && s_visual_digits > 0) t = T_COUNT;
@@ -476,7 +476,12 @@ void kv_task(uint32_t now_ms) {
 kv_mode_t kv_get_mode(void) { return s_mode; }
 bool      kv_vim_enabled(void) { return s_enabled; }
 bool      kv_pending(void) { return s_state != ST_IDLE; }
-bool      kv_visual_count_pending(void) { return s_visual_digits > 0; }
+bool      kv_visual_count_pending(void) { return s_visual_digits > 0 || s_visual_gp; }
+void      kv_visual_cancel(void) {
+    // 与 kv_cancel() 等价：作废未完成输入（计数/操作符/g 前缀）+ 丢弃 repeat 记录。
+    // s_visual_digits / s_visual_gp 由 reset_pending() 一并清零。
+    kv_cancel();
+}
 
 void kv_set_mode(kv_mode_t m) { s_mode = m; abort_input(); }
 void kv_enable(void) { s_enabled = true; abort_input(); s_mode = KV_MODE_INSERT; }
