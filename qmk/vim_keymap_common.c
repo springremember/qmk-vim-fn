@@ -9,15 +9,16 @@
 // named and ordered (design §4.12):
 //
 //   0  modifier shadow update (before anything may swallow a modifier)
-//   1  cfg->hook_pre
-//   2  myfn skeleton (layer exemption / undeclared swallow / dispatch)
-//   3  cfg->hook_post_myfn
-//   4  mouse-mode state machine
-//   5  Shift+Esc (Insert only)
-//   6  Esc toggle (Insert <-> Normal, with the escape grace window)
-//   7  Caps tap/hold (tap = vim on/off toggle, hold = momentary Normal)
-//   8  §2.1 shortcut table
-//   9  vim_glue_engine (Esc falls straight through to the engine)
+//   1  Caps tap/hold (tap = keyboard's short-press behaviour; hold = Caps mode)
+//   2  Caps mode interception (caps/design.md: F-row / Ctrl+base, captures all)
+//   3  cfg->hook_pre
+//   4  myfn skeleton (layer exemption / undeclared swallow / dispatch)
+//   5  cfg->hook_post_myfn
+//   6  mouse-mode state machine
+//   7  Shift+Esc (Insert only)
+//   8  Esc toggle (Insert <-> Normal, with the escape grace window)
+//   9  §2.1 shortcut table
+//  10  vim_glue_engine (Esc falls straight through to the engine)
 
 #include "qmk-vim-fn/qmk/vim_keymap_common.h"
 #include "qmk-vim-fn/qmk/vim_glue.h"
@@ -365,10 +366,108 @@ static bool esc_process(uint16_t keycode, keyrecord_t *record) {
 }
 
 // ==========================================================================
-// Step 7 — Caps tap/hold
 // ==========================================================================
-static uint16_t  s_caps_timer;
-static kv_mode_t s_caps_entry_mode; // full entry mode, restored on long press
+// Caps 模块（规格 caps/design.md；行为 caps/readme.md；用例 caps/testcase.md）
+//   Caps tap  = 键盘既有短按语义（本层不改动，通常为 vim 开关）
+//   Caps hold = Caps 模式：1..0 - = -> F1..F12（不带 Ctrl）；其余键 -> Ctrl+base
+//               松开 Caps 退出并反注册本模式注册过的全部键与 Ctrl（防卡键）
+// ==========================================================================
+#define CAPS_FKEY_COUNT 12
+// 模式内实际注册过的键（有界表；溢出时该键仍会发出，仅退出时不保证被强制释放）
+#define CAPS_HELD_MAX 12
+
+static uint16_t s_caps_timer;               // tap/hold 计时；>= hold_ms 视为长按
+static bool     s_caps_mode;                // 模式是否激活
+static uint16_t s_caps_held[CAPS_HELD_MAX]; // 本模式注册过的键
+static uint8_t  s_caps_held_n;
+static uint8_t  s_caps_ctrl_n;              // 非 F 键按下的计数（Ctrl 引用计数）
+static bool     s_caps_phys_ctrl;           // 进入时物理 Ctrl 是否已按住
+
+// 1..0 - = -> F1..F12（传入 QMK 基础键码）
+static uint16_t caps_fkey_of(uint16_t keycode) {
+    switch (keycode) {
+        case KC_1:    return KC_F1;
+        case KC_2:    return KC_F2;
+        case KC_3:    return KC_F3;
+        case KC_4:    return KC_F4;
+        case KC_5:    return KC_F5;
+        case KC_6:    return KC_F6;
+        case KC_7:    return KC_F7;
+        case KC_8:    return KC_F8;
+        case KC_9:    return KC_F9;
+        case KC_0:    return KC_F10;
+        case KC_MINS: return KC_F11;
+        case KC_EQL:  return KC_F12;
+        default:      return KC_NO;
+    }
+}
+
+static void caps_held_reset(void) { s_caps_held_n = 0; }
+
+static void caps_held_add(uint16_t keycode) {
+    if (s_caps_held_n < CAPS_HELD_MAX) s_caps_held[s_caps_held_n++] = keycode;
+}
+
+static bool caps_held_remove(uint16_t keycode) {
+    for (uint8_t i = 0; i < s_caps_held_n; i++) {
+        if (s_caps_held[i] == keycode) {
+            s_caps_held[i] = s_caps_held[--s_caps_held_n];
+            return true;
+        }
+    }
+    return false;
+}
+
+// 进入模式（caps/design.md §3）：不碰 vim 状态，也不重置引擎 —— 模式内的键不进引擎。
+static void caps_mode_enter(void) {
+    s_caps_mode      = true;
+    s_caps_phys_ctrl = (vim_glue_mods() & (MOD_BIT(KC_LCTL) | MOD_BIT(KC_RCTL))) != 0;
+    s_caps_ctrl_n    = 0;
+    caps_held_reset();
+}
+
+// 退出模式：反注册本模式注册过的全部键（含仍按住的）与 Ctrl（caps/design.md §4.3）
+static void caps_mode_exit(void) {
+    if (!s_caps_mode) return;
+    s_caps_mode = false;
+    for (uint8_t i = 0; i < s_caps_held_n; i++) unregister_code(s_caps_held[i]);
+    if (s_caps_ctrl_n && !s_caps_phys_ctrl) unregister_code(KC_LCTL);
+    s_caps_ctrl_n = 0;
+    caps_held_reset();
+    s_caps_phys_ctrl = false;
+}
+
+// 模式内按键翻译（caps/design.md §4）：拦截在 myfn/鼠标/Esc/快捷键/引擎之前。
+static bool caps_mode_process(uint16_t keycode, keyrecord_t *record) {
+    if (!s_caps_mode) return false;
+
+    const bool     pressed = record->event.pressed;
+    const uint16_t base    = (uint16_t)(keycode & 0xFF); // QMK 基础键码
+    const uint16_t fkey    = caps_fkey_of(base);
+
+    if (pressed) {
+        if (fkey != KC_NO) {
+            register_code(fkey); // F 区：不带 Ctrl（引用计数不变）
+            caps_held_add(fkey);
+        } else {
+            if (s_caps_ctrl_n++ == 0 && !s_caps_phys_ctrl) register_code(KC_LCTL);
+            // 含修饰键：Shift -> Ctrl+Shift（对称反注册，不会卸掉物理按住）
+            register_code(base);
+            caps_held_add(base);
+        }
+        vim_glue_swallow(keycode); // 消费 press，release 由配对表无条件消费
+        return true;
+    }
+
+    // release：先松该键；只有最后一个非 F 键松开才松 Ctrl（caps/design.md §4）
+    const uint16_t sent = (fkey != KC_NO) ? fkey : base;
+    unregister_code(sent);
+    if (fkey == KC_NO && s_caps_ctrl_n && --s_caps_ctrl_n == 0 && !s_caps_phys_ctrl) {
+        unregister_code(KC_LCTL);
+    }
+    caps_held_remove(sent);
+    return false; // release 交配对表消费
+}
 
 static void set_vim_enabled(bool enabled) {
     s_esc_grace = 0; // an enable/disable transition invalidates the window
@@ -383,20 +482,14 @@ static void set_vim_enabled(bool enabled) {
     vim_glue_release_all();
 }
 
+// Caps tap/hold 判定：短按 = 键盘既有语义；长按 = 进入/退出 Caps 模式。
+// 注意：本段先于 caps_mode_process 分发，使 Caps 的 release 仍能退出模式。
 static bool caps_process(uint16_t keycode, keyrecord_t *record) {
     if (keycode != KC_CAPS) return false;
 
     if (record->event.pressed) {
-        // Caps is always owned (it toggles vim), so it never works as Caps Lock.
-        // While vim is on we momentarily enter NORMAL so a long press previews
-        // command mode and restores the entry mode on release.
-        s_caps_entry_mode = kv_get_mode();
-        s_caps_timer      = vim_timer_start();
-        if (kv_vim_enabled()) {
-            kv_set_mode(KV_MODE_NORMAL);
-            vim_glue_release_all();
-        }
-        vim_glue_swallow(KC_CAPS);
+        s_caps_timer = vim_timer_start();
+        vim_glue_swallow(KC_CAPS); // Caps 始终被消费，永不作 Caps Lock
         return true;
     }
 
@@ -404,17 +497,12 @@ static bool caps_process(uint16_t keycode, keyrecord_t *record) {
         bool held    = vim_timer_elapsed(s_caps_timer, s_cfg->hold_ms);
         s_caps_timer = 0;
         if (held) {
-            // Long press: momentary NORMAL, restore the exact entry mode.
-            if (kv_vim_enabled()) {
-                kv_set_mode(s_caps_entry_mode);
-                vim_glue_release_all();
-            }
+            caps_mode_exit(); // 长按：模式已在 task() 里进入 -> 这里退出
         } else {
-            // Tap: toggle vim (enabling always restarts in INSERT).
-            set_vim_enabled(!kv_vim_enabled());
+            set_vim_enabled(!kv_vim_enabled()); // 短按：沿用键盘既有语义（此处为 vim 开关）
         }
     }
-    return false; // paired release consumed by the shared table
+    return false; // 配对 release 由共享表消费
 }
 
 // ==========================================================================
@@ -515,31 +603,36 @@ static bool vim_dispatch(uint16_t keycode, keyrecord_t *record, const vim_cfg_t 
     // 0 — physical modifier shadow (must precede every swallow).
     vim_glue_mod_update(keycode, record->event.pressed);
 
-    // 1 — keyboard pre-hook (high-priority keyboard combos).
-    if (hook_process(keycode, record, cfg->hook_pre)) return false;
-
-    // 2 — myfn skeleton.
-    if (myfn_process(keycode, record)) return false;
-
-    // 3 — keyboard post-myfn hook (per-key keyboard actions).
-    if (hook_process(keycode, record, cfg->hook_post_myfn)) return false;
-
-    // 4 — mouse mode.
-    if (mouse_process(keycode, record)) return false;
-
-    // 5 — Shift+Esc.
-    if (shift_esc_process(keycode, record)) return false;
-
-    // 6 — Esc toggle (opens/resets the escape grace window on Normal->Insert).
-    if (esc_process(keycode, record)) return false;
-
-    // 7 — Caps tap/hold.
+    // 1 — Caps tap/hold.  Runs before the Caps-mode interception so the Caps
+    // release still exits the mode (caps/design.md §5).
     if (caps_process(keycode, record)) return false;
 
-    // 8 — §2.1 shortcuts.
+    // 2 — Caps 模式拦截（caps/design.md §5）：模式内接管一切按键，先于 myfn/鼠标/
+    // Esc/快捷键/引擎，因此模式内 Esc = Ctrl+Esc，不会触发 vim 的 Esc 切换。
+    if (caps_mode_process(keycode, record)) return false;
+
+    // 3 — keyboard pre-hook (high-priority keyboard combos).
+    if (hook_process(keycode, record, cfg->hook_pre)) return false;
+
+    // 4 — myfn skeleton.
+    if (myfn_process(keycode, record)) return false;
+
+    // 5 — keyboard post-myfn hook (per-key keyboard actions).
+    if (hook_process(keycode, record, cfg->hook_post_myfn)) return false;
+
+    // 6 — mouse mode.
+    if (mouse_process(keycode, record)) return false;
+
+    // 7 — Shift+Esc.
+    if (shift_esc_process(keycode, record)) return false;
+
+    // 8 — Esc toggle (opens/resets the escape grace window on Normal->Insert).
+    if (esc_process(keycode, record)) return false;
+
+    // 9 — §2.1 shortcuts.
     if (shortcuts_process(keycode, record)) return false;
 
-    // 9 — engine (Esc falls straight through here; no keyboard Esc branch).
+    // 10 — engine (Esc falls straight through here; no keyboard Esc branch).
     return vim_glue_engine(keycode, record);
 }
 
@@ -565,7 +658,10 @@ void vim_keymap_common_init(void) {
     s_lbtn_held        = false;
     for (int i = 0; i < MV_COUNT; i++) s_move_reg[i] = KC_NO;
     s_caps_timer       = 0;
-    s_caps_entry_mode  = KV_MODE_INSERT;
+    s_caps_mode        = false;
+    s_caps_held_n      = 0;
+    s_caps_ctrl_n      = 0;
+    s_caps_phys_ctrl   = false;
     s_esc_grace        = 0;
     vim_glue_init();
 }
@@ -574,6 +670,12 @@ void vim_keymap_common_task(uint32_t now_ms) {
     vim_glue_task(now_ms);
 
     if (!s_cfg) return;
+
+    // Caps 长按（caps/design.md §3）：hold_ms 一到就进入模式，使随后立刻按下的键已被映射。
+    // 在此采样物理 Ctrl 状态（早于任何模式内按键发出）。
+    if (!s_caps_mode && s_caps_timer && vim_timer_elapsed(s_caps_timer, s_cfg->hold_ms)) {
+        caps_mode_enter();
+    }
 
     // Trigger-key long press: register the Win/Mac modifier and remember the
     // exact code so the release unregisters the same one even if is_mac() flips.
