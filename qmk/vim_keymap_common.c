@@ -9,7 +9,7 @@
 // named and ordered (design §4.12):
 //
 //   0  modifier shadow update (before anything may swallow a modifier)
-//   1  Caps tap/hold (tap = keyboard's short-press behaviour; hold = Caps mode)
+//   1  Caps trigger (press = Caps mode immediately; bare tap = nothing; Fn+Caps = vim toggle)
 //   2  Caps mode interception (caps/design.md: F-row / Ctrl+base, captures all)
 //   3  cfg->hook_pre
 //   4  myfn skeleton (layer exemption / undeclared swallow / dispatch)
@@ -376,7 +376,8 @@ static bool esc_process(uint16_t keycode, keyrecord_t *record) {
 // 模式内实际注册过的键（有界表；溢出时该键仍会发出，仅退出时不保证被强制释放）
 #define CAPS_HELD_MAX 12
 
-static uint16_t s_caps_timer;               // tap/hold 计时；>= hold_ms 视为长按
+static bool     s_caps_armed;               // 本按下不是 Fn+Caps（走 Caps 模式语义）
+static bool     s_caps_touched;             // 本次按下期间是否已按过其它键（决定快速抬起是否撤销）
 static bool     s_caps_mode;                // 模式是否激活
 static uint16_t s_caps_held[CAPS_HELD_MAX]; // 本模式注册过的键
 static uint8_t  s_caps_held_n;
@@ -442,6 +443,8 @@ static bool caps_mode_process(uint16_t keycode, keyrecord_t *record) {
     if (!s_caps_mode) return false;
 
     const bool     pressed = record->event.pressed;
+    // 按下期间夹了键 -> 抬起时不再撤销（caps/design.md §3）
+    if (pressed) s_caps_touched = true;
     const uint16_t base    = (uint16_t)(keycode & 0xFF); // QMK 基础键码
     const uint16_t fkey    = caps_fkey_of(base);
 
@@ -482,25 +485,34 @@ static void set_vim_enabled(bool enabled) {
     vim_glue_release_all();
 }
 
-// Caps tap/hold 判定：短按 = 键盘既有语义；长按 = 进入/退出 Caps 模式。
+// Caps 触发（caps/design.md §3）：
+//   按下即进入 Caps 模式（不等 hold_ms）；按下期间未按其它键就抬起则撤销；
+//   Fn 先按住 + Caps = 单击开关 vim；裸 Caps 单击无任何效果。
 // 注意：本段先于 caps_mode_process 分发，使 Caps 的 release 仍能退出模式。
 static bool caps_process(uint16_t keycode, keyrecord_t *record) {
     if (keycode != KC_CAPS) return false;
 
     if (record->event.pressed) {
-        s_caps_timer = vim_timer_start();
+        s_caps_touched = false;
+        // Fn 在按下这一刻已激活 -> Fn+Caps（单击语义）；否则立即进入 Caps 模式。
+        s_caps_armed = !fn_layer_active();
+        if (s_caps_armed) caps_mode_enter();
         vim_glue_swallow(KC_CAPS); // Caps 始终被消费，永不作 Caps Lock
         return true;
     }
 
-    if (s_caps_timer) {
-        bool held    = vim_timer_elapsed(s_caps_timer, s_cfg->hold_ms);
-        s_caps_timer = 0;
-        if (held) {
-            caps_mode_exit(); // 长按：模式已在 task() 里进入 -> 这里退出
+    if (s_caps_armed) {
+        if (!s_caps_touched) {
+            caps_mode_exit(); // 未夹键就抬起：撤销本次进入（不误发键）
         } else {
-            set_vim_enabled(!kv_vim_enabled()); // 短按：沿用键盘既有语义（此处为 vim 开关）
+            caps_mode_exit(); // 正常退出（模式内发出的键已生效）
         }
+        s_caps_armed = false;
+    } else if (s_caps_touched) {
+        // Fn+Caps 在模式内夹了键？不会：Fn+Caps 不进模式，此处仅为对称保险
+        s_caps_touched = false;
+    } else {
+        set_vim_enabled(!kv_vim_enabled()); // Fn+Caps 单击 = 开关 vim
     }
     return false; // 配对 release 由共享表消费
 }
@@ -657,7 +669,8 @@ void vim_keymap_common_init(void) {
     s_lbtn_timer       = 0;
     s_lbtn_held        = false;
     for (int i = 0; i < MV_COUNT; i++) s_move_reg[i] = KC_NO;
-    s_caps_timer       = 0;
+    s_caps_armed       = false;
+    s_caps_touched     = false;
     s_caps_mode        = false;
     s_caps_held_n      = 0;
     s_caps_ctrl_n      = 0;
@@ -671,11 +684,7 @@ void vim_keymap_common_task(uint32_t now_ms) {
 
     if (!s_cfg) return;
 
-    // Caps 长按（caps/design.md §3）：hold_ms 一到就进入模式，使随后立刻按下的键已被映射。
-    // 在此采样物理 Ctrl 状态（早于任何模式内按键发出）。
-    if (!s_caps_mode && s_caps_timer && vim_timer_elapsed(s_caps_timer, s_cfg->hold_ms)) {
-        caps_mode_enter();
-    }
+    // Caps 模式现在在按下瞬间进入（caps/design.md §3），此处不再需要 hold_ms 判定。
 
     // Trigger-key long press: register the Win/Mac modifier and remember the
     // exact code so the release unregisters the same one even if is_mac() flips.
