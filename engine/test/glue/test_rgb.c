@@ -687,7 +687,7 @@ static void test_caps_ctrl_bitmodel(void) {
     CHECK(s_mods == 0x00);
     /* 注：P2-1（退出时物理 Ctrl 仍按住 -> 不得清其位）需要宿主"放行即注册"这一步，
      * 而本文件的 pipeline() 包装器不做该模拟（s_mods 里不会出现物理位）。
-     * 该场景由真机语义 probe 覆盖（已验证：Caps↓ LCTL↓ Caps↑ -> mods=0x01）。 */
+     * 由 FIX-1/FIX-2 的最小用例覆盖（见下）。 */
     /* P1-2：物理 LCTL 仍按住时，非 Ctrl 键的 release 不得清掉 Ctrl 位 */
     reset_engine();
     (void)pipeline(KC_CAPS, true);
@@ -702,22 +702,43 @@ static void test_caps_ctrl_bitmodel(void) {
     (void)pipeline(KC_RCTL, false);
     (void)pipeline(KC_CAPS, false);
     CHECK(s_mods == 0x00);
-    /* (A) 退出保护：模式内按物理 LCTL 后又按住非 F 键 -> owned 与 phys 同时为真；
-     *     扁平化 exit 守卫会把仍按住的物理位清掉（变异 1 的判别用例）。 */
+    /* ---------- 以下为"变异可检出"的最小用例（审核 FIX-1..4） ---------- */
+    /* FIX-1 退出守卫：**先合成 Ctrl、再按物理 Ctrl**，退出时物理仍按住
+     *        -> owned&LCTL 与 phys_held&LCTL 同时为真。杀 A1/A2/B5。 */
     reset_engine();
     (void)pipeline(KC_CAPS, true);
-    (void)pipeline(KC_LCTL, true);
-    (void)pipeline(KC_A, true);
-    (void)pipeline(KC_CAPS, false);
-    CHECK(s_mods & 0x01);
-    /* (B) owned 闩锁：物理 Ctrl 释放必须让下一个非 F 键重新注册 Ctrl（变异 3 的判别用例）。 */
-    reset_engine();
-    (void)pipeline(KC_CAPS, true);
-    (void)pipeline(KC_A, true);
-    (void)pipeline(KC_LCTL, true);
+    (void)pipeline(KC_A, true);      /* 合成 LCTL，owned=LCTL */
+    (void)pipeline(KC_LCTL, true);   /* 物理 LCTL（共享位） */
+    (void)pipeline(KC_CAPS, false);  /* 退出 */
+    CHECK(s_mods & 0x01);            /* 物理位必须保留 */
     (void)pipeline(KC_LCTL, false);
-    (void)pipeline(KC_B, true);
+    /* FIX-2 release 路：双侧物理 Ctrl（RCTL 先松）后 ctrl_n 归零 -> 物理 LCTL 不得被误清。杀 A6。 */
+    reset_engine();
+    (void)pipeline(KC_CAPS, true);
+    (void)pipeline(KC_LCTL, true);
+    (void)pipeline(KC_RCTL, true);
+    (void)pipeline(KC_RCTL, false);
+    (void)pipeline(KC_A, true);
+    (void)pipeline(KC_A, false);     /* ctrl_n==0 */
     CHECK(s_mods & 0x01);
+    (void)pipeline(KC_LCTL, false);
+    /* FIX-3 合成条件必须尊重物理 Ctrl：只有物理 RCTL 时不得再合成 LCTL。杀 B4/C1。 */
+    reset_engine();
+    (void)pipeline(KC_CAPS, true);
+    (void)pipeline(KC_RCTL, true);
+    (void)pipeline(KC_A, true);
+    CHECK((s_mods & 0x11) == 0x10);  /* 只有物理 RCTL 的位，无合成 LCTL */
+    (void)pipeline(KC_A, false);
+    (void)pipeline(KC_RCTL, false);
+    /* FIX-4 F 键 release 不得动非 F 键的 Ctrl 引用计数。杀 J2。 */
+    reset_engine();
+    (void)pipeline(KC_CAPS, true);
+    (void)pipeline(KC_C, true);      /* 非 F：ctrl_n=1，合成 LCTL */
+    (void)pipeline(KC_1, true);      /* F1：不计引用 */
+    (void)pipeline(KC_1, false);     /* F 键 release 不得减 ctrl_n / 卸 LCTL */
+    CHECK(sim_held(KC_LCTL) && sim_held(KC_C));
+    (void)pipeline(KC_C, false);
+    (void)pipeline(KC_CAPS, false);
     reset_engine();
 }
 
@@ -730,10 +751,20 @@ static void test_caps_overflow_clean(void) {
     int consumed = 0, passed = 0;
     for (int i = 0; i < 13; i++) {
         if (pipeline(many[i], true) == false) consumed++; else passed++;
+        if (i == 12) {
+            /* FIX-5：溢出键（第 13 个）既不注册也不发出（杀 D4/D5：容量被改大时变红） */
+            CHECK(!sim_held(many[12]));
+        }
     }
+    /* FIX-5b：容量边界钉死 —— 第 12 键必须注册、第 13 键必须不注册 */
+    CHECK(sim_held(many[11]) && !sim_held(many[12]));
     CHECK(consumed == 13);   /* 表满前 12 个 + 溢出被吞的第 13 个 */
     CHECK(passed == 0);
-    for (int i = 0; i < 13; i++) (void)pipeline(many[i], false);
+    /* FIX-6：溢出 press 仍登记配对表 -> 其 release 必须被吞（杀 D2c：变 true=孤儿 key-up） */
+    for (int i = 0; i < 13; i++) {
+        const bool pass = pipeline(many[i], false);
+        if (i == 12) CHECK(pass == false);
+    }
     CHECK(pipeline(KC_CAPS, false) == false);
     for (int i = 0; i < 13; i++) CHECK(!sim_held(many[i]));
     CHECK(!sim_held(KC_LCTL));
@@ -809,6 +840,19 @@ static void test_caps_cleanup(void) {
     CHECK(!sim_held(KC_LCTL) && !sim_held((uint16_t)(layer_kc & 0xFF)));
     CHECK(pipeline(layer_kc, false) == true);
     CHECK(!sim_held(KC_LCTL));
+    /* FIX-7：非基础键码（自定义/vendor，0x7E00+）在 Caps 模式内必须**原样放行**且不发 Ctrl+低字节。
+     * 杀 E5（删该豁免时变红）。 */
+    (void)pipeline(layer_kc, false);
+    reset_engine();
+    (void)pipeline(KC_CAPS, true);
+    const uint16_t custom_kc = 0x7E05;   /* QK_KB_* 区 */
+    CHECK(pipeline(custom_kc, true) == true);
+    CHECK(s_mods == 0x00);               /* 不得发出 Ctrl+0x05 */
+    (void)pipeline(custom_kc, false);
+    (void)pipeline(KC_CAPS, false);
+    reset_engine();
+    (void)pipeline(KC_CAPS, true);
+
     /* Caps 的 release：press 被吞时由配对表消费（false），层键放行时透传（true）——
      * 两种都自洽；此处只断言"不残留键、不残留模式" */
     (void)pipeline(KC_CAPS, false);

@@ -669,7 +669,14 @@ static void test_visual_commands(void) {
               KV_LSFT_KC(KV_END), KV_LSFT_KC(KV_DOWN),        /* j：顶行尾 + 整行下扩 */
               KV_LSFT_KC(KV_HOME), KV_LSFT_KC(KV_END), KV_LCTL_KC(KV_C)); /* y：贴行边界后复制 */
 
+    /* FIX-9：普通模式 Shift+G 必须是 Ctrl+End（不得被当成 gg 的 Ctrl+Shift+Home）。杀 H2。 */
+    fresh(); key(KV_G); key(KV_C_G); CHECK_SEQ(KV_LCTL_KC(KV_END));
+
     /* ---- 计数（design §4.9 实现要点 / readme §5） ---- */
+    /* FIX-10：`d` 的后缀计数同样 2 位封顶（234 -> 23）-> 23 次选择 + Ctrl+X = 24 码。杀 I4。 */
+    fresh(); key(KV_D); key(KV_2); key(KV_3); key(KV_4); key(KV_W);
+    CHECK(rec_count() == 24);
+
     /* 上限 2 位：第 3 位起忽略 → 123j ≡ 12j */
     fresh_visual(); key(KV_1); key(KV_2); key(KV_3); key(KV_J);
     CHECK(rec_count() == 12);

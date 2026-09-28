@@ -1036,6 +1036,22 @@ static void test_visual_cancel_myfn_swallow(void) {
     reset_engine();
 }
 
+/* FIX-8：hook 路径（hook_pre/hook_post_myfn）吞键同样必须作废已累计的可视输入。
+ * 杀 F4（删 vim_keymap_common.c 里 hook_process 的作废调用时变红）。 */
+static void test_visual_cancel_hook_swallow(void) {
+    vim_cfg_t cfg = g_cfg;
+    cfg.hook_pre = hook_pre_f1;          /* 消费 F1 的 press */
+    reset_engine();
+    kv_set_mode(KV_MODE_VISUAL);
+    keyrecord_t r = {0};
+    r.event.pressed = true;
+    CHECK(vim_pipeline_process(KC_3, &r, &cfg) == false);
+    CHECK(kv_visual_count_pending() == true);
+    CHECK(vim_pipeline_process(KC_F1, &r, &cfg) == false);   /* 被 hook 吞掉 */
+    CHECK(kv_visual_count_pending() == false);              /* 计数必须已作废 */
+    reset_engine();
+}
+
 /* caps/readme.md + caps/design.md §3: Caps tap keeps the keyboard's existing
  * short-press semantics; Caps hold enters the Caps mode and never changes the
  * vim mode.  (Detailed mapping cases live in test_rgb.c.) */
@@ -1628,6 +1644,7 @@ int main(void) {
     test_vim_set_enabled_callback();
     test_hook_pre_order_and_pairing();
     test_visual_cancel_myfn_swallow();
+    test_visual_cancel_hook_swallow();
     test_caps_mode();
     test_mouse_task_threshold();
     test_mouse_h_release();              /* G5 */
