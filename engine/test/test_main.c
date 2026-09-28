@@ -724,6 +724,9 @@ static void test_visual_line_commands(void) {
     fresh_vline(); key(KV_J);     CHECK_SEQ(KV_LSFT_KC(KV_DOWN), KV_LSFT_KC(KV_END));
     fresh_vline(); key(KV_W);     CHECK_SEQ(KV_LSFT_KC(KV_DOWN), KV_LSFT_KC(KV_END));
     fresh_vline(); key(KV_E);     CHECK_SEQ(KV_LSFT_KC(KV_DOWN), KV_LSFT_KC(KV_END));
+    /* 大写词动作（Ctrl+W/E/B）也走行选整行推进（变异审计 e41 的漏网点） */
+    fresh_vline(); key(KV_C_W);   CHECK_SEQ(KV_LSFT_KC(KV_DOWN), KV_LSFT_KC(KV_END));
+    fresh_vline(); key(KV_C_E);   CHECK_SEQ(KV_LSFT_KC(KV_DOWN), KV_LSFT_KC(KV_END));
     /* 计数 = 一次移动 n 行，而不是 n 次基础序列 */
     fresh_vline(); key(KV_3); key(KV_J);
     CHECK(rec_count() == 4);
@@ -734,6 +737,8 @@ static void test_visual_line_commands(void) {
     CHECK_SEQ(KV_DOWN, KV_HOME, KV_LSFT_KC(KV_UP), KV_LSFT_KC(KV_UP));
     fresh_vline(); key(KV_B);
     CHECK_SEQ(KV_DOWN, KV_HOME, KV_LSFT_KC(KV_UP), KV_LSFT_KC(KV_UP));
+    fresh_vline(); key(KV_C_B);
+    CHECK_SEQ(KV_DOWN, KV_HOME, KV_LSFT_KC(KV_UP), KV_LSFT_KC(KV_UP));
     /* UP 态继续向上：只 Shift+Up */
     fresh_vline(); key(KV_K); rec_start(); key(KV_K); CHECK_SEQ(KV_LSFT_KC(KV_UP));
     /* UP 态向下、off<=0：只 Shift+Down（锚保持 A+1） */
@@ -741,6 +746,29 @@ static void test_visual_line_commands(void) {
     /* UP 态向下、off>0：重锚回 DOWN（A 行首） */
     fresh_vline(); key(KV_K); key(KV_J); rec_start(); key(KV_J);
     CHECK_SEQ(KV_HOME, KV_LSFT_KC(KV_DOWN), KV_LSFT_KC(KV_END));
+    /* off_before==2 时翻转方向（V j j 3k）：重锚 = Up×1, Home, Shift+Up×2（审计 c13） */
+    fresh_vline(); key(KV_J); key(KV_J); rec_start(); key(KV_3); key(KV_K);
+    CHECK_SEQ(KV_UP, KV_HOME, KV_LSFT_KC(KV_UP), KV_LSFT_KC(KV_UP));
+    /* off==2 时按 gg（V j j gg）：Up×1, Home, Ctrl+Shift+Home（审计 c26） */
+    fresh_vline(); key(KV_J); key(KV_J); rec_start(); key(KV_G); key(KV_G);
+    CHECK_SEQ(KV_UP, KV_HOME, KV_CS(KV_HOME));
+    /* UP 态按 gg（V k gg）：锚已在 A+1 行首，直接 Ctrl+Shift+Home（审计 e50） */
+    fresh_vline(); key(KV_K); rec_start(); key(KV_G); key(KV_G);
+    CHECK_SEQ(KV_CS(KV_HOME));
+    /* UP 态按 G（V k G）：End + Down×1 + Home + Ctrl+Shift+End（审计 e53） */
+    fresh_vline(); key(KV_K); rec_start(); key(KV_C_G);
+    CHECK_SEQ(KV_END, KV_DOWN, KV_HOME, KV_CS(KV_END));
+    /* G 之后必须清 s_vl_up（否则 abs 路径会按"上边界"用 Shift+Home）（审计 e56） */
+    fresh_vline(); key(KV_K); key(KV_C_G); rec_start(); key(KV_K);
+    CHECK_SEQ(KV_LSFT_KC(KV_UP), KV_LSFT_KC(KV_END));
+    /* abs 之后必须尊重计数（V G 5k）：Shift+Up×5 + Shift+End（审计 e17） */
+    fresh_vline(); key(KV_C_G); rec_start(); key(KV_5); key(KV_K);
+    CHECK(rec_count() == 6);
+    CHECK(rec_at(0) == KV_LSFT_KC(KV_UP) && rec_at(4) == KV_LSFT_KC(KV_UP) &&
+          rec_at(5) == KV_LSFT_KC(KV_END));
+    /* UP→DOWN 重锚后必须清 s_vl_up：V k j j 之后再 j 应走 DOWN 态直接扩展（审计 e28） */
+    fresh_vline(); key(KV_K); key(KV_J); key(KV_J); rec_start(); key(KV_J);
+    CHECK_SEQ(KV_LSFT_KC(KV_DOWN), KV_LSFT_KC(KV_END));
     /* DOWN 态向上、off>=0：只 Shift+Up + Shift+End */
     fresh_vline(); key(KV_J); rec_start(); key(KV_K);
     CHECK_SEQ(KV_LSFT_KC(KV_UP), KV_LSFT_KC(KV_END));
@@ -802,6 +830,16 @@ static void test_visual_line_commands(void) {
     CHECK(kv_get_mode() == KV_MODE_VISUAL_LINE);
     fresh_vline();  key(KV_V);   CHECK(rec_count() == 0); CHECK(kv_get_mode() == KV_MODE_VISUAL);
     fresh_vline();  key(KV_C_V); CHECK(rec_count() == 0); CHECK(kv_get_mode() == KV_MODE_VISUAL_LINE);
+    /* v/V 往返必须清行选状态：否则上一轮的 off 会残留（审计 e68）。
+     * V j（off=1）-> v -> V 之后按 k，应重新从 off=0 翻转（Down,Home,Shift+Up×2），
+     * 而不是把残留 off=1 当成"仍在 A 下方"（Shift+Up,Shift+End）。 */
+    fresh_vline(); key(KV_J); key(KV_V); key(KV_C_V); rec_start(); key(KV_K);
+    CHECK_SEQ(KV_DOWN, KV_HOME, KV_LSFT_KC(KV_UP), KV_LSFT_KC(KV_UP));
+    /* kv_set_mode 也必须清行选状态（审计 e73）：否则 off 会跨模式设置残留 */
+    fresh_vline(); key(KV_J);                       /* off=1 */
+    kv_set_mode(KV_MODE_VISUAL_LINE);               /* 必须重置 */
+    rec_start(); key(KV_K);
+    CHECK_SEQ(KV_DOWN, KV_HOME, KV_LSFT_KC(KV_UP), KV_LSFT_KC(KV_UP));
 }
 
 /* command.c §4.9 — VISUAL_LINE 发射器直接覆盖（每条分支都要有序列断言，
@@ -820,8 +858,19 @@ static void test_vline_emit_map(void) {
     CHECK_SEQ(KV_DOWN, KV_HOME, KV_LSFT_KC(KV_UP), KV_LSFT_KC(KV_UP));
     rec_start(); kv_emit_vline_reanchor(true, 3, -2); flush_emit();
     CHECK_SEQ(KV_UP, KV_UP, KV_HOME, KV_LSFT_KC(KV_UP), KV_LSFT_KC(KV_UP), KV_LSFT_KC(KV_UP));
+    /* off_before==2 是 `>1` 分支的最小非零计数（变异审计 c13 的漏网点） */
+    rec_start(); kv_emit_vline_reanchor(true, 2, -1); flush_emit();
+    CHECK_SEQ(KV_UP, KV_HOME, KV_LSFT_KC(KV_UP), KV_LSFT_KC(KV_UP));
+    /* off_before==1：`>1` 与 `<1` 都不成立 → 不动光标，只 Home + Shift+Up×(1−off_after) */
+    rec_start(); kv_emit_vline_reanchor(true, 1, -1); flush_emit();
+    CHECK_SEQ(KV_HOME, KV_LSFT_KC(KV_UP), KV_LSFT_KC(KV_UP));
     rec_start(); kv_emit_vline_gg(false, 0); flush_emit();
     CHECK_SEQ(KV_DOWN, KV_HOME, KV_CS(KV_HOME));
+    /* off==2 是 `off>1` 分支的最小非零计数（变异审计 c26 的漏网点） */
+    rec_start(); kv_emit_vline_gg(false, 2); flush_emit();
+    CHECK_SEQ(KV_UP, KV_HOME, KV_CS(KV_HOME));
+    rec_start(); kv_emit_vline_gg(false, 1); flush_emit();
+    CHECK_SEQ(KV_HOME, KV_CS(KV_HOME));
     rec_start(); kv_emit_vline_gg(true, -3); flush_emit(); CHECK_SEQ(KV_CS(KV_HOME));
     rec_start(); kv_emit_vline_G(false, 0); flush_emit(); CHECK_SEQ(KV_CS(KV_END));
     rec_start(); kv_emit_vline_G(true, -2); flush_emit();
