@@ -99,44 +99,76 @@ void kv_emit_indent_line(kv_keycode_t ang, int n) {
     kv_emit_tap(ang == KV_C_GT ? KV_TAB : KV_LSFT_KC(KV_TAB));
 }
 
-/* design §4.9 VISUAL_LINE — 进入时选中"整行"：先 Home 回行首，再 Shift+End 选到行尾。
- * （只发 Shift+End 只能选"光标处→行尾"，前半行会漏。） */
+/* design §4.9 VISUAL_LINE（v2）—— 与真实 Vim 行选对齐，动作方向无关。
+ * 旧版"锚点固定在被选首行行首 + 字符级 Shift 扩展"在活动端越过锚点（k/b/gg）时会退化成
+ * "只选一个换行"，动作前的 Shift+Home/End 又把范围缩错（V k d 拼接两行、V gg y 丢首尾正文，
+ * 属数据损坏），已废弃；现在由引擎自记行偏移 off 重建整行选区。 */
+
+/* 进入行选：Home + Shift+End = 选中整行（只发 Shift+End 会漏光标前的半行）。 */
 void kv_emit_visual_line_enter(void) {
     kv_emit_tap(KV_HOME);
     kv_emit_tap(KV_LSFT_KC(KV_END));
 }
 
-/* 行选动作前的锚点：只回行首。y/d/c 自身的 SHIFT+END 与之配对即选中整行。 */
-void kv_emit_visual_line_anchor(void) {
-    // 必须用 Shift+Home（"扩展选区到行首"）：裸 Home 会**折叠**已扩展的多行选区，
-    // 导致 `V j y` 只复制光标所在行（用户实测报告的缺陷）。
-    kv_emit_tap(KV_LSFT_KC(KV_HOME));
+/* 纵向扩展 n 行（活动端随宿主移动 n 行）。 */
+void kv_emit_vline_move(bool up, int n) {
+    if (n < 1) n = 1;
+    kv_emit_taps(up ? KV_LSFT_KC(KV_UP) : KV_LSFT_KC(KV_DOWN), n);
 }
 
-/* design §4.9 VISUAL_LINE — 行选近似：移动按"整行"推进，因此与 VISUAL 的输出不同。
- * 进入 V 由引擎另发 SHIFT+END 锚定行尾（见 engine.c）。 */
-void kv_emit_visual_line_motion(kv_keycode_t kc) {
-    /* 先 Shift+End 把光标顶到**行尾**再纵向扩展：宿主的 Shift+↓ 只下移一行、列不变，
-     * 若直接发 Shift+↓，选区只会到下一行的"原光标列"，长行会被漏掉（用户实测报告）。 */
-    const bool vmove = (kc == KV_J || kc == KV_K || kc == KV_W || kc == KV_E || kc == KV_B ||
-                        kc == KV_C_W || kc == KV_C_E || kc == KV_C_B);
-    if (vmove) kv_emit_tap(KV_LSFT_KC(KV_END));
-    switch (kc) {
-        case KV_J: case KV_W: case KV_E:              /* 整行向下 */
-        case KV_C_W: case KV_C_E:
-            kv_emit_tap(KV_LSFT_KC(KV_DOWN));  break;
-        case KV_K: case KV_B: case KV_C_B:            /* 整行向上 */
-            kv_emit_tap(KV_LSFT_KC(KV_UP));    break;
-        case KV_0: case KV_C_CARET:                   /* 行首（按住选区，故 Shift+Home） */
-            kv_emit_tap(KV_LSFT_KC(KV_HOME));  break;
-        case KV_C_DLR:                                /* 行尾 */
-            kv_emit_tap(KV_LSFT_KC(KV_END));   break;
-        case KV_C_G:                                  /* 文末（gg 由引擎单独处理） */
-            kv_emit_tap(KV_CS(KV_END));        break;
-        case KV_H:                                    /* 边界微调：字符级 */
-            kv_emit_tap(KV_LSFT_KC(KV_LEFT));  break;
-        case KV_L:
-            kv_emit_tap(KV_LSFT_KC(KV_RGHT));  break;
+/* 把活动端顶到所在行行尾：宿主的 Shift+↓ 只下移一行、列不变，不补 Shift+End 时
+ * 目标行更长就只选到"源行末列"，长行末字符会漏（用户实测报告）。 */
+void kv_emit_vline_move_tail(void) { kv_emit_tap(KV_LSFT_KC(KV_END)); }
+
+/* 方向翻转时重建锚点（只在翻转时发生，键数受当前 |off| 限制）：
+ *   to_up=true  ：锚移到 (A+1) 行首 —— Down×(1−off) + Home + Shift+Up×(1−off)
+ *   to_up=false ：锚移到 A 行首     —— Up×off + Home + Shift+Down×off + Shift+End
+ * off 为切换**之后**的光标行偏移。 */
+void kv_emit_vline_reanchor(bool to_up, int off) {
+    if (to_up) {
+        const int k = 1 - off;              /* off<0 → k≥2 */
+        kv_emit_taps(KV_DOWN, k);
+        kv_emit_tap(KV_HOME);
+        kv_emit_taps(KV_LSFT_KC(KV_UP), k);
+    } else {
+        if (off > 0) kv_emit_taps(KV_UP, off);
+        kv_emit_tap(KV_HOME);
+        if (off > 0) kv_emit_taps(KV_LSFT_KC(KV_DOWN), off);
+        kv_emit_tap(KV_LSFT_KC(KV_END));
+    }
+}
+
+/* gg：范围 = [文首, A]。UP 态锚已在 (A+1) 行首，直接 Ctrl+Shift+Home；
+ * DOWN 态先把光标移到 (A+1) 行首再扩展。 */
+void kv_emit_vline_gg(bool dir_up, int off) {
+    if (!dir_up) {
+        if (off > 1)      kv_emit_taps(KV_UP, off - 1);
+        else if (off < 1) kv_emit_taps(KV_DOWN, 1 - off);
+        kv_emit_tap(KV_HOME);
+    }
+    kv_emit_tap(KV_CS(KV_HOME));
+}
+
+/* G：范围 = [A, 文末]。UP 态先把光标移回 A 行首（锚随之落到 A 行首）再扩展。 */
+void kv_emit_vline_G(bool dir_up, int off) {
+    if (dir_up) {
+        kv_emit_tap(KV_END);
+        if (off < 0) kv_emit_taps(KV_DOWN, -off);
+        kv_emit_tap(KV_HOME);
+    }
+    kv_emit_tap(KV_CS(KV_END));
+}
+
+/* 行选动作：先把"行尾换行"纳入选区（仅 DOWN 态需要），再执行宿主剪贴板操作。
+ * 与真实 Vim 一致：y=复制、d/x=删除整行、c/s=删整行+留一个空行+Insert（二者等价）、
+ * p=用寄存器覆盖选区。Ctrl+C 后宿主通常保留高亮选区，故补 Esc 取消（Vim 也取消）。 */
+void kv_emit_vline_action(kv_keycode_t op, bool dir_up) {
+    if (!dir_up) kv_emit_tap(KV_LSFT_KC(KV_RGHT));   /* 纳入行尾换行 → linewise */
+    switch (op) {
+        case KV_Y: kv_emit_tap(KV_LCTL_KC(KV_C)); kv_emit_tap(KV_ESC); break;
+        case KV_D: kv_emit_tap(KV_LCTL_KC(KV_X)); break;
+        case KV_C: kv_emit_tap(KV_LCTL_KC(KV_X)); kv_emit_tap(KV_LSFT_KC(KV_ENT)); break;
+        case KV_P: kv_emit_tap(KV_LCTL_KC(KV_V)); kv_emit_tap(KV_ESC); break;
         default: break;
     }
 }

@@ -32,18 +32,15 @@ void kv_emit_indent_line(kv_keycode_t ang, int n);
 /* Emit a visual-mode motion: extend the selection by one step. */
 void kv_emit_visual_motion(kv_keycode_t kc);
 
-/* Emit a visual-LINE (行选) motion: extend the selection by whole lines
- * (design §4.9 VISUAL_LINE — must differ observably from VISUAL). */
-void kv_emit_visual_line_motion(kv_keycode_t kc);
-
-/* Entering visual-LINE: select the whole current line (design §4.9 —
- * HOME then SHIFT+END; only SHIFT+END would miss the part before the cursor). */
-void kv_emit_visual_line_enter(void);
-
-/* Anchor a visual-LINE action at column 0 (HOME only).  y/d/c already end with
- * their own SHIFT+END, so the pair selects the whole line. */
-void kv_emit_visual_line_anchor(void);
-
+/* VISUAL_LINE（design §4.9 v2）：方向无关的按行语义（对齐真实 Vim）。
+ * off = 光标行 − 锚行 A（A = 按 V 时所在行）；DOWN 态锚在 A 行首、UP 态锚在 A+1 行首。 */
+void kv_emit_visual_line_enter(void);              /* Home, Shift+End = 选中整行 */
+void kv_emit_vline_move(bool up, int n);           /* Shift+Up/Down × n */
+void kv_emit_vline_move_tail(void);                /* Shift+End：活动端顶到行尾 */
+void kv_emit_vline_reanchor(bool to_up, int off);  /* 方向翻转时重建锚点 */
+void kv_emit_vline_gg(bool dir_up, int off);
+void kv_emit_vline_G(bool dir_up, int off);
+void kv_emit_vline_action(kv_keycode_t op, bool dir_up); /* op ∈ {KV_Y,KV_D,KV_C,KV_P} */
 /* Single-key editing commands. */
 void kv_emit_delete_char(void);     /* x  */
 void kv_emit_backspace_char(void);  /* X  */

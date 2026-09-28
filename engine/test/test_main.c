@@ -566,12 +566,10 @@ static void test_count_drop(void) {
     /* V 进入行选：Home + Shift+End = 选中"整行"（design §4.9 VISUAL_LINE） */
     CHECK_SEQ(KV_HOME, KV_LSFT_KC(KV_END)); CHECK(kv_get_mode() == KV_MODE_VISUAL_LINE);
 
-    /* 行选下的计数：3j 展开为 3 次整行推进 */
-    /* V 进入会发 Home+Shift+End；rec_start 后只统计 3j 的三次行推进 */
+    /* 行选下的计数：3j 是**一次移动 3 行**（Shift+Down×3 + Shift+End），
+     * 不是 3 次基础序列（2026 重写：旧的 3×[Shift+End,Shift+Down] 会漏长行末字符）。 */
     fresh(); key(KV_C_V); rec_start(); key(KV_3); key(KV_J);
-    CHECK_SEQ(KV_LSFT_KC(KV_END), KV_LSFT_KC(KV_DOWN),
-              KV_LSFT_KC(KV_END), KV_LSFT_KC(KV_DOWN),
-              KV_LSFT_KC(KV_END), KV_LSFT_KC(KV_DOWN));
+    CHECK_SEQ(KV_LSFT_KC(KV_DOWN), KV_LSFT_KC(KV_DOWN), KV_LSFT_KC(KV_DOWN), KV_LSFT_KC(KV_END));
     CHECK(kv_get_mode() == KV_MODE_VISUAL_LINE);
 
     /* single-key commands behave exactly as without a count */
@@ -660,14 +658,16 @@ static void test_visual_commands(void) {
     CHECK_SEQ(KV_LSFT_KC(KV_RGHT), KV_DEL);
     CHECK(kv_get_mode() == KV_MODE_INSERT);
 
-    /* 用户实测缺陷回归：行选多行时动作前的锚点必须是 Shift+Home（扩展、不折叠），
-     * 否则 `V j y` 只会复制光标所在行。 */
+    /* 用户实测缺陷回归（2026 重写）：`V j y` 必须复制**完整两整行**。
+     * 现在由引擎自记行偏移重建选区：j = Shift+Down + Shift+End；
+     * y 在 DOWN 态先 Shift+Right 把行尾换行纳入（→ linewise 寄存器），再 Ctrl+C，
+     * 最后补 Esc 取消宿主残留选区（否则下一个按键会替换刚复制的内容）。 */
     fresh(); key(KV_C_V);                 /* 进入 VISUAL_LINE：Home,Shift+End */
-    key(KV_J);                            /* 扩展一行 */
-    key(KV_Y);                            /* 复制：Shift+Home,Shift+End,Ctrl+C */
+    key(KV_J);                            /* 扩展一行：Shift+Down,Shift+End */
+    key(KV_Y);                            /* 复制：Shift+Right,Ctrl+C,Esc */
     CHECK_SEQ(KV_HOME, KV_LSFT_KC(KV_END),                    /* 进入：整行 */
-              KV_LSFT_KC(KV_END), KV_LSFT_KC(KV_DOWN),        /* j：顶行尾 + 整行下扩 */
-              KV_LSFT_KC(KV_HOME), KV_LSFT_KC(KV_END), KV_LCTL_KC(KV_C)); /* y：贴行边界后复制 */
+              KV_LSFT_KC(KV_DOWN), KV_LSFT_KC(KV_END),        /* j：下移一行 + 顶行尾 */
+              KV_LSFT_KC(KV_RGHT), KV_LCTL_KC(KV_C), KV_ESC); /* y：纳入换行 + 复制 + 取消选区 */
 
     /* FIX-9：普通模式 Shift+G 必须是 Ctrl+End（不得被当成 gg 的 Ctrl+Shift+Home）。杀 H2。 */
     fresh(); key(KV_G); key(KV_C_G); CHECK_SEQ(KV_LCTL_KC(KV_END));
@@ -696,7 +696,8 @@ static void test_visual_commands(void) {
     fresh_visual(); key(KV_G); key(KV_G); CHECK_SEQ(KV_CS(KV_HOME));
     /* gG（Shift+G）不是 gg：按非法键吞掉，0 输出 */
     fresh_visual(); key(KV_G); key(KV_C_G); CHECK(rec_count() == 0);
-    fresh_vline();  key(KV_G); key(KV_G); CHECK_SEQ(KV_CS(KV_HOME));
+    /* 行选 gg：DOWN 态先把光标移到 (A+1) 行首再扩展（范围 = [文首, A]） */
+    fresh_vline();  key(KV_G); key(KV_G); CHECK_SEQ(KV_DOWN, KV_HOME, KV_CS(KV_HOME));
     /* G 丢弃计数（readme §5）：3G = 1 次 Ctrl+Shift+End */
     fresh_visual(); key(KV_3); key(KV_C_G); CHECK_SEQ(KV_CS(KV_END));
     /* 计数不跨模式残留：3 后 Esc 退出，再进可视按 j 只推进 1 次 */
@@ -713,39 +714,115 @@ static void test_visual_commands(void) {
     CHECK(rec_count() == 0); CHECK(kv_get_mode() == KV_MODE_VISUAL);
 }
 
-/* design §4.9 — VISUAL_LINE 行选近似：进入锚行尾，移动按整行推进（与 VISUAL 不同）。 */
+/* design §4.9 — VISUAL_LINE：方向无关的按行语义（对齐真实 Vim，2026 重写）。
+ * 期望序列均由真实 Vim（vim.tiny 9.1）实测行为推导，见 changes.md §7。 */
 static void test_visual_line_commands(void) {
-    fresh_vline(); CHECK(kv_get_mode() == KV_MODE_VISUAL_LINE);
-    key(KV_J); CHECK_SEQ(KV_LSFT_KC(KV_END), KV_LSFT_KC(KV_DOWN)); /* 先顶行尾再整行下扩 */
-    fresh_vline(); key(KV_K);     CHECK_SEQ(KV_LSFT_KC(KV_END), KV_LSFT_KC(KV_UP));
-    fresh_vline(); key(KV_W);     CHECK_SEQ(KV_LSFT_KC(KV_END), KV_LSFT_KC(KV_DOWN));
-    fresh_vline(); key(KV_E);     CHECK_SEQ(KV_LSFT_KC(KV_END), KV_LSFT_KC(KV_DOWN));
-    fresh_vline(); key(KV_B);     CHECK_SEQ(KV_LSFT_KC(KV_END), KV_LSFT_KC(KV_UP));
-    fresh_vline(); key(KV_H);     CHECK_SEQ(KV_LSFT_KC(KV_LEFT));  /* 边界微调 */
-    fresh_vline(); key(KV_L);     CHECK_SEQ(KV_LSFT_KC(KV_RGHT));
-    fresh_vline(); key(KV_0);     CHECK_SEQ(KV_LSFT_KC(KV_HOME));  /* 行首（按住选区） */
-    fresh_vline(); key(KV_C_CARET); CHECK_SEQ(KV_LSFT_KC(KV_HOME));
-    fresh_vline(); key(KV_C_DLR); CHECK_SEQ(KV_LSFT_KC(KV_END));
-    fresh_vline(); key(KV_C_G);   CHECK_SEQ(KV_CS(KV_END));
-    /* 进入 V（走解析器）：Home + Shift+End = 整行 */
-    fresh(); key(KV_C_V); CHECK_SEQ(KV_HOME, KV_LSFT_KC(KV_END)); CHECK(kv_get_mode() == KV_MODE_VISUAL_LINE);
-    /* 动作前只补 Home 锚行首（y/d/c 自身发 Shift+End，二者配对即整行）；动作后退出可视。
-     * 序列 = Home,<动作自带 Shift+End>,<动作>。 */
+    /* 进入（走解析器）：Home + Shift+End = 整行；off=0、DOWN 态 */
+    fresh(); key(KV_C_V); CHECK_SEQ(KV_HOME, KV_LSFT_KC(KV_END));
+    CHECK(kv_get_mode() == KV_MODE_VISUAL_LINE);
+    /* 向下：先 Shift+Down 再 Shift+End（顺序反了会漏长行末字符 —— 用户实测报告） */
+    fresh_vline(); key(KV_J);     CHECK_SEQ(KV_LSFT_KC(KV_DOWN), KV_LSFT_KC(KV_END));
+    fresh_vline(); key(KV_W);     CHECK_SEQ(KV_LSFT_KC(KV_DOWN), KV_LSFT_KC(KV_END));
+    fresh_vline(); key(KV_E);     CHECK_SEQ(KV_LSFT_KC(KV_DOWN), KV_LSFT_KC(KV_END));
+    /* 计数 = 一次移动 n 行，而不是 n 次基础序列 */
+    fresh_vline(); key(KV_3); key(KV_J);
+    CHECK(rec_count() == 4);
+    CHECK(rec_at(0) == KV_LSFT_KC(KV_DOWN) && rec_at(1) == KV_LSFT_KC(KV_DOWN) &&
+          rec_at(2) == KV_LSFT_KC(KV_DOWN) && rec_at(3) == KV_LSFT_KC(KV_END));
+    /* 向上（方向翻转 → 重锚到 A+1 行首，选区含 A 行换行） */
+    fresh_vline(); key(KV_K);
+    CHECK_SEQ(KV_LSFT_KC(KV_UP), KV_DOWN, KV_DOWN, KV_HOME, KV_LSFT_KC(KV_UP), KV_LSFT_KC(KV_UP));
+    fresh_vline(); key(KV_B);
+    CHECK_SEQ(KV_LSFT_KC(KV_UP), KV_DOWN, KV_DOWN, KV_HOME, KV_LSFT_KC(KV_UP), KV_LSFT_KC(KV_UP));
+    /* UP 态继续向上：只 Shift+Up */
+    fresh_vline(); key(KV_K); rec_start(); key(KV_K); CHECK_SEQ(KV_LSFT_KC(KV_UP));
+    /* UP 态向下、off<=0：只 Shift+Down（锚保持 A+1） */
+    fresh_vline(); key(KV_K); rec_start(); key(KV_J); CHECK_SEQ(KV_LSFT_KC(KV_DOWN));
+    /* UP 态向下、off>0：重锚回 DOWN（A 行首） */
+    fresh_vline(); key(KV_K); key(KV_J); rec_start(); key(KV_J);
+    CHECK_SEQ(KV_LSFT_KC(KV_DOWN), KV_UP, KV_HOME, KV_LSFT_KC(KV_DOWN), KV_LSFT_KC(KV_END));
+    /* DOWN 态向上、off>=0：只 Shift+Up + Shift+End */
+    fresh_vline(); key(KV_J); rec_start(); key(KV_K);
+    CHECK_SEQ(KV_LSFT_KC(KV_UP), KV_LSFT_KC(KV_END));
+    /* h/l/0/^/$ 不改行范围（真实 Vim 亦然）：0 输出 */
+    fresh_vline(); key(KV_H);       CHECK(rec_count() == 0);
+    fresh_vline(); key(KV_L);       CHECK(rec_count() == 0);
+    fresh_vline(); key(KV_0);       CHECK(rec_count() == 0);
+    fresh_vline(); key(KV_C_CARET); CHECK(rec_count() == 0);
+    fresh_vline(); key(KV_C_DLR);   CHECK(rec_count() == 0);
+    /* 动作（DOWN 态补 Shift+Right 把行尾换行纳入 → linewise 寄存器） */
     fresh_vline(); key(KV_Y);
-    CHECK_SEQ(KV_LSFT_KC(KV_HOME), KV_LSFT_KC(KV_END), KV_LCTL_KC(KV_C));
-    CHECK(kv_get_mode() == KV_MODE_NORMAL);          /* y 后回 Normal */
+    CHECK_SEQ(KV_LSFT_KC(KV_RGHT), KV_LCTL_KC(KV_C), KV_ESC);
+    CHECK(kv_get_mode() == KV_MODE_NORMAL);
     fresh_vline(); key(KV_D);
-    CHECK_SEQ(KV_LSFT_KC(KV_HOME), KV_LSFT_KC(KV_END), KV_LCTL_KC(KV_X));
-    CHECK(kv_get_mode() == KV_MODE_NORMAL);          /* d 后回 Normal */
-    fresh_vline(); key(KV_P);     CHECK_SEQ(KV_LCTL_KC(KV_V));
-    CHECK(kv_get_mode() == KV_MODE_NORMAL);          /* p 后回 Normal */
+    CHECK_SEQ(KV_LSFT_KC(KV_RGHT), KV_LCTL_KC(KV_X));
+    CHECK(kv_get_mode() == KV_MODE_NORMAL);
+    fresh_vline(); key(KV_X);
+    CHECK_SEQ(KV_LSFT_KC(KV_RGHT), KV_LCTL_KC(KV_X));
+    CHECK(kv_get_mode() == KV_MODE_NORMAL);
     fresh_vline(); key(KV_C);
-    CHECK_SEQ(KV_LSFT_KC(KV_HOME), KV_LSFT_KC(KV_END), KV_LCTL_KC(KV_X));
+    CHECK_SEQ(KV_LSFT_KC(KV_RGHT), KV_LCTL_KC(KV_X), KV_LSFT_KC(KV_ENT));
     CHECK(kv_get_mode() == KV_MODE_INSERT);
+    /* s ≡ c（真实 Vim：V s 与 V c 完全等价：删整行 + 留一个空行 + Insert） */
     fresh_vline(); key(KV_S);
-    CHECK_SEQ(KV_LSFT_KC(KV_HOME), KV_LSFT_KC(KV_RGHT), KV_DEL); /* s 无自带 Shift+End */
+    CHECK_SEQ(KV_LSFT_KC(KV_RGHT), KV_LCTL_KC(KV_X), KV_LSFT_KC(KV_ENT));
     CHECK(kv_get_mode() == KV_MODE_INSERT);
-    fresh_vline(); key(KV_ESC); CHECK(kv_get_mode() == KV_MODE_NORMAL);
+    fresh_vline(); key(KV_P);
+    CHECK_SEQ(KV_LSFT_KC(KV_RGHT), KV_LCTL_KC(KV_V), KV_ESC);
+    CHECK(kv_get_mode() == KV_MODE_NORMAL);
+    /* UP 态动作不补 Shift+Right（选区已含换行） */
+    fresh_vline(); key(KV_K); rec_start(); key(KV_Y);
+    CHECK_SEQ(KV_LCTL_KC(KV_C), KV_ESC);
+    /* 多行复制：V j y */
+    fresh_vline(); key(KV_J); rec_start(); key(KV_Y);
+    CHECK_SEQ(KV_LSFT_KC(KV_RGHT), KV_LCTL_KC(KV_C), KV_ESC);
+    /* G / gg */
+    fresh_vline(); key(KV_C_G); CHECK_SEQ(KV_CS(KV_END));
+    fresh_vline(); key(KV_C_G); rec_start(); key(KV_Y);
+    CHECK_SEQ(KV_LSFT_KC(KV_RGHT), KV_LCTL_KC(KV_C), KV_ESC);
+    fresh_vline(); key(KV_G); key(KV_G); CHECK_SEQ(KV_DOWN, KV_HOME, KV_CS(KV_HOME));
+    fresh_vline(); key(KV_G); key(KV_G); rec_start(); key(KV_Y);
+    CHECK_SEQ(KV_LCTL_KC(KV_C), KV_ESC);
+    /* 用户 Esc：取消宿主残留选区（真实 Vim 也取消） */
+    fresh_vline(); key(KV_ESC); CHECK_SEQ(KV_ESC);
+    CHECK(kv_get_mode() == KV_MODE_NORMAL);
+    /* 非法键：吞掉、留在 VISUAL_LINE、无 pending */
+    fresh_vline(); key(KV_C_I);
+    CHECK(rec_count() == 0); CHECK(kv_get_mode() == KV_MODE_VISUAL_LINE); CHECK(kv_pending() == false);
+    /* v / V 互相切换（真实 Vim） */
+    fresh_visual(); key(KV_C_V); CHECK_SEQ(KV_HOME, KV_LSFT_KC(KV_END));
+    CHECK(kv_get_mode() == KV_MODE_VISUAL_LINE);
+    fresh_vline();  key(KV_V);   CHECK(rec_count() == 0); CHECK(kv_get_mode() == KV_MODE_VISUAL);
+    fresh_vline();  key(KV_C_V); CHECK(rec_count() == 0); CHECK(kv_get_mode() == KV_MODE_VISUAL_LINE);
+}
+
+/* command.c §4.9 — VISUAL_LINE 发射器直接覆盖（每条分支都要有序列断言，
+ * 否则方向/键码写反不会报警 —— 第 6 轮变异审核的漏网点）。 */
+static void test_vline_emit_map(void) {
+    rec_start(); kv_emit_visual_line_enter(); flush_emit();
+    CHECK_SEQ(KV_HOME, KV_LSFT_KC(KV_END));
+    rec_start(); kv_emit_vline_move(false, 1); flush_emit(); CHECK_SEQ(KV_LSFT_KC(KV_DOWN));
+    rec_start(); kv_emit_vline_move(true, 2);  flush_emit();
+    CHECK_SEQ(KV_LSFT_KC(KV_UP), KV_LSFT_KC(KV_UP));
+    rec_start(); kv_emit_vline_move_tail();    flush_emit(); CHECK_SEQ(KV_LSFT_KC(KV_END));
+    rec_start(); kv_emit_vline_reanchor(false, 2); flush_emit();
+    CHECK_SEQ(KV_UP, KV_UP, KV_HOME, KV_LSFT_KC(KV_DOWN), KV_LSFT_KC(KV_DOWN), KV_LSFT_KC(KV_END));
+    rec_start(); kv_emit_vline_reanchor(true, -1); flush_emit();
+    CHECK_SEQ(KV_DOWN, KV_DOWN, KV_HOME, KV_LSFT_KC(KV_UP), KV_LSFT_KC(KV_UP));
+    rec_start(); kv_emit_vline_gg(false, 0); flush_emit();
+    CHECK_SEQ(KV_DOWN, KV_HOME, KV_CS(KV_HOME));
+    rec_start(); kv_emit_vline_gg(true, -3); flush_emit(); CHECK_SEQ(KV_CS(KV_HOME));
+    rec_start(); kv_emit_vline_G(false, 0); flush_emit(); CHECK_SEQ(KV_CS(KV_END));
+    rec_start(); kv_emit_vline_G(true, -2); flush_emit();
+    CHECK_SEQ(KV_END, KV_DOWN, KV_DOWN, KV_HOME, KV_CS(KV_END));
+    rec_start(); kv_emit_vline_action(KV_Y, false); flush_emit();
+    CHECK_SEQ(KV_LSFT_KC(KV_RGHT), KV_LCTL_KC(KV_C), KV_ESC);
+    rec_start(); kv_emit_vline_action(KV_D, false); flush_emit();
+    CHECK_SEQ(KV_LSFT_KC(KV_RGHT), KV_LCTL_KC(KV_X));
+    rec_start(); kv_emit_vline_action(KV_C, true); flush_emit();
+    CHECK_SEQ(KV_LCTL_KC(KV_X), KV_LSFT_KC(KV_ENT));
+    rec_start(); kv_emit_vline_action(KV_P, true); flush_emit();
+    CHECK_SEQ(KV_LCTL_KC(KV_V), KV_ESC);
 }
 
 /* command.c §4.8 — direct mapping coverage of kv_emit_visual_motion.
@@ -976,6 +1053,7 @@ int main(void) {
     test_z_prefix();
     test_visual_commands();
     test_visual_line_commands();
+    test_vline_emit_map();
     test_visual_motion_map();
     test_command_guards();
     test_classify_coverage();

@@ -30,6 +30,49 @@ typedef enum { R_CONSUMED = 0, R_PASSTHROUGH, R_REIDENTIFY } kv_feed_t;
 static uint8_t s_visual_digits;
 static bool    s_visual_gp;
 
+/* VISUAL_LINE 行选状态（design §4.9 v2）：off = 光标行 − 锚行 A（A = 按 V 时所在行）
+ *   s_vl_up  : true = UP 态（锚在 A+1 行首）／false = DOWN 态（锚在 A 行首）
+ *   s_vl_abs : G/gg 之后行号未知，动作不再重建、只靠当前选区 */
+static int  s_vl_off;
+static bool s_vl_up;
+static bool s_vl_abs;
+
+static void vline_reset(void) { s_vl_off = 0; s_vl_up = false; s_vl_abs = false; }
+
+/* 行选移动：把 off 从 s_vl_off 变成 s_vl_off±n，并让宿主字符选区**始终覆盖整行**。
+ * 重锚只在方向翻转时发生（键数受当前 |off| 限制），不做全量重建。 */
+static void vline_move(bool up, int n) {
+    if (s_vl_abs) {                       /* 行号未知：只做纵向扩展 */
+        kv_emit_vline_move(up, n);
+        kv_emit_vline_move_tail();
+        return;
+    }
+    const int off = s_vl_off + (up ? -n : n);
+    if (!up && !s_vl_up) {                /* DOWN 态向下：直接扩展 */
+        kv_emit_vline_move(false, n);
+        kv_emit_vline_move_tail();
+    } else if (!up) {                     /* UP 态向下：越过 A 后重锚回 DOWN */
+        kv_emit_vline_move(false, n);
+        if (off > 0) { kv_emit_vline_reanchor(false, off); s_vl_up = false; }
+    } else if (s_vl_up) {                 /* UP 态向上：直接扩展 */
+        kv_emit_vline_move(true, n);
+    } else {                              /* DOWN 态向上：越过 A 后重锚到 UP */
+        kv_emit_vline_move(true, n);
+        if (off >= 0) kv_emit_vline_move_tail();
+        else { kv_emit_vline_reanchor(true, off); s_vl_up = true; }
+    }
+    s_vl_off = off;
+}
+
+/* 行选内的移动键 → 纵向行数；h/l/0/^/$ 不改行范围（真实 Vim 亦然），无输出。 */
+static void vline_motion(kv_keycode_t kc, int n) {
+    switch (kc) {
+        case KV_J: case KV_W: case KV_E: case KV_C_W: case KV_C_E: vline_move(false, n); break;
+        case KV_K: case KV_B: case KV_C_B:                          vline_move(true,  n); break;
+        default: break;
+    }
+}
+
 static void reset_pending(void) {
     kv_ctx_reset(&s_ctx);
     s_state = ST_IDLE;
@@ -160,7 +203,8 @@ static kv_feed_t feed_normal(kv_keycode_t kc) {
                 case T_INSERT: kv_emit_enter_insert(kc); s_mode = KV_MODE_INSERT; return R_CONSUMED;
                 case T_VISUAL:
                     s_mode = (kc == KV_C_V) ? KV_MODE_VISUAL_LINE : KV_MODE_VISUAL;
-                    if (s_mode == KV_MODE_VISUAL_LINE) kv_emit_visual_line_enter(); /* 锚行尾 */
+                    vline_reset();
+                    if (s_mode == KV_MODE_VISUAL_LINE) kv_emit_visual_line_enter(); /* 选中整行 */
                     return R_CONSUMED;
                 case T_X: case T_XUP: case T_s: case T_C_BIG: case T_D_BIG:
                 case T_Y_BIG: case T_P: case T_PUP: case T_JOIN: case T_UNDO:
@@ -188,7 +232,8 @@ static kv_feed_t feed_normal(kv_keycode_t kc) {
                 case T_INSERT: kv_emit_enter_insert(kc); s_mode = KV_MODE_INSERT; reset_pending(); return R_CONSUMED;
                 case T_VISUAL:
                     s_mode = (kc == KV_C_V) ? KV_MODE_VISUAL_LINE : KV_MODE_VISUAL;
-                    if (s_mode == KV_MODE_VISUAL_LINE) kv_emit_visual_line_enter(); /* 锚行尾 */
+                    vline_reset();
+                    if (s_mode == KV_MODE_VISUAL_LINE) kv_emit_visual_line_enter(); /* 选中整行 */
                     reset_pending();
                     return R_CONSUMED;
                 default: /* drop count, re-identify */
@@ -320,12 +365,17 @@ static kv_feed_t feed_normal(kv_keycode_t kc) {
 
 static kv_feed_t feed_visual(kv_keycode_t kc) {
     kv_token_t t = kv_classify(kc);
+    const bool vline = (s_mode == KV_MODE_VISUAL_LINE);
     // Esc 永远退出可视（design §4.9），**必须先于 g 前缀分支**：否则 `v g Esc` 会被
     // 当作"g 后接非法键"吞掉、退不出可视（第 3 轮对抗审核 D）。
     if (KV_BASIC(kc) == KV_ESC) {
+        /* 真实 Vim：Esc 取消选区。宿主在 Shift 扩展后保留高亮选区，不取消则
+         * 下一个按键会替换它（第 3 轮审核 D8）。 */
+        if (vline) kv_emit_tap(KV_ESC);
         s_mode = KV_MODE_NORMAL;
         s_visual_digits = 0;
         s_visual_gp     = false;
+        vline_reset();
         reset_pending();
         return R_CONSUMED;
     }
@@ -336,7 +386,13 @@ static kv_feed_t feed_visual(kv_keycode_t kc) {
         s_visual_digits = 0;
         s_ctx.count     = 0;
         if (t == T_g_LOWER) { // gg：只认小写 g（Shift+G 不是 gg 的第二击）
-            kv_emit_tap(KV_CS(KV_HOME));
+            if (vline) {
+                /* 行选：范围 = [文首, A]。abs 之后 off 未知，按 UP 分支尽力处理。 */
+                kv_emit_vline_gg(s_vl_abs ? true : s_vl_up, s_vl_off);
+                s_vl_up = true; s_vl_abs = true;
+            } else {
+                kv_emit_tap(KV_CS(KV_HOME));
+            }
             reset_pending();
             return R_CONSUMED;
         }
@@ -369,39 +425,57 @@ static kv_feed_t feed_visual(kv_keycode_t kc) {
     const int n = kv_ctx_n(&s_ctx);
     /* design §4.9: 动作后退出可视（Vim 语义）—— y/d/x/p 回 NORMAL，c/s 回 NORMAL 再进 INSERT。
      * 行选下动作前先把"整行"选中（Home+Shift+End），使 d/y/c/s 作用于整行。 */
-    const bool vline = (s_mode == KV_MODE_VISUAL_LINE);
+    /* design §4.9：动作后退出可视（Vim 语义）。行选下动作与选区方向无关：
+     * kv_emit_vline_action 统一按"整行 + 行尾换行"处理。 */
     if (kc == KV_D || kc == KV_X) {
-        if (vline) kv_emit_visual_line_anchor();
-        kv_emit_delete_to_eol(); s_mode = KV_MODE_NORMAL; reset_pending(); return R_CONSUMED;
+        if (vline) kv_emit_vline_action(KV_D, s_vl_up); else kv_emit_delete_to_eol();
+        s_mode = KV_MODE_NORMAL; vline_reset(); reset_pending(); return R_CONSUMED;
     }
     if (kc == KV_Y) {
-        if (vline) kv_emit_visual_line_anchor();
-        kv_emit_yank_to_eol(); s_mode = KV_MODE_NORMAL; reset_pending(); return R_CONSUMED;
+        if (vline) kv_emit_vline_action(KV_Y, s_vl_up); else kv_emit_yank_to_eol();
+        s_mode = KV_MODE_NORMAL; vline_reset(); reset_pending(); return R_CONSUMED;
     }
     if (kc == KV_C) {
-        if (vline) kv_emit_visual_line_anchor();
-        kv_emit_change_to_eol(); s_mode = KV_MODE_INSERT; reset_pending(); return R_CONSUMED;
+        if (vline) kv_emit_vline_action(KV_C, s_vl_up); else kv_emit_change_to_eol();
+        s_mode = KV_MODE_INSERT; vline_reset(); reset_pending(); return R_CONSUMED;
     }
     if (kc == KV_S) {
-        if (vline) kv_emit_visual_line_anchor();
-        kv_emit_substitute(); s_mode = KV_MODE_INSERT; reset_pending(); return R_CONSUMED;
+        /* 真实 Vim：V s ≡ V c（删整行 + 留一个空行 + Insert），不再只删 1 字符。 */
+        if (vline) kv_emit_vline_action(KV_C, s_vl_up); else kv_emit_substitute();
+        s_mode = KV_MODE_INSERT; vline_reset(); reset_pending(); return R_CONSUMED;
     }
-    if (kc == KV_P) { kv_emit_paste(false); s_mode = KV_MODE_NORMAL; reset_pending(); return R_CONSUMED; }
+    if (kc == KV_P) {
+        if (vline) kv_emit_vline_action(KV_P, s_vl_up); else kv_emit_paste(false);
+        s_mode = KV_MODE_NORMAL; vline_reset(); reset_pending(); return R_CONSUMED;
+    }
+    if (t == T_VISUAL) {
+        /* 真实 Vim：VISUAL 内按 V 切到行选；VISUAL_LINE 内按 v 切回字符选（不发键）。 */
+        if (vline) {
+            if (kc == KV_V) { s_mode = KV_MODE_VISUAL; vline_reset(); }
+        } else if (kc == KV_C_V) {
+            s_mode = KV_MODE_VISUAL_LINE;
+            vline_reset();
+            kv_emit_visual_line_enter();
+        }
+        s_visual_digits = 0;
+        reset_pending();
+        return R_CONSUMED;
+    }
     switch (t) {
         case T_MOTION: case T_ZERO: case T_CARET: case T_DOLLAR:
-            for (int i = 0; i < n; i++) {
-                if (s_mode == KV_MODE_VISUAL_LINE) {
-                    kv_emit_visual_line_motion(kc); /* 行选：整行推进 */
-                } else {
-                    kv_emit_visual_motion(kc);      /* 字符/词级 */
-                }
+            if (vline) {
+                vline_motion(kc, n);  /* 行选：整行推进 n 行（h/l/0/^/$ 不改行范围） */
+            } else {
+                for (int i = 0; i < n; i++) kv_emit_visual_motion(kc); /* 字符/词级 */
             }
             s_visual_digits = 0; /* 计数已消费 */
             reset_pending();
             return R_CONSUMED;
         case T_G_BIG: /* G 丢计数（readme §5）：无论 n 都只发一次 */
-            if (s_mode == KV_MODE_VISUAL_LINE) {
-                kv_emit_visual_line_motion(kc);
+            if (vline) {
+                /* 行选：范围 = [A, 文末]。abs 之后 off 未知，按 DOWN 分支尽力处理。 */
+                kv_emit_vline_G(s_vl_abs ? false : s_vl_up, s_vl_off);
+                s_vl_up = false; s_vl_abs = true;
             } else {
                 kv_emit_visual_motion(kc);
             }
@@ -419,6 +493,7 @@ static kv_feed_t feed_visual(kv_keycode_t kc) {
 void kv_init(void) {
     s_enabled = false;
     s_mode = KV_MODE_INSERT;
+    vline_reset();
     reset_pending();
     rec_clear();
     s_last_len = 0;
@@ -485,8 +560,8 @@ void      kv_visual_cancel(void) {
     kv_cancel();
 }
 
-void kv_set_mode(kv_mode_t m) { s_mode = m; abort_input(); }
-void kv_enable(void) { s_enabled = true; abort_input(); s_mode = KV_MODE_INSERT; }
+void kv_set_mode(kv_mode_t m) { s_mode = m; vline_reset(); abort_input(); }
+void kv_enable(void) { s_enabled = true; vline_reset(); abort_input(); s_mode = KV_MODE_INSERT; }
 void kv_disable(void) { s_enabled = false; abort_input(); kv_emit_clear(); }
 
 void kv_cancel(void) { abort_input(); }
