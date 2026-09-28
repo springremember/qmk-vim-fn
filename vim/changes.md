@@ -109,3 +109,32 @@
   纯 C，附 `engine/Makefile`，可 `make -C engine test` 跑主机单测。
 - 接回固件（替换现 `process_func`）属后续阶段，通过 `SRC +=` 编入 keymap。
 - 旧实现目录：`src/{vim,modes,actions,motions,numbered_actions,mac_mode,process_func}.c/.h`。
+
+---
+
+## 7. VISUAL_LINE 与真实 Vim 对齐（2026 重写）
+
+**背景**：旧版把"整行近似"实现为"锚点固定在**被选首行行首** + 字符级 `Shift+↑/↓` 扩展"。
+一旦活动端越过锚点（`k`/`b`/`gg`），字符选区立刻退化成"一个换行"，而动作前的
+`Shift+Home`+`Shift+End` 又作用在活动端所在行，把范围进一步缩错：
+
+| 缺陷 | 复现 | 旧行为（数据损坏） | 真实 Vim | 现行为 |
+|---|---|---|---|---|
+| P0 | `V k d`（光标在 L2） | 删掉换行 → **把 L1、L2 拼接** | 删掉 L1、L2 两整行 | `Shift+Up`,`Down`×2,`Home`,`Shift+Up`×2,`Ctrl+X` |
+| P0 | `V gg y`（光标在 L3） | 剪贴板 `"\nL1\nL2\n"`（**丢首尾正文**） | `L1\nL2\nL3\n` | `Down`,`Home`,`Ctrl+Shift+Home`,`Ctrl+C` |
+| P1 | `V s` | 只删 1 个字符 | 与 `V c` 等价（删整行 + 留空行 + Insert） | `Ctrl+X`,`Shift+Enter` |
+| P1 | `V d` | 只清正文、留一个空行 | 删掉整行 | 同上 + `Shift+Right` 纳入换行 |
+| P2 | `V y` | 字符级寄存器（无换行），`V y p` 变空操作 | linewise 寄存器 | DOWN 态补 `Shift+Right` |
+| P2 | `V j`（L1=20、L2=21 字符） | 漏 L2 第 21 字符 | 两整行 | 先 `Shift+Down` 再 `Shift+End` |
+| P2 | `V l l y` | `Shift+Right` 跨行 → 复制 2 行 | 行范围不变 | `l` **不发键** |
+| P2 | `V y` 后敲键 | 残留选区被下一个键替换 | 取消选区 | `y`/`p` 后补发 `Esc` |
+| P3 | `v` 后按 `V` | 吞键、不切换 | 切到行选 | `Home`,`Shift+End` 切行选 |
+
+**设计**：引擎自记**行偏移** `off = 光标行 − 锚行 A`，用两种锚点表示重建整行字符选区
+（`off≥0`：锚在 A 行首、活动端在 `A+off` 行尾；`off<0`：锚在 A+1 行首、活动端在 `A+off` 行首，
+**天然含换行**）。重锚**只在方向翻转**时发生。动作因此与选区形状/方向解耦。
+详见 [`design.md`](design.md) §4.9 与 [`readme.md`](readme.md) §7。
+
+**已知偏差**（真实 Vim 与本实现的差距，均已在文档声明）：`w`/`e`/`b` 按"整行 ±1"近似
+（Vim 是**词**动作）；动作后光标停在活动端（Vim 停在选区首行）；末行无换行时 `V d` 留一个空行；
+`G`/`gg` 之后行偏移失效，跨锚点移动不再重锚；Normal 的 `p` 只发 `Ctrl+V`（不做"下一行新建粘贴"）。

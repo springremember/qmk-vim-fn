@@ -117,9 +117,24 @@
 |---|---|---|---|
 | 进入并删 | `v` `l` `d` | `Shift+→` 扩展 → `Shift+End`+`Ctrl+X` 删除 → 回 Normal | §4.9 动作后退出 |
 | 选择复制 | `v` `e` `y` | 扩展选区 → `Ctrl+C` → 回 Normal | §4.9 |
-| 整行选择 | `V` `j` `d` | 进入 `Home`+`Shift+End`；`j` 扩展一行；动作前锚行首；删除后回 Normal | §4.9 |
-| 行选动作（单行） | `V` `y` | `Home`,`Shift+End`,`Ctrl+C` → 回 Normal | §4.9 |
-| 行选计数 | `V` `3` `j` | 3×`Shift+↓` | §4.8 §4.9 |
+| 行选进入 | `V` | `Home`,`Shift+End` → 选中整行（`off=0`，DOWN 态） | §4.9 |
+| 行选向下 | `V` `j` | `Shift+Down`,`Shift+End`（DOWN 态直接扩展） | §4.9 |
+| 行选向下计数 | `V` `3` `j` | 一次移动 3 行：`Shift+Down`×3,`Shift+End`（不是 3× 基础序列） | §4.8 §4.9 |
+| 行选向上（方向翻转 → 重锚） | `V` `k` | `Shift+Up`,`Down`×2,`Home`,`Shift+Up`×2（锚移到 A+1 行首，选区含 A 行换行） | §4.9 |
+| 行选向上后回下 | `V` `k` `j` | 接上行后 `Shift+Down`（`off=0` 仍处 UP 态，不重锚） | §4.9 |
+| 行选向下越过锚点回锚 | `V` `k` `j` `j` | 上行 `j` 后 `off>0`：`Shift+Down`,`Up`,`Home`,`Shift+Down`,`Shift+End`（重锚回 A 行首） | §4.9 |
+| 行选不改行范围 | `V` `h` / `V` `l` / `V` `0` / `V` `^` / `V` `$` | **0 输出**（真实 Vim 里行范围不变） | §4.9 |
+| 行选动作-复制 | `V` `y` | `Shift+Right`,`Ctrl+C`,`Esc` → 回 Normal（linewise，含换行） | §4.9 |
+| 行选动作-删除 | `V` `d` / `V` `x` | `Shift+Right`,`Ctrl+X` → 回 Normal（**删掉整行**，不是只清正文） | §4.9 |
+| 行选动作-修改 | `V` `c` / `V` `s` | `Shift+Right`,`Ctrl+X`,`Shift+Enter` → Insert（**c 与 s 完全等价**） | §4.9 |
+| 行选动作-粘贴 | `V` `p` | `Shift+Right`,`Ctrl+V`,`Esc` → 回 Normal | §4.9 |
+| 行选多行复制 | `V` `j` `y` | `Shift+Down`,`Shift+End`,`Shift+Right`,`Ctrl+C`,`Esc` | §4.9 |
+| 行选向上多行复制 | `V` `k` `y` | UP 态：不补 `Shift+Right`（选区已含换行），`Ctrl+C`,`Esc` | §4.9 |
+| 行选文末 | `V` `G` `y` | `Ctrl+Shift+End`,`Shift+Right`,`Ctrl+C`,`Esc` | §4.9 |
+| 行选文首 | `V` `gg` `y` | `Down`,`Home`,`Ctrl+Shift+Home`,`Ctrl+C`,`Esc`（UP 态不补 `Shift+Right`） | §4.9 |
+| 行选 Esc | `V` `Esc` | 发 `Esc` 取消宿主残留选区 → 回 Normal | §4.9 |
+| 行选模式切换 | `v` `V` / `V` `v` | `v V` = `Home`,`Shift+End` 切行选；`V v` = 0 输出切回字符选 | §4.9 |
+| 行选非法键 | `V` `i` | 0 输出、留在 VISUAL_LINE、无 pending | §4.9 |
 | 可视计数 | `v` `3` `j` / `v` `2` `w` | 3×`Shift+↓` / 2×`Ctrl+Shift+→` | §4.8 §4.9 |
 | 计数上限 | `v` `1` `2` `3` `j` | 第 3 位忽略 → 12×`Shift+↓` | §5 ≤2 位 |
 | 计数含 0 | `v` `1` `0` `j` | `0` 续接计数 → 10×`Shift+↓` | §4.3 §5 |
