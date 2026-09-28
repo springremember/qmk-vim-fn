@@ -902,6 +902,10 @@ static void test_vline_queue_safety(void) {
     rec_start(); key(KV_J); CHECK_SEQ(KV_LSFT_KC(KV_DOWN), KV_LSFT_KC(KV_END)); /* off=100 */
     rec_start(); key(KV_J); CHECK(rec_count() == 0);       /* 已到上限 */
     rec_start(); key(KV_K); CHECK(rec_count() > 0);        /* 反方向仍可动 */
+    /* 负方向同样有跨度上限（审计 g05：只保留正向上限会漏） */
+    fresh_vline(); key(KV_9); key(KV_9); key(KV_K);        /* off=-99 */
+    rec_start(); key(KV_K); CHECK(rec_count() == 1);       /* off=-100（Shift+Up×1） */
+    rec_start(); key(KV_K); CHECK(rec_count() == 0);       /* 已到 -100 上限：不发键 */
     /* gg 在 DOWN 态是 O(off) 键码：跨度上限保证它也有界
      * （去掉上限时 off=198 → Up×197+Home+CS+Home = 199 键 → 溢出丢键）。 */
     fresh_vline(); key(KV_9); key(KV_9); key(KV_J);        /* off=99 */
