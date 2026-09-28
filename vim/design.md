@@ -449,13 +449,19 @@ while (queue_has()) {
     | 情形 | 发出 |
     | :--- | :--- |
     | DOWN 态向下 | `Shift+Down`×n + `Shift+End` |
-    | UP 态向下、`off>0` | `Shift+Down`×n + **重锚到 DOWN**：`Up`×off + `Home` + `Shift+Down`×off + `Shift+End` |
-    | UP 态向下、`off≤0` | `Shift+Down`×n（仍在 A 上方，锚保持 A+1） |
+    | UP 态向下、`off_after>0` | **重锚到 DOWN**：`Down`×(−off_before) + `Home` + `Shift+Down`×off_after + `Shift+End` |
+    | UP 态向下、`off_after≤0` | `Shift+Down`×n（仍在 A 上方，锚保持 A+1） |
     | UP 态向上 | `Shift+Up`×n |
-    | DOWN 态向上、`off≥0` | `Shift+Up`×n + `Shift+End` |
-    | DOWN 态向上、`off<0` | `Shift+Up`×n + **重锚到 UP**：`Down`×(1−off) + `Home` + `Shift+Up`×(1−off) |
+    | DOWN 态向上、`off_after≥0` | `Shift+Up`×n + `Shift+End` |
+    | DOWN 态向上、`off_after<0` | **重锚到 UP**：`Up`×(off_before−1) 或 `Down`×(1−off_before) + `Home` + `Shift+Up`×(1−off_after) |
 
-    - 重锚**只在方向翻转**时发生，键数受当前 `off` 限制（计数 ≤99），不会每次移动都全量重建。
+    - 重锚**只在方向翻转**时发生，且**直接从当前光标**重建（不做"先按 `Shift+↑/↓` 移动、再重锚"
+      的冗余移动）。后者会把键码数抬到 ~3n：`V 99 k` = **300 键** > 发送队列 256 格
+      （`emit.c` 的 `EMIT_CAP`），溢出时**静默丢键** → 选区错乱 → 后续 `d`/`y` 作用在错误范围
+      （**数据损坏**）。现在的键码数：同向 = n+1、重锚 ≤ n+3、`gg`/`G` ≤ |off|+1。
+    - **行选跨度上限 `|off| ≤ 100`**（`KV_VLINE_MAX_OFF`）：到上限后同向移动**不再发键**
+      （选区停止扩张，而不是错乱）。取 100 使单条命令 ≤102 键，与 Normal 的 `99dd`(103) 同量级，
+      也与 Normal/Visual 的"2 位计数 ≤99"语义一致。
     - 这样任一时刻的宿主选区都**覆盖完整整行**，与 Vim 的"锚行固定、行范围随光标"一致。
   - **不改行范围的键**：`h`/`l`/`0`/`^`/`$` 在行选下**不发任何键**（真实 Vim 里它们只移动光标、
     行范围不变；发 `Shift+←/→` 反而会把活动端带出本行、把邻行卷进选区——旧版缺陷）。
@@ -485,7 +491,8 @@ while (queue_has()) {
   - **已知偏差（需实机确认）**：① `w`/`e`/`b` 按"整行 ±1"近似（Vim 是词动作，同一行内移动时行范围
     不变）；② 动作后光标停在活动端，Vim 停在选区首行；③ 末行无换行时 `Shift+Right` 无效，`V d` 会留
     一个空行（Vim 删掉末行）；④ `abs` 之后的绝对跳转与跨锚点重锚无法精确；⑤ `V y` 后按 `p`：寄存器已是
-    linewise，但 Normal 的 `p` 只发 `Ctrl+V`（在插入点粘贴），与 Vim"在下一行新建一行粘贴"仍有差距。
+    linewise，但 Normal 的 `p` 只发 `Ctrl+V`（在插入点粘贴），与 Vim"在下一行新建一行粘贴"仍有差距；
+    ⑥ **行选跨度上限 100 行**（发送队列只有 256 格，见上；Vim 无此限制）。
   - **与 VISUAL 的关键差异**：`VISUAL` 的移动一律 `Shift+方向`/`Ctrl+Shift+方向`（字符/词级）；
     `VISUAL_LINE` 的 `w`/`b`/`e` **改为整行推进**，`h`/`l`/`0`/`^`/`$` **不发键**，动作前会按方向补
     `Shift+Right` 并重锚，因此同一串按键在两模式下**输出不同**、选区形态也不同（这是本规格的可测断言）。

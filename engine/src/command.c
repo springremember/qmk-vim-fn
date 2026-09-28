@@ -120,20 +120,23 @@ void kv_emit_vline_move(bool up, int n) {
  * 目标行更长就只选到"源行末列"，长行末字符会漏（用户实测报告）。 */
 void kv_emit_vline_move_tail(void) { kv_emit_tap(KV_LSFT_KC(KV_END)); }
 
-/* 方向翻转时重建锚点（只在翻转时发生，键数受当前 |off| 限制）：
- *   to_up=true  ：锚移到 (A+1) 行首 —— Down×(1−off) + Home + Shift+Up×(1−off)
- *   to_up=false ：锚移到 A 行首     —— Up×off + Home + Shift+Down×off + Shift+End
- * off 为切换**之后**的光标行偏移。 */
-void kv_emit_vline_reanchor(bool to_up, int off) {
+/* 方向翻转时重建锚点：**直接从当前光标**（位于 A+off_before）重建，不做
+ * "先按 Shift+↑/↓ 移动再重锚"的冗余移动 —— 后者会把键码数抬到 ~3n，撑爆发送队列。
+ *   to_up=true  （off_after<0）：锚移到 (A+1) 行首，活动端落在 A+off_after 行首
+ *     = [Up×(off_before−1) | Down×(1−off_before)] + Home + Shift+Up×(1−off_after)
+ *   to_up=false （off_after>0）：锚移到 A 行首，活动端落在 A+off_after 行尾
+ *     = Down×(−off_before) + Home + Shift+Down×off_after + Shift+End
+ * 键码数：to_up ≤ n+3、to_down ≤ n+2（off_before 项相消），与 Normal 的 99dd(103) 同量级。 */
+void kv_emit_vline_reanchor(bool to_up, int off_before, int off_after) {
     if (to_up) {
-        const int k = 1 - off;              /* off<0 → k≥2 */
-        kv_emit_taps(KV_DOWN, k);
+        if (off_before > 1)      kv_emit_taps(KV_UP, off_before - 1);
+        else if (off_before < 1) kv_emit_taps(KV_DOWN, 1 - off_before);
         kv_emit_tap(KV_HOME);
-        kv_emit_taps(KV_LSFT_KC(KV_UP), k);
+        kv_emit_taps(KV_LSFT_KC(KV_UP), 1 - off_after);
     } else {
-        if (off > 0) kv_emit_taps(KV_UP, off);
+        if (off_before < 0) kv_emit_taps(KV_DOWN, -off_before);
         kv_emit_tap(KV_HOME);
-        if (off > 0) kv_emit_taps(KV_LSFT_KC(KV_DOWN), off);
+        if (off_after > 0) kv_emit_taps(KV_LSFT_KC(KV_DOWN), off_after);
         kv_emit_tap(KV_LSFT_KC(KV_END));
     }
 }

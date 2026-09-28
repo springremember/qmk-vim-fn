@@ -731,16 +731,16 @@ static void test_visual_line_commands(void) {
           rec_at(2) == KV_LSFT_KC(KV_DOWN) && rec_at(3) == KV_LSFT_KC(KV_END));
     /* 向上（方向翻转 → 重锚到 A+1 行首，选区含 A 行换行） */
     fresh_vline(); key(KV_K);
-    CHECK_SEQ(KV_LSFT_KC(KV_UP), KV_DOWN, KV_DOWN, KV_HOME, KV_LSFT_KC(KV_UP), KV_LSFT_KC(KV_UP));
+    CHECK_SEQ(KV_DOWN, KV_HOME, KV_LSFT_KC(KV_UP), KV_LSFT_KC(KV_UP));
     fresh_vline(); key(KV_B);
-    CHECK_SEQ(KV_LSFT_KC(KV_UP), KV_DOWN, KV_DOWN, KV_HOME, KV_LSFT_KC(KV_UP), KV_LSFT_KC(KV_UP));
+    CHECK_SEQ(KV_DOWN, KV_HOME, KV_LSFT_KC(KV_UP), KV_LSFT_KC(KV_UP));
     /* UP 态继续向上：只 Shift+Up */
     fresh_vline(); key(KV_K); rec_start(); key(KV_K); CHECK_SEQ(KV_LSFT_KC(KV_UP));
     /* UP 态向下、off<=0：只 Shift+Down（锚保持 A+1） */
     fresh_vline(); key(KV_K); rec_start(); key(KV_J); CHECK_SEQ(KV_LSFT_KC(KV_DOWN));
     /* UP 态向下、off>0：重锚回 DOWN（A 行首） */
     fresh_vline(); key(KV_K); key(KV_J); rec_start(); key(KV_J);
-    CHECK_SEQ(KV_LSFT_KC(KV_DOWN), KV_UP, KV_HOME, KV_LSFT_KC(KV_DOWN), KV_LSFT_KC(KV_END));
+    CHECK_SEQ(KV_HOME, KV_LSFT_KC(KV_DOWN), KV_LSFT_KC(KV_END));
     /* DOWN 态向上、off>=0：只 Shift+Up + Shift+End */
     fresh_vline(); key(KV_J); rec_start(); key(KV_K);
     CHECK_SEQ(KV_LSFT_KC(KV_UP), KV_LSFT_KC(KV_END));
@@ -805,10 +805,12 @@ static void test_vline_emit_map(void) {
     rec_start(); kv_emit_vline_move(true, 2);  flush_emit();
     CHECK_SEQ(KV_LSFT_KC(KV_UP), KV_LSFT_KC(KV_UP));
     rec_start(); kv_emit_vline_move_tail();    flush_emit(); CHECK_SEQ(KV_LSFT_KC(KV_END));
-    rec_start(); kv_emit_vline_reanchor(false, 2); flush_emit();
-    CHECK_SEQ(KV_UP, KV_UP, KV_HOME, KV_LSFT_KC(KV_DOWN), KV_LSFT_KC(KV_DOWN), KV_LSFT_KC(KV_END));
-    rec_start(); kv_emit_vline_reanchor(true, -1); flush_emit();
-    CHECK_SEQ(KV_DOWN, KV_DOWN, KV_HOME, KV_LSFT_KC(KV_UP), KV_LSFT_KC(KV_UP));
+    rec_start(); kv_emit_vline_reanchor(false, -2, 2); flush_emit();
+    CHECK_SEQ(KV_DOWN, KV_DOWN, KV_HOME, KV_LSFT_KC(KV_DOWN), KV_LSFT_KC(KV_DOWN), KV_LSFT_KC(KV_END));
+    rec_start(); kv_emit_vline_reanchor(true, 0, -1); flush_emit();
+    CHECK_SEQ(KV_DOWN, KV_HOME, KV_LSFT_KC(KV_UP), KV_LSFT_KC(KV_UP));
+    rec_start(); kv_emit_vline_reanchor(true, 3, -2); flush_emit();
+    CHECK_SEQ(KV_UP, KV_UP, KV_HOME, KV_LSFT_KC(KV_UP), KV_LSFT_KC(KV_UP), KV_LSFT_KC(KV_UP));
     rec_start(); kv_emit_vline_gg(false, 0); flush_emit();
     CHECK_SEQ(KV_DOWN, KV_HOME, KV_CS(KV_HOME));
     rec_start(); kv_emit_vline_gg(true, -3); flush_emit(); CHECK_SEQ(KV_CS(KV_HOME));
@@ -823,6 +825,33 @@ static void test_vline_emit_map(void) {
     CHECK_SEQ(KV_LCTL_KC(KV_X), KV_LSFT_KC(KV_ENT));
     rec_start(); kv_emit_vline_action(KV_P, true); flush_emit();
     CHECK_SEQ(KV_LCTL_KC(KV_V), KV_ESC);
+}
+
+/* 行选跨度上限 + 发送队列安全（design §4.9）：重锚与 gg/G 都是 O(|off|) 键码，
+ * 不加界会撑爆 EMIT_CAP=256 的发送队列并**静默丢键** → 选区错乱 →
+ * 后续 d/y 作用在错误范围（数据损坏）。单条命令须 ≤103（与 Normal 99dd 同量级）。 */
+static void test_vline_queue_safety(void) {
+    /* V 99 j：Shift+Down×99 + Shift+End = 100 */
+    fresh_vline(); key(KV_9); key(KV_9); key(KV_J);
+    CHECK(rec_count() == 100);
+    CHECK(rec_at(0) == KV_LSFT_KC(KV_DOWN) && rec_at(99) == KV_LSFT_KC(KV_END));
+    /* V 99 k：重锚 Up 态 = Down + Home + Shift+Up×100 = 102（旧实现是 300 → 丢键） */
+    fresh_vline(); key(KV_9); key(KV_9); key(KV_K);
+    CHECK(rec_count() == 102);
+    CHECK(rec_at(0) == KV_DOWN && rec_at(1) == KV_HOME && rec_at(101) == KV_LSFT_KC(KV_UP));
+    /* 到上限（|off|=100）后继续同向移动：不再发键、不越界 */
+    fresh_vline(); key(KV_9); key(KV_9); key(KV_J);        /* off=99 */
+    rec_start(); key(KV_J); CHECK_SEQ(KV_LSFT_KC(KV_DOWN), KV_LSFT_KC(KV_END)); /* off=100 */
+    rec_start(); key(KV_J); CHECK(rec_count() == 0);       /* 已到上限 */
+    rec_start(); key(KV_K); CHECK(rec_count() > 0);        /* 反方向仍可动 */
+    /* gg 在 DOWN 态是 O(off) 键码：跨度上限保证它也有界
+     * （去掉上限时 off=198 → Up×197+Home+CS+Home = 199 键 → 溢出丢键）。 */
+    fresh_vline(); key(KV_9); key(KV_9); key(KV_J);        /* off=99 */
+    rec_start(); key(KV_G); key(KV_G);                     /* gg */
+    CHECK(rec_count() == 100);                             /* Up×98 + Home + Ctrl+Shift+Home */
+    fresh_vline(); key(KV_9); key(KV_9); key(KV_J); key(KV_9); key(KV_9); key(KV_J); /* off 截到 100 */
+    rec_start(); key(KV_G); key(KV_G);
+    CHECK(rec_count() == 101);                             /* Up×99 + Home + Ctrl+Shift+Home */
 }
 
 /* command.c §4.8 — direct mapping coverage of kv_emit_visual_motion.
@@ -1054,6 +1083,7 @@ int main(void) {
     test_visual_commands();
     test_visual_line_commands();
     test_vline_emit_map();
+    test_vline_queue_safety();
     test_visual_motion_map();
     test_command_guards();
     test_classify_coverage();

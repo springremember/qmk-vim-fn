@@ -37,29 +37,42 @@ static int  s_vl_off;
 static bool s_vl_up;
 static bool s_vl_abs;
 
+/* 行选跨度上限（= 光标行与锚行 A 的最大距离）。
+ * 为什么必须有：gg/G 与方向翻转的重锚都是 O(|off|) 键码，而发送队列只有
+ * EMIT_CAP=256 格、溢出时**静默丢键**（选区错乱 → 后续 d/y 作用在错误范围 =
+ * 数据损坏）。取 100 使单条命令键码 ≤102，与 Normal 的 99dd(103) 同量级；
+ * 与 Normal/Visual 的"2 位计数 ≤99"语义也一致。 */
+#define KV_VLINE_MAX_OFF 100
+
 static void vline_reset(void) { s_vl_off = 0; s_vl_up = false; s_vl_abs = false; }
 
 /* 行选移动：把 off 从 s_vl_off 变成 s_vl_off±n，并让宿主字符选区**始终覆盖整行**。
  * 重锚只在方向翻转时发生（键数受当前 |off| 限制），不做全量重建。 */
 static void vline_move(bool up, int n) {
+    if (n < 1) n = 1;
+    if (n > 99) n = 99;
     if (s_vl_abs) {                       /* 行号未知：只做纵向扩展 */
         kv_emit_vline_move(up, n);
         kv_emit_vline_move_tail();
         return;
     }
-    const int off = s_vl_off + (up ? -n : n);
+    int off = s_vl_off + (up ? -n : n);
+    if (off >  KV_VLINE_MAX_OFF) off =  KV_VLINE_MAX_OFF;
+    if (off < -KV_VLINE_MAX_OFF) off = -KV_VLINE_MAX_OFF;
+    n = off - s_vl_off;                   /* 实际移动行数（受跨度上限约束） */
+    if (n == 0) return;                   /* 已到跨度上限：不再扩展（不发键） */
+    up = (n < 0); if (up) n = -n;
     if (!up && !s_vl_up) {                /* DOWN 态向下：直接扩展 */
         kv_emit_vline_move(false, n);
         kv_emit_vline_move_tail();
     } else if (!up) {                     /* UP 态向下：越过 A 后重锚回 DOWN */
-        kv_emit_vline_move(false, n);
-        if (off > 0) { kv_emit_vline_reanchor(false, off); s_vl_up = false; }
+        if (off > 0) { kv_emit_vline_reanchor(false, s_vl_off, off); s_vl_up = false; }
+        else         { kv_emit_vline_move(false, n); }
     } else if (s_vl_up) {                 /* UP 态向上：直接扩展 */
         kv_emit_vline_move(true, n);
     } else {                              /* DOWN 态向上：越过 A 后重锚到 UP */
-        kv_emit_vline_move(true, n);
-        if (off >= 0) kv_emit_vline_move_tail();
-        else { kv_emit_vline_reanchor(true, off); s_vl_up = true; }
+        if (off >= 0) { kv_emit_vline_move(true, n); kv_emit_vline_move_tail(); }
+        else          { kv_emit_vline_reanchor(true, s_vl_off, off); s_vl_up = true; }
     }
     s_vl_off = off;
 }
