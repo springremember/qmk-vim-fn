@@ -783,6 +783,14 @@ static void test_visual_line_commands(void) {
     fresh_vline(); key(KV_G); key(KV_G); CHECK_SEQ(KV_DOWN, KV_HOME, KV_CS(KV_HOME));
     fresh_vline(); key(KV_G); key(KV_G); rec_start(); key(KV_Y);
     CHECK_SEQ(KV_LCTL_KC(KV_C), KV_ESC);
+    /* abs 状态（G/gg 之后）按**活动端所在边界**收边：gg 之后活动端是上边界 → Shift+Home；
+     * 用 Shift+End 会把选区从该行行尾开始（V gg j d 会把两行拼接 = 数据损坏）。 */
+    fresh_vline(); key(KV_G); key(KV_G); rec_start(); key(KV_J);
+    CHECK_SEQ(KV_LSFT_KC(KV_DOWN), KV_LSFT_KC(KV_HOME));
+    fresh_vline(); key(KV_G); key(KV_G); key(KV_J); rec_start(); key(KV_D);
+    CHECK_SEQ(KV_LCTL_KC(KV_X));           /* UP 态动作不补 Shift+Right */
+    fresh_vline(); key(KV_C_G); rec_start(); key(KV_K);
+    CHECK_SEQ(KV_LSFT_KC(KV_UP), KV_LSFT_KC(KV_END));  /* G 之后活动端是下边界 → Shift+End */
     /* 用户 Esc：取消宿主残留选区（真实 Vim 也取消） */
     fresh_vline(); key(KV_ESC); CHECK_SEQ(KV_ESC);
     CHECK(kv_get_mode() == KV_MODE_NORMAL);
@@ -805,6 +813,7 @@ static void test_vline_emit_map(void) {
     rec_start(); kv_emit_vline_move(true, 2);  flush_emit();
     CHECK_SEQ(KV_LSFT_KC(KV_UP), KV_LSFT_KC(KV_UP));
     rec_start(); kv_emit_vline_move_tail();    flush_emit(); CHECK_SEQ(KV_LSFT_KC(KV_END));
+    rec_start(); kv_emit_vline_move_head();    flush_emit(); CHECK_SEQ(KV_LSFT_KC(KV_HOME));
     rec_start(); kv_emit_vline_reanchor(false, -2, 2); flush_emit();
     CHECK_SEQ(KV_DOWN, KV_DOWN, KV_HOME, KV_LSFT_KC(KV_DOWN), KV_LSFT_KC(KV_DOWN), KV_LSFT_KC(KV_END));
     rec_start(); kv_emit_vline_reanchor(true, 0, -1); flush_emit();

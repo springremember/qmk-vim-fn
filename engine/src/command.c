@@ -120,6 +120,10 @@ void kv_emit_vline_move(bool up, int n) {
  * 目标行更长就只选到"源行末列"，长行末字符会漏（用户实测报告）。 */
 void kv_emit_vline_move_tail(void) { kv_emit_tap(KV_LSFT_KC(KV_END)); }
 
+/* 活动端是**上边界**（`gg` 之后）时贴行首：整行选区的上边界是"行首"而不是"行尾"，
+ * 用 Shift+End 收边会让选区从该行行尾开始 → 丢半行/退化成只选一个换行（`V gg j y`）。 */
+void kv_emit_vline_move_head(void) { kv_emit_tap(KV_LSFT_KC(KV_HOME)); }
+
 /* 方向翻转时重建锚点：**直接从当前光标**（位于 A+off_before）重建，不做
  * "先按 Shift+↑/↓ 移动再重锚"的冗余移动 —— 后者会把键码数抬到 ~3n，撑爆发送队列。
  *   to_up=true  （off_after<0）：锚移到 (A+1) 行首，活动端落在 A+off_after 行首

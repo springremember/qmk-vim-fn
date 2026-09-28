@@ -37,6 +37,7 @@ void kv_emit_visual_motion(kv_keycode_t kc);
 void kv_emit_visual_line_enter(void);              /* Home, Shift+End = 选中整行 */
 void kv_emit_vline_move(bool up, int n);           /* Shift+Up/Down × n */
 void kv_emit_vline_move_tail(void);                /* Shift+End：活动端顶到行尾 */
+void kv_emit_vline_move_head(void);                /* Shift+Home：活动端贴到行首 */
 void kv_emit_vline_reanchor(bool to_up, int off_before, int off_after); /* 方向翻转时重建锚点 */
 void kv_emit_vline_gg(bool dir_up, int off);
 void kv_emit_vline_G(bool dir_up, int off);

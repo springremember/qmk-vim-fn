@@ -51,9 +51,10 @@ static void vline_reset(void) { s_vl_off = 0; s_vl_up = false; s_vl_abs = false;
 static void vline_move(bool up, int n) {
     if (n < 1) n = 1;
     if (n > 99) n = 99;
-    if (s_vl_abs) {                       /* 行号未知：只做纵向扩展 */
+    if (s_vl_abs) {                       /* 行号未知：只做纵向扩展 + 按活动端所在边界收边 */
         kv_emit_vline_move(up, n);
-        kv_emit_vline_move_tail();
+        if (s_vl_up) kv_emit_vline_move_head();   /* gg 之后：活动端是上边界 → 贴行首 */
+        else         kv_emit_vline_move_tail();   /* G  之后：活动端是下边界 → 贴行尾 */
         return;
     }
     int off = s_vl_off + (up ? -n : n);
