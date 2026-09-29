@@ -1277,6 +1277,86 @@ static void test_rec_cap(void) {
     CHECK(kv_pending() == false);
 }
 
+/* AUDIT GAP (mutation E05) — emit.c kv_emit_flush_now(): draining must also
+ * reset the inter-key gap timer so the next queued key is released on the very
+ * next service, even at the same millisecond.  The existing timing test
+ * services 99 ms later, so deleting `s_has_last = false` in
+ * kv_emit_flush_now() survives it. */
+static void test_emit_flush_resets_gap(void) {
+    fresh();
+    kv_kbd(KV_W);                 /* 1 key queued */
+    kv_task(100);                 /* send: s_last_ms = 100, s_has_last = true */
+    CHECK(rec_count() == 1);
+    kv_kbd(KV_W);
+    kv_emit_flush_now();          /* drains, and must clear s_has_last */
+    CHECK(rec_count() == 2);
+    kv_kbd(KV_W);
+    kv_task(100);                 /* same timestamp: must still send */
+    CHECK(rec_count() == 3);
+}
+
+/* AUDIT GAP (mutation G17) — engine.c rec_should_record(): `J` (join) is a
+ * change and must become the `.` target.  No existing test replays `.` after
+ * `J`, so dropping T_JOIN from the list survives. */
+static void test_repeat_join(void) {
+    fresh();
+    key(KV_C_J);                  /* J: End, Del */
+    rec_start(); key(KV_DOT);     /* . must replay J */
+    CHECK_SEQ(KV_END, KV_SPC, KV_DEL);   /* J 现在插一个空格（2026-09 修正） */
+}
+
+/* AUDIT GAP (mutation G20) — engine.c rec_push() cap: a completed command whose
+ * recording is exactly REC_MAX (8) keys long must still replay in full.
+ * `d` + 6 nines + `w` is an 8-key recording; with the cap one short the
+ * trailing `w` is dropped and `.` leaves the operator pending (0 keys). */
+static void test_rec_cap_boundary_replay(void) {
+    fresh();
+    key(KV_D); key(KV_9); key(KV_9); key(KV_9); key(KV_9); key(KV_9); key(KV_9); key(KV_W);
+    rec_start(); key(KV_DOT);
+    CHECK(rec_count() == 100);    /* 99 x Ctrl+Shift+Right + Ctrl+X */
+}
+
+/* AUDIT GAP (mutation G40) — engine.c kv_disable(): turning vim off must drop
+ * the queued key sequence so kv_task() cannot deliver a stale vim command. */
+static void test_disable_clears_queue(void) {
+    fresh();
+    kv_kbd(KV_D); kv_kbd(KV_D);   /* dd: 5 keys queued, none sent */
+    CHECK(kv_emit_pending() == 5);
+    kv_disable();
+    CHECK(kv_emit_pending() == 0);
+    kv_task(1000);
+    CHECK(rec_count() == 0);
+}
+
+/* AUDIT GAP (mutations R01-R09) — engine.c rec_should_record(): *every*
+ * change-like command must become the `.` target, not just dd/x/gg.  Commands
+ * that enter Insert are returned to Normal first (s_last deliberately survives
+ * a mode round-trip).  Each line below fails for exactly one dropped token. */
+static void test_repeat_recorded_commands(void) {
+    /* X (backspace char) */
+    fresh(); key(KV_C_X); rec_start(); key(KV_DOT);
+    CHECK_SEQ(KV_BSPC);
+    /* D (delete to eol) */
+    fresh(); key(KV_C_D); rec_start(); key(KV_DOT);
+    CHECK_SEQ(KV_LSFT_KC(KV_END), KV_LCTL_KC(KV_X));
+    /* p / P (paste) */
+    fresh(); key(KV_P);   rec_start(); key(KV_DOT);
+    CHECK_SEQ(KV_LCTL_KC(KV_V));
+    fresh(); key(KV_C_P); rec_start(); key(KV_DOT);
+    CHECK_SEQ(KV_LEFT, KV_LCTL_KC(KV_V));
+    /* >> (indent line) */
+    fresh(); key(KV_C_GT); key(KV_C_GT); rec_start(); key(KV_DOT);
+    CHECK_SEQ(KV_HOME, KV_HOME, KV_TAB);
+    /* S / C / s enter Insert: back to Normal, then replay */
+    fresh(); key(KV_C_S); kv_set_mode(KV_MODE_NORMAL); rec_start(); key(KV_DOT);
+    CHECK_SEQ(KV_HOME, KV_HOME, KV_LSFT_KC(KV_END), KV_LCTL_KC(KV_X)); /* cc 留空行，不发 BSPC */
+    fresh(); key(KV_C_C); kv_set_mode(KV_MODE_NORMAL); rec_start(); key(KV_DOT);
+    CHECK_SEQ(KV_LSFT_KC(KV_END), KV_LCTL_KC(KV_X));
+    fresh(); key(KV_S);   kv_set_mode(KV_MODE_NORMAL); rec_start(); key(KV_DOT);
+    CHECK_SEQ(KV_LSFT_KC(KV_RGHT), KV_DEL);
+}
+
+
 int main(void) {
     test_single();
     test_count();
@@ -1316,6 +1396,11 @@ int main(void) {
     test_emit_bounds();
     test_emit_null_callback();
     test_rec_cap();
+    test_emit_flush_resets_gap();   /* E05 */
+    test_repeat_join();             /* G17 */
+    test_rec_cap_boundary_replay(); /* G20 */
+    test_disable_clears_queue();    /* G40 */
+    test_repeat_recorded_commands();/* R01-R09 */
     printf("pass=%d fail=%d\n", g_pass, g_fail);
     return g_fail ? 1 : 0;
 }

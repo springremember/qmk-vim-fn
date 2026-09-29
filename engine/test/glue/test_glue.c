@@ -1615,6 +1615,83 @@ static void test_rshift_normal_when_vim_off(void) {
     CHECK(pipeline(KC_RSFT, false) == true);
 }
 
+/* AUDIT GAP (mutation V08) — vim_glue.c rshift_exempt(): Esc must never be
+ * wrapped by the lazy Left Shift.  A NORMAL-idle Esc is a real host Esc; with
+ * RShift physically held the lazy Shift must stay off.  test_rshift_exempt_keys
+ * only covers a modifier key (LALT), so dropping KC_ESC from the exemption
+ * survives. */
+static void test_rshift_esc_exempt(void) {
+    reset_engine();
+    kv_set_mode(KV_MODE_NORMAL);
+    CHECK(pipeline(KC_RSFT, true) == false);    /* RShift swallowed */
+    CHECK(pipeline(KC_ESC, true) == true);      /* real host Esc */
+    CHECK((get_mods() & MOD_BIT_LSHIFT) == 0);  /* mutation asserts lazy Shift */
+    CHECK(pipeline(KC_ESC, false) == true);
+    CHECK(pipeline(KC_RSFT, false) == false);
+    CHECK(!lshift_down());
+}
+
+/* AUDIT GAP (mutation V25) — vim_glue.c vim_glue_release_all(): a mode/enable
+ * transition while the lazy Right-Shift Left-Shift is asserted must unregister
+ * it, or the host Shift sticks forever.  test_release_all_motion only covers
+ * the arrow axes. */
+static void test_release_all_lazy_rshift(void) {
+    reset_engine();                             /* INSERT, vim on */
+    CHECK(pipeline(KC_RSFT, true) == false);
+    CHECK(pipeline(KC_A, true) == true);        /* lazy LShift asserted */
+    CHECK(lshift_down());
+    caps_toggle_vim();                          /* vim off -> vim_glue_release_all */
+    CHECK(!lshift_down());                      /* mutation leaves it stuck */
+    CHECK(!kv_vim_enabled());
+}
+
+/* AUDIT GAP (mutation W18) — vim_glue.c mouse_enter(): entering MOUSE must
+ * release a motion arrow that a bare h/j/k/l left register-held, or the arrow
+ * sticks.  No existing test enters MOUSE with an arrow held. */
+static void test_mouse_enter_releases_held_motion(void) {
+    reset_engine();
+    kv_set_mode(KV_MODE_NORMAL);
+    CHECK(pipeline(KC_H, true) == false);
+    kv_emit_flush_now();
+    CHECK(reg_count(KC_LEFT) == 1);             /* arrow register-held */
+    CHECK(mouse_tap());                         /* enter MOUSE while held */
+    CHECK(reg_count(KC_LEFT) == 0);             /* mutation leaves it held */
+}
+
+/* AUDIT GAP (mutation R33) — vim_glue.c vim_glue_release_all(): a mode switch
+ * must also cancel a *pending* held-motion expectation, so the still-queued
+ * arrow is tapped rather than register-held after the switch. */
+static void test_release_all_clears_held_expect(void) {
+    reset_engine();
+    kv_set_mode(KV_MODE_NORMAL);
+    CHECK(pipeline(KC_H, true) == false);  /* bare h: expect set, arrow queued */
+    vim_glue_release_all();                /* mode switch cancels the hold */
+    kv_emit_flush_now();
+    CHECK(reg_count(KC_LEFT) == 0);        /* mutation register-holds it */
+    (void)pipeline(KC_H, false);
+}
+
+/* AUDIT GAP (mutation R40) — vim_keymap_common.c vim_pipeline_process(): the
+ * Esc grace window only exists while typing, so any key observed outside
+ * INSERT must drop it.  Otherwise a stale window survives a mode round-trip and
+ * Esc stops toggling to NORMAL. */
+static void test_grace_cleared_outside_insert(void) {
+    reset_engine();
+    kv_set_mode(KV_MODE_NORMAL);
+    g_now = 1000;
+    CHECK(pipeline(KC_ESC, true) == true);   /* open window at t=1000 -> INSERT */
+    CHECK(vim_insert_flash());
+    (void)pipeline(KC_ESC, false);
+    kv_set_mode(KV_MODE_NORMAL);             /* leave INSERT directly */
+    CHECK(pipeline(KC_Z, true) == true);     /* key outside INSERT invalidates */
+    (void)pipeline(KC_Z, false);
+    kv_set_mode(KV_MODE_INSERT);             /* back to INSERT, same 3 s */
+    CHECK(pipeline(KC_ESC, true) == false);  /* must swallow -> NORMAL */
+    CHECK(kv_get_mode() == KV_MODE_NORMAL);
+    (void)pipeline(KC_ESC, false);
+}
+
+
 int main(void) {
     /* Must run before any pipeline call so s_cfg is still NULL. */
     test_task_null_cfg_guard();
@@ -1675,6 +1752,11 @@ int main(void) {
     test_rshift_exempt_keys();
     test_rshift_lshift_coexist();
     test_rshift_normal_when_vim_off();
+    test_rshift_esc_exempt();                    /* V08 */
+    test_release_all_lazy_rshift();              /* V25 */
+    test_mouse_enter_releases_held_motion();     /* W18 */
+    test_release_all_clears_held_expect();       /* R33 */
+    test_grace_cleared_outside_insert();         /* R40 */
     printf("glue: pass=%d fail=%d\n", g_pass, g_fail);
     return g_fail ? 1 : 0;
 }
