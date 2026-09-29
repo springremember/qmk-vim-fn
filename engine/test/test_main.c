@@ -59,7 +59,7 @@ static void test_single(void) {
     fresh(); key(KV_X); CHECK_SEQ(KV_DEL);
     fresh(); key(KV_C_X); CHECK_SEQ(KV_BSPC);
     fresh(); key(KV_C_D); CHECK_SEQ(KV_LSFT_KC(KV_END), KV_LCTL_KC(KV_X));
-    fresh(); key(KV_C_Y); CHECK_SEQ(KV_LSFT_KC(KV_END), KV_LCTL_KC(KV_C), KV_ESC);
+    fresh(); key(KV_C_Y); CHECK_SEQ(KV_LSFT_KC(KV_END), KV_LCTL_KC(KV_C), KV_ESC, KV_HOME);
     fresh(); key(KV_P); CHECK_SEQ(KV_LCTL_KC(KV_V));
     fresh(); key(KV_C_P); CHECK_SEQ(KV_LEFT, KV_LCTL_KC(KV_V));
     fresh(); key(KV_C_J); CHECK_SEQ(KV_END, KV_SPC, KV_DEL);
@@ -114,7 +114,7 @@ static void test_op(void) {
     CHECK_SEQ(KV_HOME, KV_HOME, KV_LSFT_KC(KV_END), KV_LSFT_KC(KV_DOWN), KV_LSFT_KC(KV_DOWN),
               KV_LCTL_KC(KV_X), KV_BSPC);
     fresh(); key(KV_Y); key(KV_Y);
-    CHECK_SEQ(KV_HOME, KV_HOME, KV_LSFT_KC(KV_DOWN), KV_LCTL_KC(KV_C), KV_ESC);
+    CHECK_SEQ(KV_HOME, KV_HOME, KV_LSFT_KC(KV_DOWN), KV_LCTL_KC(KV_C), KV_ESC, KV_UP);
 }
 
 /* 全面审核（对照 vim.tiny 9.1）：`cc`/`S`/`Ncc` 必须**留一个空行**
@@ -133,7 +133,7 @@ static void test_linewise_operator_motions(void) {
     CHECK_SEQ(KV_HOME, KV_LSFT_KC(KV_UP), KV_LSFT_KC(KV_UP), KV_LCTL_KC(KV_X));
     /* yj 同样是行选（复制 2 行） */
     fresh(); key(KV_Y); key(KV_J);
-    CHECK_SEQ(KV_HOME, KV_LSFT_KC(KV_DOWN), KV_LSFT_KC(KV_DOWN), KV_LCTL_KC(KV_C), KV_ESC);
+    CHECK_SEQ(KV_HOME, KV_LSFT_KC(KV_DOWN), KV_LSFT_KC(KV_DOWN), KV_LCTL_KC(KV_C), KV_ESC, KV_UP, KV_UP);
     /* cj 行选 + 进 Insert */
     fresh(); key(KV_C); key(KV_J);
     CHECK_SEQ(KV_HOME, KV_LSFT_KC(KV_DOWN), KV_LSFT_KC(KV_DOWN), KV_LCTL_KC(KV_X));
@@ -595,15 +595,15 @@ static void test_yank_motion(void) {
     fresh(); key(KV_Y); key(KV_B);
     CHECK_SEQ(KV_CS(KV_LEFT), KV_LCTL_KC(KV_C), KV_ESC);
     fresh(); key(KV_Y); key(KV_C_DLR);
-    CHECK_SEQ(KV_LSFT_KC(KV_END), KV_LCTL_KC(KV_C), KV_ESC);
+    CHECK_SEQ(KV_LSFT_KC(KV_END), KV_LCTL_KC(KV_C), KV_ESC, KV_HOME);
     fresh(); key(KV_Y); key(KV_C_CARET);
     CHECK_SEQ(KV_LSFT_KC(KV_HOME), KV_LCTL_KC(KV_C), KV_ESC);
     /* yy / 3yy (line yank, n lines in one selection) */
     fresh(); key(KV_Y); key(KV_Y);
-    CHECK_SEQ(KV_HOME, KV_HOME, KV_LSFT_KC(KV_DOWN), KV_LCTL_KC(KV_C), KV_ESC);
+    CHECK_SEQ(KV_HOME, KV_HOME, KV_LSFT_KC(KV_DOWN), KV_LCTL_KC(KV_C), KV_ESC, KV_UP);
     fresh(); key(KV_3); key(KV_Y); key(KV_Y);
     CHECK_SEQ(KV_HOME, KV_HOME, KV_LSFT_KC(KV_DOWN), KV_LSFT_KC(KV_DOWN),
-              KV_LSFT_KC(KV_DOWN), KV_LCTL_KC(KV_C), KV_ESC);
+              KV_LSFT_KC(KV_DOWN), KV_LCTL_KC(KV_C), KV_ESC, KV_UP, KV_UP, KV_UP);
 }
 
 /* testcase.md §2 — operator corners: d$/d^/d0, postfix counts, count drop on
@@ -748,7 +748,7 @@ static void test_count_drop(void) {
     CHECK_SEQ(KV_LSFT_KC(KV_END), KV_LSFT_KC(KV_DOWN), KV_LSFT_KC(KV_DOWN), KV_LSFT_KC(KV_END), KV_LCTL_KC(KV_X));
     CHECK(kv_get_mode() == KV_MODE_INSERT); CHECK(kv_pending() == false);
     fresh(); key(KV_3); key(KV_C_D);  CHECK_SEQ(KV_LSFT_KC(KV_END), KV_LSFT_KC(KV_DOWN), KV_LSFT_KC(KV_DOWN), KV_LSFT_KC(KV_END), KV_LCTL_KC(KV_X)); CHECK(kv_pending() == false);
-    fresh(); key(KV_3); key(KV_C_Y);  CHECK_SEQ(KV_LSFT_KC(KV_END), KV_LSFT_KC(KV_DOWN), KV_LSFT_KC(KV_DOWN), KV_LSFT_KC(KV_END), KV_LCTL_KC(KV_C), KV_ESC); CHECK(kv_pending() == false);
+    fresh(); key(KV_3); key(KV_C_Y);  CHECK_SEQ(KV_LSFT_KC(KV_END), KV_LSFT_KC(KV_DOWN), KV_LSFT_KC(KV_DOWN), KV_LSFT_KC(KV_END), KV_LCTL_KC(KV_C), KV_ESC, KV_HOME); CHECK(kv_pending() == false);
 
     /* 3. 重复 3 次（真实 Vim：dw 后 3. 连删 3 个词）；计数本身不泄漏进回放的命令 */
     fresh(); key(KV_X); rec_start(); key(KV_3); key(KV_DOT);
@@ -1118,7 +1118,7 @@ static void test_command_guards(void) {
     rec_start(); kv_emit_line_op(KV_D, 0); flush_emit();
     CHECK_SEQ(KV_HOME, KV_HOME, KV_LSFT_KC(KV_END), KV_LCTL_KC(KV_X), KV_BSPC);
     rec_start(); kv_emit_line_op(KV_Y, 0); flush_emit();
-    CHECK_SEQ(KV_HOME, KV_HOME, KV_LSFT_KC(KV_DOWN), KV_LCTL_KC(KV_C), KV_ESC);
+    CHECK_SEQ(KV_HOME, KV_HOME, KV_LSFT_KC(KV_DOWN), KV_LCTL_KC(KV_C), KV_ESC, KV_UP);
     /* cc via the emitter enters Insert；**不发 BSPC**（留一个空行，同 Vim） */
     rec_start(); kv_emit_line_op(KV_C, 1); flush_emit();
     CHECK_SEQ(KV_HOME, KV_HOME, KV_LSFT_KC(KV_END), KV_LCTL_KC(KV_X));

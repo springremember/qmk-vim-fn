@@ -73,6 +73,9 @@ void kv_emit_op_motion(kv_keycode_t op, kv_motion_t m, int n) {
     } else if (op == KV_Y) {
         kv_emit_tap(KV_LCTL_KC(KV_C));
         kv_emit_tap(KV_ESC);   /* 复制后取消宿主残留选区 */
+        /* Vim 的 y 不移动光标：把宿主光标拉回原处（列无法恢复） */
+        if (m == M_DOLLAR) kv_emit_tap(KV_HOME);
+        else if (m == M_J || m == M_K) kv_emit_taps(KV_UP, n + 1);
     } else {
         kv_emit_tap(KV_LCTL_KC(KV_X));
     }
@@ -86,6 +89,7 @@ void kv_emit_line_op(kv_keycode_t op, int n) {
         kv_emit_taps(KV_LSFT_KC(KV_DOWN), n);
         kv_emit_tap(KV_LCTL_KC(KV_C));
         kv_emit_tap(KV_ESC);   /* 取消宿主残留选区（否则下一个键会替换刚复制的内容） */
+        kv_emit_taps(KV_UP, n); /* Vim 的 y 不移动光标：把宿主光标拉回原行 */
         return;
     }
     kv_emit_tap(KV_HOME);
@@ -242,6 +246,7 @@ void kv_emit_yank_to_eol(void) {
     kv_emit_tap(KV_LSFT_KC(KV_END));
     kv_emit_tap(KV_LCTL_KC(KV_C));
     kv_emit_tap(KV_ESC);
+    kv_emit_tap(KV_HOME);   /* Vim 的 y$ 不移动光标（列无法恢复，回到列 0） */
 }
 
 /* C/D/Y 带计数：选区 = [光标, 下面第 n-1 行的行尾]（真实 Vim 的 `dN$`）。 */
@@ -255,7 +260,7 @@ static void emit_eol_range(int n) {
 
 void kv_emit_delete_to_eol_n(int n) { if (n < 1) n = 1; emit_eol_range(n); kv_emit_tap(KV_LCTL_KC(KV_X)); }
 void kv_emit_change_to_eol_n(int n) { if (n < 1) n = 1; emit_eol_range(n); kv_emit_tap(KV_LCTL_KC(KV_X)); kv_emit_enter_insert(KV_I); }
-void kv_emit_yank_to_eol_n(int n)   { if (n < 1) n = 1; emit_eol_range(n); kv_emit_tap(KV_LCTL_KC(KV_C)); kv_emit_tap(KV_ESC); }
+void kv_emit_yank_to_eol_n(int n)   { if (n < 1) n = 1; emit_eol_range(n); kv_emit_tap(KV_LCTL_KC(KV_C)); kv_emit_tap(KV_ESC); kv_emit_tap(KV_HOME); }
 
 void kv_emit_visual_enter(void) { kv_emit_tap(KV_LSFT_KC(KV_RGHT)); }
 
