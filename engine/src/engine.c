@@ -478,24 +478,24 @@ static kv_feed_t feed_visual(kv_keycode_t kc) {
     /* design §4.9：动作后退出可视（Vim 语义）。行选下动作与选区方向无关：
      * kv_emit_vline_action 统一按"整行 + 行尾换行"处理。 */
     if (kc == KV_D || kc == KV_X) {
-        if (vline) kv_emit_vline_action(KV_D, s_vl_up); else kv_emit_delete_to_eol();
+        if (vline) kv_emit_vline_action(KV_D, s_vl_up); else kv_emit_visual_cut();
         s_mode = KV_MODE_NORMAL; vline_reset(); reset_pending(); return R_CONSUMED;
     }
     if (kc == KV_Y) {
-        if (vline) kv_emit_vline_action(KV_Y, s_vl_up); else kv_emit_yank_to_eol();
+        if (vline) kv_emit_vline_action(KV_Y, s_vl_up); else kv_emit_visual_yank();
         s_mode = KV_MODE_NORMAL; vline_reset(); reset_pending(); return R_CONSUMED;
     }
     if (kc == KV_C) {
-        if (vline) kv_emit_vline_action(KV_C, s_vl_up); else kv_emit_change_to_eol();
+        if (vline) kv_emit_vline_action(KV_C, s_vl_up); else kv_emit_visual_change();
         s_mode = KV_MODE_INSERT; vline_reset(); reset_pending(); return R_CONSUMED;
     }
     if (kc == KV_S) {
         /* 真实 Vim：V s ≡ V c（删整行 + 留一个空行 + Insert），不再只删 1 字符。 */
-        if (vline) kv_emit_vline_action(KV_C, s_vl_up); else kv_emit_substitute();
+        if (vline) kv_emit_vline_action(KV_C, s_vl_up); else kv_emit_visual_change(); /* Vim: 字符级 s ≡ c */
         s_mode = KV_MODE_INSERT; vline_reset(); reset_pending(); return R_CONSUMED;
     }
     if (kc == KV_P) {
-        if (vline) kv_emit_vline_action(KV_P, s_vl_up); else kv_emit_paste(false);
+        if (vline) kv_emit_vline_action(KV_P, s_vl_up); else kv_emit_visual_paste();
         s_mode = KV_MODE_NORMAL; vline_reset(); reset_pending(); return R_CONSUMED;
     }
     if (t == T_VISUAL) {

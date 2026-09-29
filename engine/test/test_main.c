@@ -59,7 +59,7 @@ static void test_single(void) {
     fresh(); key(KV_X); CHECK_SEQ(KV_DEL);
     fresh(); key(KV_C_X); CHECK_SEQ(KV_BSPC);
     fresh(); key(KV_C_D); CHECK_SEQ(KV_LSFT_KC(KV_END), KV_LCTL_KC(KV_X));
-    fresh(); key(KV_C_Y); CHECK_SEQ(KV_LSFT_KC(KV_END), KV_LCTL_KC(KV_C));
+    fresh(); key(KV_C_Y); CHECK_SEQ(KV_LSFT_KC(KV_END), KV_LCTL_KC(KV_C), KV_ESC);
     fresh(); key(KV_P); CHECK_SEQ(KV_LCTL_KC(KV_V));
     fresh(); key(KV_C_P); CHECK_SEQ(KV_LEFT, KV_LCTL_KC(KV_V));
     fresh(); key(KV_C_J); CHECK_SEQ(KV_END, KV_SPC, KV_DEL);
@@ -112,7 +112,7 @@ static void test_op(void) {
     CHECK_SEQ(KV_HOME, KV_HOME, KV_LSFT_KC(KV_END), KV_LSFT_KC(KV_DOWN), KV_LSFT_KC(KV_DOWN),
               KV_LCTL_KC(KV_X), KV_BSPC);
     fresh(); key(KV_Y); key(KV_Y);
-    CHECK_SEQ(KV_HOME, KV_HOME, KV_LSFT_KC(KV_DOWN), KV_LCTL_KC(KV_C));
+    CHECK_SEQ(KV_HOME, KV_HOME, KV_LSFT_KC(KV_DOWN), KV_LCTL_KC(KV_C), KV_ESC);
 }
 
 /* 全面审核（对照 vim.tiny 9.1）：`cc`/`S`/`Ncc` 必须**留一个空行**
@@ -188,7 +188,7 @@ static void test_insert(void) {
 static void test_visual(void) {
     fresh(); kv_set_mode(KV_MODE_VISUAL); rec_start();
     key(KV_H); CHECK_SEQ(KV_LSFT_KC(KV_LEFT));
-    rec_start(); key(KV_D); CHECK_SEQ(KV_LSFT_KC(KV_END), KV_LCTL_KC(KV_X));
+    rec_start(); key(KV_D); CHECK_SEQ(KV_LCTL_KC(KV_X)); /* 直接剪当前选区（不扩到行尾） */
     CHECK(kv_get_mode() == KV_MODE_NORMAL); /* 动作后退出可视（design §4.9） */
     rec_start(); key(KV_ESC); CHECK(kv_get_mode() == KV_MODE_NORMAL);
     /* illegal key stays in visual */
@@ -556,22 +556,24 @@ static void test_motion_words(void) {
 /* testcase.md §2 — y + motion yanks with Ctrl+C (op != d).  Word motions
  * select with Ctrl+Shift (same range used by dw). */
 static void test_yank_motion(void) {
+    /* 复制后必须补 Esc：宿主在 Ctrl+C 后保留高亮选区，不取消则下一个键会替换它
+     * （实测 `yy` 后按 `x` 会删掉整行 = 数据损坏）。 */
     fresh(); key(KV_Y); key(KV_E);
-    CHECK_SEQ(KV_CS(KV_RGHT), KV_LCTL_KC(KV_C));
+    CHECK_SEQ(KV_CS(KV_RGHT), KV_LCTL_KC(KV_C), KV_ESC);
     fresh(); key(KV_Y); key(KV_W);
-    CHECK_SEQ(KV_CS(KV_RGHT), KV_LCTL_KC(KV_C));
+    CHECK_SEQ(KV_CS(KV_RGHT), KV_LCTL_KC(KV_C), KV_ESC);
     fresh(); key(KV_Y); key(KV_B);
-    CHECK_SEQ(KV_CS(KV_LEFT), KV_LCTL_KC(KV_C));
+    CHECK_SEQ(KV_CS(KV_LEFT), KV_LCTL_KC(KV_C), KV_ESC);
     fresh(); key(KV_Y); key(KV_C_DLR);
-    CHECK_SEQ(KV_LSFT_KC(KV_END), KV_LCTL_KC(KV_C));
+    CHECK_SEQ(KV_LSFT_KC(KV_END), KV_LCTL_KC(KV_C), KV_ESC);
     fresh(); key(KV_Y); key(KV_C_CARET);
-    CHECK_SEQ(KV_LSFT_KC(KV_HOME), KV_LCTL_KC(KV_C));
+    CHECK_SEQ(KV_LSFT_KC(KV_HOME), KV_LCTL_KC(KV_C), KV_ESC);
     /* yy / 3yy (line yank, n lines in one selection) */
     fresh(); key(KV_Y); key(KV_Y);
-    CHECK_SEQ(KV_HOME, KV_HOME, KV_LSFT_KC(KV_DOWN), KV_LCTL_KC(KV_C));
+    CHECK_SEQ(KV_HOME, KV_HOME, KV_LSFT_KC(KV_DOWN), KV_LCTL_KC(KV_C), KV_ESC);
     fresh(); key(KV_3); key(KV_Y); key(KV_Y);
     CHECK_SEQ(KV_HOME, KV_HOME, KV_LSFT_KC(KV_DOWN), KV_LSFT_KC(KV_DOWN),
-              KV_LSFT_KC(KV_DOWN), KV_LCTL_KC(KV_C));
+              KV_LSFT_KC(KV_DOWN), KV_LCTL_KC(KV_C), KV_ESC);
 }
 
 /* testcase.md §2 — operator corners: d$/d^/d0, postfix counts, count drop on
@@ -713,7 +715,7 @@ static void test_count_drop(void) {
     CHECK_SEQ(KV_LSFT_KC(KV_END), KV_LCTL_KC(KV_X));
     CHECK(kv_get_mode() == KV_MODE_INSERT); CHECK(kv_pending() == false);
     fresh(); key(KV_3); key(KV_C_D);  CHECK_SEQ(KV_LSFT_KC(KV_END), KV_LCTL_KC(KV_X)); CHECK(kv_pending() == false);
-    fresh(); key(KV_3); key(KV_C_Y);  CHECK_SEQ(KV_LSFT_KC(KV_END), KV_LCTL_KC(KV_C)); CHECK(kv_pending() == false);
+    fresh(); key(KV_3); key(KV_C_Y);  CHECK_SEQ(KV_LSFT_KC(KV_END), KV_LCTL_KC(KV_C), KV_ESC); CHECK(kv_pending() == false);
 
     /* 3. 重复 3 次（真实 Vim：dw 后 3. 连删 3 个词）；计数本身不泄漏进回放的命令 */
     fresh(); key(KV_X); rec_start(); key(KV_3); key(KV_DOT);
@@ -764,26 +766,26 @@ static void test_visual_commands(void) {
     fresh_visual(); key(KV_2); key(KV_W);
     CHECK_SEQ(KV_CS(KV_RGHT), KV_CS(KV_RGHT));
 
-    /* y: yank selection, then back to Normal（Vim 语义） */
+    /* y: 直接复制当前选区 + Esc（不再多发 Shift+End 扩到行尾） */
     fresh_visual(); key(KV_Y);
-    CHECK_SEQ(KV_LSFT_KC(KV_END), KV_LCTL_KC(KV_C));
+    CHECK_SEQ(KV_LCTL_KC(KV_C), KV_ESC);
     CHECK(kv_get_mode() == KV_MODE_NORMAL);
     CHECK(kv_pending() == false);
 
-    /* d / x: cut selection, then back to Normal */
-    fresh_visual(); key(KV_D); CHECK_SEQ(KV_LSFT_KC(KV_END), KV_LCTL_KC(KV_X));
+    /* d / x: 直接剪当前选区（旧实现多发 Shift+End → 删掉整行，实测 v l l d 出错） */
+    fresh_visual(); key(KV_D); CHECK_SEQ(KV_LCTL_KC(KV_X));
     CHECK(kv_get_mode() == KV_MODE_NORMAL);
-    fresh_visual(); key(KV_X); CHECK_SEQ(KV_LSFT_KC(KV_END), KV_LCTL_KC(KV_X));
+    fresh_visual(); key(KV_X); CHECK_SEQ(KV_LCTL_KC(KV_X));
     CHECK(kv_get_mode() == KV_MODE_NORMAL);
 
-    /* c: cut + Insert */
+    /* c: 剪选区 + Insert */
     fresh_visual(); key(KV_C);
-    CHECK_SEQ(KV_LSFT_KC(KV_END), KV_LCTL_KC(KV_X));
+    CHECK_SEQ(KV_LCTL_KC(KV_X));
     CHECK(kv_get_mode() == KV_MODE_INSERT);
 
-    /* s: substitute + Insert */
+    /* s ≡ c（字符级 Visual 下 Vim 的 s 也是"改选区"） */
     fresh_visual(); key(KV_S);
-    CHECK_SEQ(KV_LSFT_KC(KV_RGHT), KV_DEL);
+    CHECK_SEQ(KV_LCTL_KC(KV_X));
     CHECK(kv_get_mode() == KV_MODE_INSERT);
 
     /* 用户实测缺陷回归（2026 重写）：`V j y` 必须复制**完整两整行**。
@@ -833,7 +835,7 @@ static void test_visual_commands(void) {
     CHECK_SEQ(KV_LSFT_KC(KV_DOWN));
 
     /* p: paste */
-    fresh_visual(); key(KV_P); CHECK_SEQ(KV_LCTL_KC(KV_V));
+    fresh_visual(); key(KV_P); CHECK_SEQ(KV_LCTL_KC(KV_V), KV_ESC);
 
     /* illegal keys are swallowed and stay in Visual */
     fresh_visual(); key(KV_C_I);
@@ -1083,7 +1085,7 @@ static void test_command_guards(void) {
     rec_start(); kv_emit_line_op(KV_D, 0); flush_emit();
     CHECK_SEQ(KV_HOME, KV_HOME, KV_LSFT_KC(KV_END), KV_LCTL_KC(KV_X), KV_BSPC);
     rec_start(); kv_emit_line_op(KV_Y, 0); flush_emit();
-    CHECK_SEQ(KV_HOME, KV_HOME, KV_LSFT_KC(KV_DOWN), KV_LCTL_KC(KV_C));
+    CHECK_SEQ(KV_HOME, KV_HOME, KV_LSFT_KC(KV_DOWN), KV_LCTL_KC(KV_C), KV_ESC);
     /* cc via the emitter enters Insert；**不发 BSPC**（留一个空行，同 Vim） */
     rec_start(); kv_emit_line_op(KV_C, 1); flush_emit();
     CHECK_SEQ(KV_HOME, KV_HOME, KV_LSFT_KC(KV_END), KV_LCTL_KC(KV_X));

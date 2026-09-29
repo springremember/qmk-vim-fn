@@ -173,12 +173,12 @@ static void test_op_modifier_family(void) {
     const kv_keycode_t d_dlr[]   = { KV_LSFT_KC(KV_END),  KV_LCTL_KC(KV_X) };
     const kv_keycode_t d_caret[] = { KV_LSFT_KC(KV_HOME), KV_LCTL_KC(KV_X) };
     const kv_keycode_t d_G[]     = { KV_CS(KV_END),       KV_LCTL_KC(KV_X) };
-    const kv_keycode_t y_dlr[]   = { KV_LSFT_KC(KV_END),  KV_LCTL_KC(KV_C) };
+    const kv_keycode_t y_dlr[]   = { KV_LSFT_KC(KV_END),  KV_LCTL_KC(KV_C), KV_ESC };
 
     test_op_modifier_second("d $", KC_D, KC_LSFT, KC_4, d_dlr,   2);
     test_op_modifier_second("d ^", KC_D, KC_RSFT, KC_6, d_caret, 2);
     test_op_modifier_second("d G", KC_D, KC_LSFT, KC_G, d_G,     2);
-    test_op_modifier_second("y $", KC_Y, KC_LSFT, KC_4, y_dlr,   2);
+    test_op_modifier_second("y $", KC_Y, KC_LSFT, KC_4, y_dlr,   3);
 }
 
 /* ======================================================================
@@ -298,7 +298,7 @@ static void test_pure_shift_folding(void) {
     const kv_keycode_t caret[] = { KV_HOME };
     const kv_keycode_t x_up[]  = { KV_BSPC };
     const kv_keycode_t D[]     = { KV_LSFT_KC(KV_END), KV_LCTL_KC(KV_X) };
-    const kv_keycode_t Y[]     = { KV_LSFT_KC(KV_END), KV_LCTL_KC(KV_C) };
+    const kv_keycode_t Y[]     = { KV_LSFT_KC(KV_END), KV_LCTL_KC(KV_C), KV_ESC };
     /* cc / S contract (engine test_main.c): line select + delete, NO BSPC (leaves an empty
      * line, like real Vim); dd keeps the BSPC to remove the whole line. */
     const kv_keycode_t S[]     = { KV_HOME, KV_HOME, KV_LSFT_KC(KV_END),
@@ -309,7 +309,7 @@ static void test_pure_shift_folding(void) {
     test_shift_fold(KC_6, caret, 1, "^");
     test_shift_fold(KC_X, x_up,  1, "X");
     test_shift_fold(KC_D, D,     2, "D");
-    test_shift_fold(KC_Y, Y,     2, "Y");
+    test_shift_fold(KC_Y, Y,     3, "Y");
     test_shift_fold(KC_S, S,     4, "S");
 
     /* Shift+Z enters the Z prefix (pending, no emit) */

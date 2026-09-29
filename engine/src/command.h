@@ -42,6 +42,14 @@ void kv_emit_vline_reanchor(bool to_up, int off_before, int off_after); /* 方�
 void kv_emit_vline_gg(bool dir_up, int off);
 void kv_emit_vline_G(bool dir_up, int off);
 void kv_emit_vline_action(kv_keycode_t op, bool dir_up); /* op ∈ {KV_Y,KV_D,KV_C,KV_P} */
+
+/* 字符级 VISUAL 的动作：直接作用于**当前选区**（design §4.9）。
+ * 旧实现在动作前多发 Shift+End 把选区扩到行尾（`v l l d` 会删掉整行），复制后也不取消
+ * 宿主残留选区（`yy` 后按 `x` 会删掉整行）—— 都是数据损坏级缺陷。 */
+void kv_emit_visual_cut(void);     /* d/x: Ctrl+X */
+void kv_emit_visual_yank(void);    /* y  : Ctrl+C + Esc */
+void kv_emit_visual_change(void);  /* c/s: Ctrl+X + 进 INSERT */
+void kv_emit_visual_paste(void);   /* p  : Ctrl+V + Esc */
 /* Single-key editing commands. */
 void kv_emit_delete_char(void);     /* x  */
 void kv_emit_backspace_char(void);  /* X  */

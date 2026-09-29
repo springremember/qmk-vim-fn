@@ -57,8 +57,11 @@ void kv_emit_op_motion(kv_keycode_t op, kv_motion_t m, int n) {
     if (op == KV_C) {
         kv_emit_tap(KV_LCTL_KC(KV_X));
         kv_emit_enter_insert(KV_I);
+    } else if (op == KV_Y) {
+        kv_emit_tap(KV_LCTL_KC(KV_C));
+        kv_emit_tap(KV_ESC);   /* 复制后取消宿主残留选区 */
     } else {
-        kv_emit_tap(KV_LCTL_KC(op == KV_D ? KV_X : KV_C));
+        kv_emit_tap(KV_LCTL_KC(KV_X));
     }
 }
 
@@ -69,6 +72,7 @@ void kv_emit_line_op(kv_keycode_t op, int n) {
         kv_emit_tap(KV_HOME);
         kv_emit_taps(KV_LSFT_KC(KV_DOWN), n);
         kv_emit_tap(KV_LCTL_KC(KV_C));
+        kv_emit_tap(KV_ESC);   /* 取消宿主残留选区（否则下一个键会替换刚复制的内容） */
         return;
     }
     kv_emit_tap(KV_HOME);
@@ -219,10 +223,19 @@ void kv_emit_delete_to_eol(void) {
     kv_emit_tap(KV_LCTL_KC(KV_X));
 }
 
+/* 复制后补 Esc：宿主在 Ctrl+C 后保留高亮选区，不取消则下一个键会替换刚复制的内容
+ * （实测 `yy` 后按 `x` 会删掉整行 = 数据损坏）。 */
 void kv_emit_yank_to_eol(void) {
     kv_emit_tap(KV_LSFT_KC(KV_END));
     kv_emit_tap(KV_LCTL_KC(KV_C));
+    kv_emit_tap(KV_ESC);
 }
+
+/* 字符级 VISUAL：动作直接作用于当前选区，不再自行扩选。 */
+void kv_emit_visual_cut(void)    { kv_emit_tap(KV_LCTL_KC(KV_X)); }
+void kv_emit_visual_yank(void)   { kv_emit_tap(KV_LCTL_KC(KV_C)); kv_emit_tap(KV_ESC); }
+void kv_emit_visual_change(void) { kv_emit_tap(KV_LCTL_KC(KV_X)); kv_emit_enter_insert(KV_I); }
+void kv_emit_visual_paste(void)  { kv_emit_tap(KV_LCTL_KC(KV_V)); kv_emit_tap(KV_ESC); }
 
 void kv_emit_paste(bool before) {
     if (before) kv_emit_tap(KV_LEFT);
