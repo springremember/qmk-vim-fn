@@ -178,7 +178,14 @@
 | **模式切换清空（API）** | `2d` → `kv_set_mode(INSERT)` → `kv_set_mode(NORMAL)` → `w` | `w` 只执行移动（不残留 `dw`）；`kv_pending()==false` | §4.7 |
 | **使能切换清空（API）** | `2d` → `kv_disable()` | `kv_pending()==false`；`kv_kbd(任意)` 全 `KV_PASSTHROUGH` | §4.7 |
 | **重新使能起点** | 任意模式 → `kv_disable()` → `kv_enable()` | `kv_get_mode()==INSERT` | §4.7 |
-| **repeat 不跨模式污染** | `2d` → `kv_set_mode(INSERT)` → `kv_set_mode(NORMAL)` → `w` → `.` | `.` 回放 `w`（不得回放 `2dw`） | §4.7 |
+| **repeat 不跨模式污染** | `2d` → `kv_set_mode(INSERT)` → `kv_set_mode(NORMAL)` → `w` → `.` | `.` 既不是 `2dw` 也不是 `w`（移动不记录）；无更早修改则 0 输出 | §4.7 |
+| **`.` 目标是上一次修改** | `dw` → `w` → `.` | `.` 回放 `dw`（裸移动不夺走目标） | §4.7 |
+| **`.` 忽略纯复制** | `x` → `yy` → `.` | `.` 回放 `x`（`y` 不是修改） | §4.7 |
+| **`.` 忽略 `Y`** | `x` → `Y` → `w` → `.` | `.` 回放 `x` | §4.7 |
+| **缩进是修改** | `>>` → `w` → `.` | `.` 回放 `>>` | §4.7 |
+| **粘贴是修改** | `p` → `w` → `.` | `.` 回放 `p` | §4.7 |
+| **连接是修改** | `J` → `w` → `.` | `.` 回放 `J` | §4.7 |
+| **只有移动时 `.` 无动作** | `w` `j` `3j` `gg` → `.` | 0 输出 | §4.7 |
 | **repeat 跨模式保留** | `dd` → `kv_set_mode(INSERT)` → `kv_set_mode(NORMAL)` → `.` | `.` 回放 `dd` | §4.7 |
 | **Shift+Esc（Visual 内）** | `v` `LSFT+Esc` | 退出 Visual 回 Normal（不吞死） | §4.10 |
 
