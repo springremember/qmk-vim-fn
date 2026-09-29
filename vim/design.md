@@ -420,7 +420,7 @@ while (queue_has()) {
 | `C D Y` | `c$` / `d$` / `y$` |
 | `S` / `NS` | 同 `cc` / `Ncc`（**×n 行**） |
 | `dd` / `Ndd` | Home, Home, Shift+End, Shift+Down×(n-1), Ctrl+X, Backspace（**×n 行**；n=1 时无 `Shift+Down`） |
-| `yy` / `Nyy` | Home, Home, Shift+Down×n, Ctrl+C（**×n 行**） |
+| `yy` / `Nyy` | Home, Home, Shift+Down×n, Ctrl+C, **Esc**（**×n 行**；Esc 取消宿主残留选区） |
 | `cc` / `Ncc` | Home, Home, Shift+End, Shift+Down×(n-1), change (+Insert)（**×n 行**；n=1 时无 `Shift+Down`） |
 | `dw` / `d$` / `d0` | 选词/选到行首尾 → Ctrl+X |
 | `p` / `P` | Ctrl+V（`P` 先 `←`；不做 `yanked_line` 行选定位） |
@@ -449,6 +449,10 @@ while (queue_has()) {
   由共享 keymap 层步骤 6 `esc_process()` 决定：非宽限时吞键转 NORMAL，宽限内透传真实 Esc（见 §4.12）。
 - **VISUAL / VISUAL_LINE**：键集 = 移动（含计数 `Nm`）+ `d/y/c/x/s/p`。移动按 Shift 变体扩展选区；
   `d/x`=剪选区、`y`=复制、`c/s`=剪+进 INSERT、`p`=粘贴，完成后回 NORMAL。
+  **字符级 VISUAL 的动作直接作用于当前选区**（2026-09 修正）：
+  `d`/`x` = `Ctrl+X`；`y` = `Ctrl+C` + `Esc`；`c`/`s` = `Ctrl+X` + 进 INSERT；`p` = `Ctrl+V` + `Esc`。
+  旧实现在 `d`/`y`/`c` 前多发一个 `Shift+End`（把选区扩到行尾，实测 `v l l d` 会删掉整行而不是 2 个字符），
+  且复制后不取消宿主选区（下一个键会替换刚复制的内容 —— `yy` 后按 `x` 会删掉整行）。
   **VISUAL_LINE 另有行选近似映射（见下条），其移动输出与 VISUAL 不同。**
   **未列键（数字、`g`、`Z`、`<`/`>`、`i`/`a` 等）为非法键 → 吞键留在 Visual**（不退出、不插入、
   不产生 pending）——即 Visual 模式**没有多键 pending**，`kv_pending()` 在 VISUAL 下恒为 false。
