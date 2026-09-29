@@ -221,3 +221,20 @@
 | `jdgg` | `L3\|L4\|L5` | `Ctrl+Shift+Home`, `Ctrl+X` | `Home`, `Ctrl+Shift+Home`, `Ctrl+X` |
 
 `G`/`gg` 的计数仍丢弃（与 `G`/`gg` 单独使用一致，见 §2b），`j`/`k` 用 `n+1` 行。
+
+### 7.6 计数作用于单键编辑命令（2026-09 全面审核）
+
+与用户点名的 `N.` 同类：真实 Vim 的 `Nx`/`NX`/`Ns`/`NJ`/`Np`/`NP`/`Nu`/`NC`/`ND`/`NY`
+都接受计数，旧实现一律**丢弃**（`testcase.md` A1 行把它写成期望）。
+
+| 命令 | 真实 Vim（`abcdefgh\|L2xyz\|L3\|L4`，光标在行首） | 旧行为 | 现行为 |
+| :--- | :--- | :--- | :--- |
+| `3x` | `defgh\|…`（删 3 字符） | 只删 1 个 | `Delete` ×3 |
+| `3X` | 向前删 3 字符 | 只删 1 个 | `Backspace` ×3 |
+| `3s` | `defgh\|…`（改 3 字符 + Insert） | 只改 1 个 | `Shift+Right,Delete` ×3 + Insert |
+| `3J` | `abcdefgh L2xyz L3\|L4`（连 3 行） | 只连 1 次 | `End,Space,Delete` ×3 |
+| `3p` / `3P` | 粘贴 3 次 | 只粘 1 次 | `Ctrl+V` ×3 / `Left,Ctrl+V` ×3 |
+| `3u` | 撤销 3 次 | 只撤 1 次 | `Ctrl+Z` ×3 |
+| `3D` / `3C` / `3Y` | `L4` / `\|L4`（作用到下面第 2 行的行尾） | 只作用到当前行尾 | `Shift+End[,Shift+Down×2,Shift+End]` + 动作 |
+
+仍按设计丢弃计数：`G`/`gg`（§2b）、`ZZ`、插入键 `i I a A o O`、`v`/`V`。
