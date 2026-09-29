@@ -99,7 +99,13 @@ void kv_emit_line_op(kv_keycode_t op, int n) {
     kv_emit_tap(KV_LCTL_KC(KV_X));
     /* `cc`/`S` 必须**留一个空行**（真实 Vim：L1|L2|L3 上 cc => L1||L3、2cc => L1||L4）。
      * 只有 `dd` 才补 Backspace 把整行并掉（末行也因此可删）。 */
-    if (op != KV_C) kv_emit_tap(KV_BSPC);
+    if (op != KV_C) {
+        kv_emit_tap(KV_BSPC);
+        /* 真实 Vim 的 `dd` 把光标留在**接替行的行首**（jddx 删 L3 首字符、Gddx 删新末行首字符）；
+         * 只发到 Backspace 会停在上一行行尾，紧随其后的 x/p 就作用在错误位置。 */
+        kv_emit_tap(KV_DOWN);
+        kv_emit_tap(KV_HOME);
+    }
     if (op == KV_C) kv_emit_enter_insert(KV_I);
 }
 

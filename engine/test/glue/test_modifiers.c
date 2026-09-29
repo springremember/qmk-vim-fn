@@ -656,10 +656,11 @@ static void test_emit_add_quadrant_dd(void) {
     CHECK(feed(KC_D, true) == false);
     kv_emit_flush_now();
 
-    CHECK(s_hits[KC_HOME] == 2);
+    CHECK(s_hits[KC_HOME] == 3);   /* Home×2（行首）+ Home（dd 后把光标放到接替行行首） */
     CHECK(s_hits[KC_END] == 1);
     CHECK(s_hits[KC_X] == 1);
     CHECK(s_hits[KC_BSPC] == 1);
+    CHECK(s_hits[KC_DOWN] == 1);   /* dd 后 Down,Home 把光标移到接替行行首 */
 
     CHECK(s_add_n == 2);
     CHECK(log_has(s_add, s_add_n, MOD_BIT_LSHIFT));
