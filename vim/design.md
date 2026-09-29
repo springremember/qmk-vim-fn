@@ -104,6 +104,13 @@ struct nv_cmd { int cmd_char; nv_func_T cmd_func; short_u cmd_flags; short cmd_a
 - `insert_mode()` **无条件 `clear_keyboard()`**。
 - 操作符：`start_*_action` 设 `action_key`/`action_func` 并切到 `process_vim_action`。
 - `dd`（定稿）：`Home×2 → Shift+End → Ctrl+X → Backspace`（两次主机编辑）。
+- `cc` / `S` / `Ncc`（2026-09 修正）：`Home×2 → Shift+End [→ Shift+Down×(n−1)] → Ctrl+X`
+  （**不发 Backspace**）。真实 Vim 的 `cc`/`S` 会**留一个空行**（`L1|L2|L3` 上 `cc` ⇒ `L1||L3`，
+  `2cc` ⇒ `L1||L4`）；旧实现与 `dd` 完全相同、多发一个 Backspace 把整行并掉，实测与 Vim 不符。
+  去掉 Backspace 后三种位置（首行/中间/末行）都与 Vim 一致。
+- `J`（2026-09 修正）：`End → Space → Delete`。真实 Vim 的连接会**插一个空格**
+  （`three` + `four` ⇒ `three four`）；旧实现只发 `End → Delete`，得到 `threefour`。
+  **已知偏差**：Vim 还会去掉下一行的**前导空白**，固件读不到空白长度，故保留。
 - 计数：全局 `motion_counter`（名义 ≤2 位，但存在越界路径），`DO_NUMBERED_ACTION` 循环执行。
 
 ### 3.3 缺陷（对应 E1–E6 / A1–A8）

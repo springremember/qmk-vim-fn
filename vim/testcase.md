@@ -27,7 +27,7 @@
 | 整行改 | `S` | `Home`,`Home`,`Shift+End`,change(+Insert) | |
 | 粘贴 | `p` | `Ctrl+V`（光标后粘） | |
 | 向前粘 | `P` | `←`,`Ctrl+V`（光标前粘；**不做行选定位**） | |
-| 合并 | `J` | `End`,`Delete` | |
+| 合并 | `J` | `End`,`Space`,`Delete`（插一个空格；不去前导空白） | |
 | 撤销 | `u` | `Ctrl+Z`（**单次**） | E4 |
 | 重复 | `.` | 重放上一命令 token | A2 |
 | Normal Esc 透传 | `Esc`（Normal） | 发真实 `Esc`，回 Insert | |
@@ -54,8 +54,8 @@
 | 删行 | `dd` | `Home,Home,Shift+End,Ctrl+X,Backspace` | E1,E4 |
 | 删 3 行 | `3dd` | `Home,Home,Shift+End,Shift+Down×2,Ctrl+X,Backspace`（单次选区覆盖 3 行） | |
 | 复制行 | `yy` | `Home,Home,Shift+Down×1,Ctrl+C` | |
-| 改行 | `cc` | `Home,Home,Shift+End`,change(+Insert) | |
-| 改 3 行 | `3cc` / `3S` | `Home,Home,Shift+End,Shift+Down×2`,change(+Insert)（单次选区覆盖 3 行） | |
+| 改行 | `cc` | `Home,Home,Shift+End`,`Ctrl+X`(+Insert) —— **不发 `Backspace`**，留一个空行 | |
+| 改 3 行 | `3cc` / `3S` | `Home,Home,Shift+End,Shift+Down×2`,`Ctrl+X`(+Insert)（单次选区覆盖 3 行；留一个空行） | |
 | 复制 3 行 | `3yy` | `Home,Home,Shift+Down×3,Ctrl+C`（单次选区覆盖 3 行） | |
 | `dd` 末行 | 在文档末行 `dd` | 可删除 | E1 |
 | `dd` 首行 | 在首行 `dd` | 允许留一个空行（已知取舍） | E1 |
