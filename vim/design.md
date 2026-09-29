@@ -110,10 +110,10 @@ struct nv_cmd { int cmd_char; nv_func_T cmd_func; short_u cmd_flags; short cmd_a
   `dj`/`dk`/`dG`/`dgg`/`cj`/`yG`… 是**行选**（`dj` 删当前行+下一行 = 2 行，`2dj` = 3 行）。
   发射分方向（半开区间 `[anchor,cursor)` 决定，2026-09 修正）：
   - **向下** `j`/`G`：`Home → Shift+Down×(n+1) → 动作`；`G` 用 `Home → Ctrl+Shift+End → 动作`。
-  - **向上** `k`：`Home → End → Shift+Up×n → Shift+Home → 动作`。锚点必须落在**当前行行尾**
-    （而不是行首），否则半开区间会**漏掉当前行自身的内容**（`dk` 只删上一行）；末行没有下一行
-    时也能正确覆盖。
-  - **向上到顶** `gg`：`End → Ctrl+Shift+Home → 动作`（同上，锚点在当前行行尾）。
+  - **向上** `k`：`Home → End → Right → Shift+Up×(n+1) → 动作`。`End, Right` 把光标**越过当前行
+    的行尾换行**到下一行行首，锚点落在那里；半开区间才**包含当前行的换行**（否则 `dk` 只删掉
+    行内容、留下一个空行）。末行（无换行）时 `Right` 无效、锚点落在缓冲末尾，同样正确。
+  - **向上到顶** `gg`：`End → Right → Ctrl+Shift+Home → 动作`（同理，锚点越过当前行换行）。
   旧实现从**当前列**开始扩选，会删掉"上一行尾部 + 下一行头部"（数据损坏）。
 - `dd`（定稿）：`Home×2 → Shift+End → Ctrl+X → Backspace → Down → Home`（两次主机编辑）。
   **末尾的 `Down, Home` 把宿主光标放到"接替行"的行首**（2026-09 修正）：真实 Vim 的 `dd`
