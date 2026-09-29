@@ -115,10 +115,11 @@ void kv_emit_indent_motion(kv_keycode_t ang, kv_motion_t m, int n) {
 
 void kv_emit_indent_line(kv_keycode_t ang, int n) {
     if (n < 1) n = 1;
-    /* select n lines (Home, Home, Shift+Down x (n-1)) then indent/outdent */
+    /* 选中 n 行（宿主选区是半开区间：n 行 = Shift+Down×n）再缩进/反缩进。
+     * 真实 Vim：`>>` 1 行、`2>>` 2 行、`3>>` 3 行；旧实现用 ×(n-1) 会少缩进一行。 */
     kv_emit_tap(KV_HOME);
     kv_emit_tap(KV_HOME);
-    if (n > 1) kv_emit_taps(KV_LSFT_KC(KV_DOWN), n - 1);
+    kv_emit_taps(KV_LSFT_KC(KV_DOWN), n);
     kv_emit_tap(ang == KV_C_GT ? KV_TAB : KV_LSFT_KC(KV_TAB));
 }
 

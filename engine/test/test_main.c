@@ -173,9 +173,9 @@ static void test_indent(void) {
     /* >j 是**行选**（Vim：缩进当前行 + 下一行 = 2 行） */
     fresh(); key(KV_C_GT); key(KV_J);
     CHECK_SEQ(KV_HOME, KV_LSFT_KC(KV_DOWN), KV_LSFT_KC(KV_DOWN), KV_TAB);
-    fresh(); key(KV_C_GT); key(KV_C_GT); CHECK_SEQ(KV_HOME, KV_HOME, KV_TAB);
+    fresh(); key(KV_C_GT); key(KV_C_GT); CHECK_SEQ(KV_HOME, KV_HOME, KV_LSFT_KC(KV_DOWN), KV_TAB);
     fresh(); key(KV_3); key(KV_C_LT); key(KV_C_LT);
-    CHECK_SEQ(KV_HOME, KV_HOME, KV_LSFT_KC(KV_DOWN), KV_LSFT_KC(KV_DOWN), KV_LSFT_KC(KV_TAB));
+    CHECK_SEQ(KV_HOME, KV_HOME, KV_LSFT_KC(KV_DOWN), KV_LSFT_KC(KV_DOWN), KV_LSFT_KC(KV_DOWN), KV_LSFT_KC(KV_TAB));
     fresh(); key(KV_C_GT); key(KV_1); key(KV_0); key(KV_J);
     CHECK(rec_count() == 13); /* HOME + 11 x LSFT(DOWN)（n+1 行）+ TAB */
     fresh(); key(KV_2); key(KV_C_GT); key(KV_3); key(KV_J);
@@ -324,10 +324,10 @@ static void test_repeat_change_only(void) {
     /* 缩进 / 粘贴 / 连接 / 行删 都是修改，会夺走目标 */
     fresh(); key(KV_C_GT); key(KV_C_GT); key(KV_W);
     rec_start(); key(KV_DOT);
-    CHECK_SEQ(KV_HOME, KV_HOME, KV_TAB);
+    CHECK_SEQ(KV_HOME, KV_HOME, KV_LSFT_KC(KV_DOWN), KV_TAB);
     fresh(); key(KV_C_LT); key(KV_C_LT); key(KV_W);
     rec_start(); key(KV_DOT);
-    CHECK_SEQ(KV_HOME, KV_HOME, KV_LSFT_KC(KV_TAB));
+    CHECK_SEQ(KV_HOME, KV_HOME, KV_LSFT_KC(KV_DOWN), KV_LSFT_KC(KV_TAB));
     fresh(); key(KV_P); key(KV_W);
     rec_start(); key(KV_DOT); CHECK_SEQ(KV_LCTL_KC(KV_V));
     fresh(); key(KV_C_P); key(KV_W);
@@ -1124,7 +1124,7 @@ static void test_command_guards(void) {
     CHECK_SEQ(KV_HOME, KV_HOME, KV_LSFT_KC(KV_END), KV_LCTL_KC(KV_X));
 
     rec_start(); kv_emit_indent_line(KV_C_GT, 0); flush_emit();
-    CHECK_SEQ(KV_HOME, KV_HOME, KV_TAB);
+    CHECK_SEQ(KV_HOME, KV_HOME, KV_LSFT_KC(KV_DOWN), KV_TAB);
     rec_start(); kv_emit_indent_motion(KV_C_GT, M_H, 0); flush_emit();
     CHECK_SEQ(KV_LSFT_KC(KV_LEFT), KV_TAB);
     rec_start(); kv_emit_indent_motion(KV_C_LT, M_NONE, 1); flush_emit();
@@ -1350,7 +1350,7 @@ static void test_repeat_recorded_commands(void) {
     CHECK_SEQ(KV_LEFT, KV_LCTL_KC(KV_V));
     /* >> (indent line) */
     fresh(); key(KV_C_GT); key(KV_C_GT); rec_start(); key(KV_DOT);
-    CHECK_SEQ(KV_HOME, KV_HOME, KV_TAB);
+    CHECK_SEQ(KV_HOME, KV_HOME, KV_LSFT_KC(KV_DOWN), KV_TAB);
     /* S / C / s enter Insert: back to Normal, then replay */
     fresh(); key(KV_C_S); kv_set_mode(KV_MODE_NORMAL); rec_start(); key(KV_DOT);
     CHECK_SEQ(KV_HOME, KV_HOME, KV_LSFT_KC(KV_END), KV_LCTL_KC(KV_X)); /* cc 留空行，不发 BSPC */
