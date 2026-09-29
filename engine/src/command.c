@@ -57,12 +57,12 @@ static void emit_op_range(kv_motion_t m, int n) {
         return;
     }
     if (m == M_K) {
-        /* 向上：半开区间 [anchor,cursor) 要求锚点落在**当前行行尾**，否则当前行自身的内容
-         * 会被排除（dk 只删上一行）。末行没有下一行时同样正确。 */
+        /* 向上：锚点必须**越过当前行的行尾换行**（End, Right）到下一行行首，半开区间
+         * [anchor,cursor) 才包含当前行的换行 —— 否则 `d` 会删掉行内容却留下一个空行。 */
         kv_emit_tap(KV_HOME);
         kv_emit_tap(KV_END);
-        kv_emit_taps(KV_LSFT_KC(KV_UP), n);
-        kv_emit_tap(KV_LSFT_KC(KV_HOME));
+        kv_emit_tap(KV_RGHT);
+        kv_emit_taps(KV_LSFT_KC(KV_UP), n + 1);
         return;
     }
     if (m == M_G_BIG) {                   /* 到末行：Home + Ctrl+Shift+End */
@@ -70,8 +70,9 @@ static void emit_op_range(kv_motion_t m, int n) {
         kv_emit_tap(KV_CS(KV_END));
         return;
     }
-    if (m == M_GG) {                      /* 到首行：End + Ctrl+Shift+Home（锚点同 k） */
+    if (m == M_GG) {                      /* 到首行：End,Right + Ctrl+Shift+Home（锚点同 k） */
         kv_emit_tap(KV_END);
+        kv_emit_tap(KV_RGHT);
         kv_emit_tap(KV_CS(KV_HOME));
         return;
     }
