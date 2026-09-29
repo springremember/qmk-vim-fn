@@ -105,7 +105,7 @@ static void test_op(void) {
     fresh(); key(KV_D); key(KV_C_G); CHECK_SEQ(KV_HOME, KV_CS(KV_END), KV_LCTL_KC(KV_X));
     fresh(); key(KV_2); key(KV_D); key(KV_C_G); CHECK_SEQ(KV_HOME, KV_CS(KV_END), KV_LCTL_KC(KV_X));
     fresh(); key(KV_D); key(KV_2); key(KV_C_G); CHECK_SEQ(KV_HOME, KV_CS(KV_END), KV_LCTL_KC(KV_X));
-    fresh(); key(KV_D); key(KV_G); key(KV_G); CHECK_SEQ(KV_HOME, KV_CS(KV_HOME), KV_LCTL_KC(KV_X));
+    fresh(); key(KV_D); key(KV_G); key(KV_G); CHECK_SEQ(KV_END, KV_CS(KV_HOME), KV_LCTL_KC(KV_X));
 
     /* line ops */
     fresh(); key(KV_D); key(KV_D);
@@ -130,7 +130,7 @@ static void test_linewise_operator_motions(void) {
     CHECK_SEQ(KV_HOME, KV_LSFT_KC(KV_DOWN), KV_LSFT_KC(KV_DOWN), KV_LSFT_KC(KV_DOWN),
               KV_LCTL_KC(KV_X));
     fresh(); key(KV_D); key(KV_K);
-    CHECK_SEQ(KV_HOME, KV_LSFT_KC(KV_UP), KV_LSFT_KC(KV_UP), KV_LCTL_KC(KV_X));
+    CHECK_SEQ(KV_HOME, KV_END, KV_LSFT_KC(KV_UP), KV_LSFT_KC(KV_HOME), KV_LCTL_KC(KV_X));
     /* yj 同样是行选（复制 2 行） */
     fresh(); key(KV_Y); key(KV_J);
     CHECK_SEQ(KV_HOME, KV_LSFT_KC(KV_DOWN), KV_LSFT_KC(KV_DOWN), KV_LCTL_KC(KV_C), KV_ESC, KV_UP, KV_UP);
@@ -633,8 +633,8 @@ static void test_op_corners(void) {
     fresh(); key(KV_2); key(KV_D); key(KV_C_G); CHECK_SEQ(KV_HOME, KV_CS(KV_END), KV_LCTL_KC(KV_X));
     fresh(); key(KV_D); key(KV_2); key(KV_C_G); CHECK_SEQ(KV_HOME, KV_CS(KV_END), KV_LCTL_KC(KV_X));
     /* dgg / d2gg are both dgg */
-    fresh(); key(KV_D); key(KV_G); key(KV_G); CHECK_SEQ(KV_HOME, KV_CS(KV_HOME), KV_LCTL_KC(KV_X));
-    fresh(); key(KV_D); key(KV_2); key(KV_G); key(KV_G); CHECK_SEQ(KV_HOME, KV_CS(KV_HOME), KV_LCTL_KC(KV_X));
+    fresh(); key(KV_D); key(KV_G); key(KV_G); CHECK_SEQ(KV_END, KV_CS(KV_HOME), KV_LCTL_KC(KV_X));
+    fresh(); key(KV_D); key(KV_2); key(KV_G); key(KV_G); CHECK_SEQ(KV_END, KV_CS(KV_HOME), KV_LCTL_KC(KV_X));
     /* mismatched key after a postfix count: d2x -> x */
     fresh(); key(KV_D); key(KV_2); key(KV_X); CHECK_SEQ(KV_DEL);
     CHECK(kv_pending() == false);
@@ -657,10 +657,10 @@ static void test_op_corners(void) {
     /* G3 (design §4.4 / command.c emit_op_range L36): operator + k selects the
      * line above (Shift+Up), then the register op. */
     fresh(); key(KV_D); key(KV_K);
-    CHECK_SEQ(KV_HOME, KV_LSFT_KC(KV_UP), KV_LSFT_KC(KV_UP), KV_LCTL_KC(KV_X));
-    /* postfix count multiplies: d2k -> Home + 3 x Shift+Up (n+1 行) + Ctrl+X */
+    CHECK_SEQ(KV_HOME, KV_END, KV_LSFT_KC(KV_UP), KV_LSFT_KC(KV_HOME), KV_LCTL_KC(KV_X));
+    /* postfix count multiplies: d2k -> Home,End + 2 x Shift+Up + Shift+Home + Ctrl+X = 6 */
     fresh(); key(KV_D); key(KV_2); key(KV_K);
-    CHECK(rec_count() == 5);
+    CHECK(rec_count() == 6);
     CHECK(kv_pending() == false);
 }
 
@@ -675,14 +675,14 @@ static void test_indent_corners(void) {
     fresh(); key(KV_C_GT); key(KV_2); key(KV_C_G);
     CHECK_SEQ(KV_HOME, KV_CS(KV_END), KV_TAB);
     fresh(); key(KV_C_GT); key(KV_G); key(KV_G);
-    CHECK_SEQ(KV_HOME, KV_CS(KV_HOME), KV_TAB);
+    CHECK_SEQ(KV_END, KV_CS(KV_HOME), KV_TAB);
     fresh(); key(KV_2); key(KV_C_GT); key(KV_G); key(KV_G);
-    CHECK_SEQ(KV_HOME, KV_CS(KV_HOME), KV_TAB);
+    CHECK_SEQ(KV_END, KV_CS(KV_HOME), KV_TAB);
     fresh(); key(KV_C_GT); key(KV_2); key(KV_G); key(KV_G);
-    CHECK_SEQ(KV_HOME, KV_CS(KV_HOME), KV_TAB);
+    CHECK_SEQ(KV_END, KV_CS(KV_HOME), KV_TAB);
     /* < variant keeps the >/< identity */
     fresh(); key(KV_C_LT); key(KV_2); key(KV_G); key(KV_G);
-    CHECK_SEQ(KV_HOME, KV_CS(KV_HOME), KV_LSFT_KC(KV_TAB));
+    CHECK_SEQ(KV_END, KV_CS(KV_HOME), KV_LSFT_KC(KV_TAB));
     /* >^ (caret branch: indent only, no selection) */
     fresh(); key(KV_C_GT); key(KV_C_CARET); CHECK_SEQ(KV_TAB);
     /* >x: x is unexpected -> clear >, re-identify x */
@@ -702,7 +702,7 @@ static void test_indent_corners(void) {
     /* G3 (design §4.4 / command.c emit_op_range L36): indent + k selects the
      * line above (Shift+Up), then Tab. */
     fresh(); key(KV_C_GT); key(KV_K);
-    CHECK_SEQ(KV_HOME, KV_LSFT_KC(KV_UP), KV_LSFT_KC(KV_UP), KV_TAB);
+    CHECK_SEQ(KV_HOME, KV_END, KV_LSFT_KC(KV_UP), KV_LSFT_KC(KV_HOME), KV_TAB);
     CHECK(kv_pending() == false);
 }
 

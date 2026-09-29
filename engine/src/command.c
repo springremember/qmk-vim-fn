@@ -51,14 +51,28 @@ static void emit_op_range(kv_motion_t m, int n) {
     /* 行选动作（j/k/G/gg）在 Vim 里是**整行**操作：先把光标移到行首再扩选。
      * `dj` = 当前行 + 下一行 = 2 行（即 n+1 行），`2dj` = 3 行；`dG`/`dgg` 到文档端。
      * 旧实现从**当前列**开始 Shift+Down，实际切掉"上一行尾部 + 下一行头部"（数据损坏）。 */
-    if (m == M_J || m == M_K) {
+    if (m == M_J) {                       /* 向下：Home + Shift+Down×(n+1) = n+1 行 */
         kv_emit_tap(KV_HOME);
-        kv_emit_taps(sel, n + 1);
+        kv_emit_taps(KV_LSFT_KC(KV_DOWN), n + 1);
         return;
     }
-    if (m == M_G_BIG || m == M_GG) {
+    if (m == M_K) {
+        /* 向上：半开区间 [anchor,cursor) 要求锚点落在**当前行行尾**，否则当前行自身的内容
+         * 会被排除（dk 只删上一行）。末行没有下一行时同样正确。 */
         kv_emit_tap(KV_HOME);
-        kv_emit_taps(sel, 1);
+        kv_emit_tap(KV_END);
+        kv_emit_taps(KV_LSFT_KC(KV_UP), n);
+        kv_emit_tap(KV_LSFT_KC(KV_HOME));
+        return;
+    }
+    if (m == M_G_BIG) {                   /* 到末行：Home + Ctrl+Shift+End */
+        kv_emit_tap(KV_HOME);
+        kv_emit_tap(KV_CS(KV_END));
+        return;
+    }
+    if (m == M_GG) {                      /* 到首行：End + Ctrl+Shift+Home（锚点同 k） */
+        kv_emit_tap(KV_END);
+        kv_emit_tap(KV_CS(KV_HOME));
         return;
     }
     kv_emit_taps(sel, n);
