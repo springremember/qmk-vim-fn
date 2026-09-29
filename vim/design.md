@@ -110,7 +110,12 @@ struct nv_cmd { int cmd_char; nv_func_T cmd_func; short_u cmd_flags; short cmd_a
   `dj`/`dk`/`dG`/`dgg`/`cj`/`yG`… 是**行选**（`dj` 删当前行+下一行 = 2 行，`2dj` = 3 行）。
   发射为 `Home → Shift+Down/Up×(n+1) → 动作`（`G`/`gg` 为 `Home → Ctrl+Shift+End/Home → 动作`）。
   旧实现从**当前列**开始扩选，会删掉"上一行尾部 + 下一行头部"（数据损坏）。
-- `dd`（定稿）：`Home×2 → Shift+End → Ctrl+X → Backspace`（两次主机编辑）。
+- `dd`（定稿）：`Home×2 → Shift+End → Ctrl+X → Backspace → Down → Home`（两次主机编辑）。
+  **末尾的 `Down, Home` 把宿主光标放到"接替行"的行首**（2026-09 修正）：真实 Vim 的 `dd`
+  把光标留在原位置那一行的**行首**（`jddx` 删的是 L3 首字符、`Gddx` 删的是新末行首字符、
+  `jddp` 是在 L3 下方粘贴）。旧实现只发到 `Backspace`，宿主光标停在**上一行行尾**，
+  紧随其后的 `x`/`p` 就作用在错误位置（数据损坏级）。末行删除时 `Down` 无下一行、`Home`
+  落到新末行行首，与 Vim 一致。
 - `cc` / `S` / `Ncc`（2026-09 修正）：`Home×2 → Shift+End [→ Shift+Down×(n−1)] → Ctrl+X`
   （**不发 Backspace**）。真实 Vim 的 `cc`/`S` 会**留一个空行**（`L1|L2|L3` 上 `cc` ⇒ `L1||L3`，
   `2cc` ⇒ `L1||L4`）；旧实现与 `dd` 完全相同、多发一个 Backspace 把整行并掉，实测与 Vim 不符。
