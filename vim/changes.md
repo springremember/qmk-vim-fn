@@ -318,3 +318,19 @@ n=1 时 `Shift+Down×1` 的 1 行选区与"无选区"缩进同一行，结果一
 修：`kv_emit_line_op()` 在 `dd` 的 `Backspace` 之后补 `Down, Home`（`cc`/`S` 不受影响，
 它们按 Vim 语义留空行并进 Insert）。末行删除时 `Down` 无处可去、`Home` 落到新末行行首，
 与 Vim 一致。
+
+### 7.12 向上方向的行选漏掉当前行（2026-09 与真实 Vim 逐条比对）
+
+宿主选区是**半开区间 `[anchor, cursor)`**：把锚点放在**当前行行首**再向上扩选，区间只覆盖
+`[上面第 n 行行首, 当前行行首)`，**当前行自身的内容被排除**，于是 `dk` 只删了上一行、
+`dgg` 只删到当前行的上一行。
+
+| 命令 | 真实 Vim（`L1\|L2\|L3\|L4`，光标在 L2） | 旧发射 | 新发射 |
+| :--- | :--- | :--- | :--- |
+| `dk` | `L3\|L4`（删 L1+L2） | `Home, Shift+Up×2` → 只删 L1 | `Home, End, Shift+Up, Shift+Home` |
+| `2dk` | `L4`（删 L1,L2,L3） | 只删 L1,L2 | `Home, End, Shift+Up×2, Shift+Home` |
+| `dgg` | `L3\|L4`（删 L1+L2） | 只删 L1 | `End, Ctrl+Shift+Home` |
+
+锚点落在**当前行行尾**即可覆盖当前行全部内容，且末行（没有下一行）也能正确覆盖。
+`>k`/`<k` 走同一个 `emit_op_range`，一并修正；向下方向（`j`/`G`）与 `Home→Ctrl+Shift+End`
+不变。
