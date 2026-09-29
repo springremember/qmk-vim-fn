@@ -205,3 +205,19 @@
 
 同时把 `c`/`s` 在字符级 Visual 下的发射改成"`Ctrl+X` + 进 INSERT"（不再扩到行尾），
 `y` 与 `p` 后补 `Esc`。字符级 VISUAL 的动作语义见 [`design.md`](design.md) §4.9。
+
+### 7.5 行选动作 + 操作符是整行操作（2026-09 全面审核）
+
+真实 Vim 里 `dj`/`dk`/`dG`/`dgg`/`cj`/`cG`/`cgg`/`yj`… 都是**行选**（`dj` 删当前行 + 下一行
+= 2 行；`2dj` = 3 行）。引擎旧实现直接发 `Shift+Down`（从**当前列**开始扩选），于是
+`dj` 实际切掉的是"上一行尾部 + 下一行头部"——数据损坏。
+
+| 命令 | 真实 Vim（`L1\|L2\|L3\|L4\|L5`，光标在 L1） | 旧发射 | 新发射 |
+| :--- | :--- | :--- | :--- |
+| `dj` | `L3\|L4\|L5`（删 2 行） | `Shift+Down`, `Ctrl+X` | `Home`, `Shift+Down×2`, `Ctrl+X` |
+| `jdk` | `L3\|L4\|L5` | `Shift+Up`, `Ctrl+X` | `Home`, `Shift+Up×2`, `Ctrl+X` |
+| `2dj` | `L4\|L5`（删 3 行） | `Shift+Down`, `Ctrl+X` | `Home`, `Shift+Down×3`, `Ctrl+X` |
+| `dG` | 空（删到末行） | `Ctrl+Shift+End`, `Ctrl+X` | `Home`, `Ctrl+Shift+End`, `Ctrl+X` |
+| `jdgg` | `L3\|L4\|L5` | `Ctrl+Shift+Home`, `Ctrl+X` | `Home`, `Ctrl+Shift+Home`, `Ctrl+X` |
+
+`G`/`gg` 的计数仍丢弃（与 `G`/`gg` 单独使用一致，见 §2b），`j`/`k` 用 `n+1` 行。

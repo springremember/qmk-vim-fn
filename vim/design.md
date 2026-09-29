@@ -103,6 +103,10 @@ struct nv_cmd { int cmd_char; nv_func_T cmd_func; short_u cmd_flags; short cmd_a
 - 模式入口 `normal_mode`/`insert_mode`/`visual_mode`/`visual_line_mode` 切换全局 `process_func`。
 - `insert_mode()` **无条件 `clear_keyboard()`**。
 - 操作符：`start_*_action` 设 `action_key`/`action_func` 并切到 `process_vim_action`。
+- **行选动作（`j`/`k`/`G`/`gg`）+ 操作符 = 整行操作**（2026-09 修正）：真实 Vim 的
+  `dj`/`dk`/`dG`/`dgg`/`cj`/`yG`… 是**行选**（`dj` 删当前行+下一行 = 2 行，`2dj` = 3 行）。
+  发射为 `Home → Shift+Down/Up×(n+1) → 动作`（`G`/`gg` 为 `Home → Ctrl+Shift+End/Home → 动作`）。
+  旧实现从**当前列**开始扩选，会删掉"上一行尾部 + 下一行头部"（数据损坏）。
 - `dd`（定稿）：`Home×2 → Shift+End → Ctrl+X → Backspace`（两次主机编辑）。
 - `cc` / `S` / `Ncc`（2026-09 修正）：`Home×2 → Shift+End [→ Shift+Down×(n−1)] → Ctrl+X`
   （**不发 Backspace**）。真实 Vim 的 `cc`/`S` 会**留一个空行**（`L1|L2|L3` 上 `cc` ⇒ `L1||L3`，
