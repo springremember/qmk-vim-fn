@@ -244,6 +244,19 @@ void kv_emit_yank_to_eol(void) {
     kv_emit_tap(KV_ESC);
 }
 
+/* C/D/Y 带计数：选区 = [光标, 下面第 n-1 行的行尾]（真实 Vim 的 `dN$`）。 */
+static void emit_eol_range(int n) {
+    kv_emit_tap(KV_LSFT_KC(KV_END));
+    if (n > 1) {
+        kv_emit_taps(KV_LSFT_KC(KV_DOWN), n - 1);
+        kv_emit_tap(KV_LSFT_KC(KV_END));
+    }
+}
+
+void kv_emit_delete_to_eol_n(int n) { if (n < 1) n = 1; emit_eol_range(n); kv_emit_tap(KV_LCTL_KC(KV_X)); }
+void kv_emit_change_to_eol_n(int n) { if (n < 1) n = 1; emit_eol_range(n); kv_emit_tap(KV_LCTL_KC(KV_X)); kv_emit_enter_insert(KV_I); }
+void kv_emit_yank_to_eol_n(int n)   { if (n < 1) n = 1; emit_eol_range(n); kv_emit_tap(KV_LCTL_KC(KV_C)); kv_emit_tap(KV_ESC); }
+
 /* 字符级 VISUAL：动作直接作用于当前选区，不再自行扩选。 */
 void kv_emit_visual_cut(void)    { kv_emit_tap(KV_LCTL_KC(KV_X)); }
 void kv_emit_visual_yank(void)   { kv_emit_tap(KV_LCTL_KC(KV_C)); kv_emit_tap(KV_ESC); }

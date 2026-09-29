@@ -265,6 +265,7 @@ static kv_feed_t feed_normal(kv_keycode_t kc) {
 
         case ST_CNT: {
             int n = kv_ctx_n(&s_ctx);
+            int i;
             switch (t) {
                 case T_DIGIT:
                     if (s_ctx.count < 10) s_ctx.count = s_ctx.count * 10 + digit_of(kc);
@@ -278,6 +279,17 @@ static kv_feed_t feed_normal(kv_keycode_t kc) {
                 case T_Z_BIG:  s_state = ST_ZP; return R_CONSUMED;
                 /* 先清 ctx 再回放：否则刚吃的计数会漏进被回放的命令（`3.` 会变成回放 `3dw`） */
                 case T_REPEAT: reset_pending(); rec_replay_n(n); return R_CONSUMED; /* N. = 重复 N 次 */
+                /* 计数作用于单键编辑命令（真实 Vim：3x 删 3 字符、3p 粘 3 次、3J 连 3 行…） */
+                case T_X:     for (i = 0; i < n; i++) kv_emit_delete_char();    reset_pending(); return R_CONSUMED;
+                case T_XUP:   for (i = 0; i < n; i++) kv_emit_backspace_char(); reset_pending(); return R_CONSUMED;
+                case T_s:     for (i = 0; i < n; i++) kv_emit_substitute();     s_mode = KV_MODE_INSERT; reset_pending(); return R_CONSUMED;
+                case T_P:     for (i = 0; i < n; i++) kv_emit_paste(false);     reset_pending(); return R_CONSUMED;
+                case T_PUP:   for (i = 0; i < n; i++) kv_emit_paste(true);      reset_pending(); return R_CONSUMED;
+                case T_JOIN:  for (i = 0; i < n; i++) kv_emit_join();           reset_pending(); return R_CONSUMED;
+                case T_UNDO:  for (i = 0; i < n; i++) kv_emit_undo();           reset_pending(); return R_CONSUMED;
+                case T_D_BIG: kv_emit_delete_to_eol_n(n);                       reset_pending(); return R_CONSUMED;
+                case T_C_BIG: kv_emit_change_to_eol_n(n); s_mode = KV_MODE_INSERT; reset_pending(); return R_CONSUMED;
+                case T_Y_BIG: kv_emit_yank_to_eol_n(n);                         reset_pending(); return R_CONSUMED;
                 case T_S_BIG:  kv_emit_line_op(KV_C, n); s_mode = KV_MODE_INSERT; reset_pending(); return R_CONSUMED;
                 case T_INSERT: kv_emit_enter_insert(kc); s_mode = KV_MODE_INSERT; reset_pending(); return R_CONSUMED;
                 case T_VISUAL:

@@ -56,7 +56,13 @@ void kv_emit_backspace_char(void);  /* X  */
 void kv_emit_substitute(void);      /* s  */
 void kv_emit_change_to_eol(void);   /* C  */
 void kv_emit_delete_to_eol(void);   /* D  */
-void kv_emit_yank_to_eol(void);     /* Y  */
+void kv_emit_yank_to_eol(void);
+
+/* 带计数的 C/D/Y：真实 Vim 的 `dN$` —— 作用范围 = [光标, **下面第 N-1 行的行尾**]。
+ * `3D` 在 `abcdefgh|L2xyz|L3|L4` 上 => `L4`；`3C` => `|L4`。 */
+void kv_emit_delete_to_eol_n(int n);
+void kv_emit_change_to_eol_n(int n);
+void kv_emit_yank_to_eol_n(int n);     /* Y  */
 void kv_emit_paste(bool before);    /* p / P */
 void kv_emit_join(void);            /* J  */
 void kv_emit_undo(void);            /* u  */
