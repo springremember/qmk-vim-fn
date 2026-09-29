@@ -722,7 +722,8 @@ static void test_count_drop(void) {
 
     /* visual entries drop the count */
     fresh(); key(KV_3); key(KV_V);
-    CHECK(rec_count() == 0); CHECK(kv_get_mode() == KV_MODE_VISUAL); CHECK(kv_pending() == false);
+    /* 计数丢弃；进入字符级 VISUAL 发 Shift+Right（Vim 的 v 选中光标下 1 字符） */
+    CHECK_SEQ(KV_LSFT_KC(KV_RGHT)); CHECK(kv_get_mode() == KV_MODE_VISUAL); CHECK(kv_pending() == false);
     fresh(); key(KV_3); key(KV_C_V);
     /* V 进入行选：Home + Shift+End = 选中"整行"（design §4.9 VISUAL_LINE） */
     CHECK_SEQ(KV_HOME, KV_LSFT_KC(KV_END)); CHECK(kv_get_mode() == KV_MODE_VISUAL_LINE);
@@ -864,7 +865,7 @@ static void test_visual_commands(void) {
     fresh_visual(); key(KV_3); key(KV_C_G); CHECK_SEQ(KV_CS(KV_END));
     /* 计数不跨模式残留：3 后 Esc 退出，再进可视按 j 只推进 1 次 */
     fresh_visual(); key(KV_3); key(KV_ESC); key(KV_V); key(KV_J);
-    CHECK_SEQ(KV_LSFT_KC(KV_DOWN));
+    CHECK_SEQ(KV_LSFT_KC(KV_RGHT), KV_LSFT_KC(KV_DOWN)); /* v 入口 + j */
 
     /* p: paste */
     fresh_visual(); key(KV_P); CHECK_SEQ(KV_LCTL_KC(KV_V), KV_ESC);
@@ -990,7 +991,7 @@ static void test_visual_line_commands(void) {
     /* v / V 互相切换（真实 Vim） */
     fresh_visual(); key(KV_C_V); CHECK_SEQ(KV_HOME, KV_LSFT_KC(KV_END));
     CHECK(kv_get_mode() == KV_MODE_VISUAL_LINE);
-    fresh_vline();  key(KV_V);   CHECK(rec_count() == 0); CHECK(kv_get_mode() == KV_MODE_VISUAL);
+    fresh_vline();  key(KV_V);   CHECK_SEQ(KV_LSFT_KC(KV_RGHT)); CHECK(kv_get_mode() == KV_MODE_VISUAL);
     fresh_vline();  key(KV_C_V); CHECK(rec_count() == 0); CHECK(kv_get_mode() == KV_MODE_VISUAL_LINE);
     /* v/V 往返必须清行选状态：否则上一轮的 off 会残留（审计 e68）。
      * V j（off=1）-> v -> V 之后按 k，应重新从 off=0 翻转（Down,Home,Shift+Up×2），

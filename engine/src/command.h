@@ -35,6 +35,9 @@ void kv_emit_visual_motion(kv_keycode_t kc);
 /* VISUAL_LINE（design §4.9 v2）：方向无关的按行语义（对齐真实 Vim）。
  * off = 光标行 − 锚行 A（A = 按 V 时所在行）；DOWN 态锚在 A 行首、UP 态锚在 A+1 行首。 */
 void kv_emit_visual_line_enter(void);              /* Home, Shift+End = 选中整行 */
+/* 进入字符级 VISUAL：真实 Vim 的 `v` 立刻选中光标下的 1 个字符，故发 Shift+Right。
+ * 由此 `v` + n 次移动 = n+1 个字符（vd 删 1 个、vlld 删 3 个）。 */
+void kv_emit_visual_enter(void);
 void kv_emit_vline_move(bool up, int n);           /* Shift+Up/Down × n */
 void kv_emit_vline_move_tail(void);                /* Shift+End：活动端顶到行尾 */
 void kv_emit_vline_move_head(void);                /* Shift+Home：活动端贴到行首 */

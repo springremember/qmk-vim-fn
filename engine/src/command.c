@@ -257,6 +257,8 @@ void kv_emit_delete_to_eol_n(int n) { if (n < 1) n = 1; emit_eol_range(n); kv_em
 void kv_emit_change_to_eol_n(int n) { if (n < 1) n = 1; emit_eol_range(n); kv_emit_tap(KV_LCTL_KC(KV_X)); kv_emit_enter_insert(KV_I); }
 void kv_emit_yank_to_eol_n(int n)   { if (n < 1) n = 1; emit_eol_range(n); kv_emit_tap(KV_LCTL_KC(KV_C)); kv_emit_tap(KV_ESC); }
 
+void kv_emit_visual_enter(void) { kv_emit_tap(KV_LSFT_KC(KV_RGHT)); }
+
 /* 字符级 VISUAL：动作直接作用于当前选区，不再自行扩选。 */
 void kv_emit_visual_cut(void)    { kv_emit_tap(KV_LCTL_KC(KV_X)); }
 void kv_emit_visual_yank(void)   { kv_emit_tap(KV_LCTL_KC(KV_C)); kv_emit_tap(KV_ESC); }

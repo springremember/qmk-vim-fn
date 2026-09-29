@@ -253,6 +253,7 @@ static kv_feed_t feed_normal(kv_keycode_t kc) {
                     s_mode = (kc == KV_C_V) ? KV_MODE_VISUAL_LINE : KV_MODE_VISUAL;
                     vline_reset();
                     if (s_mode == KV_MODE_VISUAL_LINE) kv_emit_visual_line_enter(); /* 选中整行 */
+                    else kv_emit_visual_enter();   /* Vim 的 v 立刻选中光标下 1 字符 */
                     return R_CONSUMED;
                 case T_X: case T_XUP: case T_s: case T_C_BIG: case T_D_BIG:
                 case T_Y_BIG: case T_P: case T_PUP: case T_JOIN: case T_UNDO:
@@ -296,6 +297,7 @@ static kv_feed_t feed_normal(kv_keycode_t kc) {
                     s_mode = (kc == KV_C_V) ? KV_MODE_VISUAL_LINE : KV_MODE_VISUAL;
                     vline_reset();
                     if (s_mode == KV_MODE_VISUAL_LINE) kv_emit_visual_line_enter(); /* 选中整行 */
+                    else kv_emit_visual_enter();   /* Vim 的 v 立刻选中光标下 1 字符 */
                     reset_pending();
                     return R_CONSUMED;
                 default: /* drop count, re-identify */
@@ -513,7 +515,8 @@ static kv_feed_t feed_visual(kv_keycode_t kc) {
     if (t == T_VISUAL) {
         /* 真实 Vim：VISUAL 内按 V 切到行选；VISUAL_LINE 内按 v 切回字符选（不发键）。 */
         if (vline) {
-            if (kc == KV_V) { s_mode = KV_MODE_VISUAL; vline_reset(); }
+            /* Vim 的 `Vv` 切回字符选并立刻选中光标下 1 字符 */
+            if (kc == KV_V) { s_mode = KV_MODE_VISUAL; vline_reset(); kv_emit_visual_enter(); }
         } else if (kc == KV_C_V) {
             s_mode = KV_MODE_VISUAL_LINE;
             vline_reset();
