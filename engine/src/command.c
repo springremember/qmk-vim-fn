@@ -76,7 +76,9 @@ void kv_emit_line_op(kv_keycode_t op, int n) {
     kv_emit_tap(KV_LSFT_KC(KV_END));
     if (n > 1) kv_emit_taps(KV_LSFT_KC(KV_DOWN), n - 1);
     kv_emit_tap(KV_LCTL_KC(KV_X));
-    kv_emit_tap(KV_BSPC);
+    /* `cc`/`S` 必须**留一个空行**（真实 Vim：L1|L2|L3 上 cc => L1||L3、2cc => L1||L4）。
+     * 只有 `dd` 才补 Backspace 把整行并掉（末行也因此可删）。 */
+    if (op != KV_C) kv_emit_tap(KV_BSPC);
     if (op == KV_C) kv_emit_enter_insert(KV_I);
 }
 
@@ -227,8 +229,11 @@ void kv_emit_paste(bool before) {
     kv_emit_tap(KV_LCTL_KC(KV_V));
 }
 
+/* 真实 Vim 的 `J` 会插**一个空格**（three + four => three four）。已知偏差：Vim 还会去掉
+ * 下一行的前导空白，固件读不到空白长度，故保留。 */
 void kv_emit_join(void) {
     kv_emit_tap(KV_END);
+    kv_emit_tap(KV_SPC);
     kv_emit_tap(KV_DEL);
 }
 

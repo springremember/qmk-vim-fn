@@ -62,7 +62,7 @@ static void test_single(void) {
     fresh(); key(KV_C_Y); CHECK_SEQ(KV_LSFT_KC(KV_END), KV_LCTL_KC(KV_C));
     fresh(); key(KV_P); CHECK_SEQ(KV_LCTL_KC(KV_V));
     fresh(); key(KV_C_P); CHECK_SEQ(KV_LEFT, KV_LCTL_KC(KV_V));
-    fresh(); key(KV_C_J); CHECK_SEQ(KV_END, KV_DEL);
+    fresh(); key(KV_C_J); CHECK_SEQ(KV_END, KV_SPC, KV_DEL);
     fresh(); key(KV_U); CHECK_SEQ(KV_LCTL_KC(KV_Z));
     fresh(); key(KV_C_Z); key(KV_C_Z); CHECK_SEQ(KV_LCTL_KC(KV_S));
     fresh(); key(KV_G); key(KV_G); CHECK_SEQ(KV_LCTL_KC(KV_HOME));
@@ -87,7 +87,7 @@ static void test_count(void) {
     fresh(); key(KV_3); key(KV_G); key(KV_G); CHECK_SEQ(KV_LCTL_KC(KV_HOME));
     fresh(); key(KV_3); key(KV_C_S);
     CHECK_SEQ(KV_HOME, KV_HOME, KV_LSFT_KC(KV_END), KV_LSFT_KC(KV_DOWN), KV_LSFT_KC(KV_DOWN),
-              KV_LCTL_KC(KV_X), KV_BSPC);
+              KV_LCTL_KC(KV_X));
 }
 
 static void test_op(void) {
@@ -113,6 +113,31 @@ static void test_op(void) {
               KV_LCTL_KC(KV_X), KV_BSPC);
     fresh(); key(KV_Y); key(KV_Y);
     CHECK_SEQ(KV_HOME, KV_HOME, KV_LSFT_KC(KV_DOWN), KV_LCTL_KC(KV_C));
+}
+
+/* 全面审核（对照 vim.tiny 9.1）：`cc`/`S`/`Ncc` 必须**留一个空行**
+ * （旧实现与 `dd` 完全相同、多发 Backspace 把整行并掉）；`J` 必须**插一个空格**。 */
+static void test_line_change_and_join(void) {
+    /* cc：Home,Home,Shift+End,Ctrl+X（**不发 BSPC**）+ 进 Insert */
+    fresh(); key(KV_C); key(KV_C);
+    CHECK_SEQ(KV_HOME, KV_HOME, KV_LSFT_KC(KV_END), KV_LCTL_KC(KV_X));
+    CHECK(kv_get_mode() == KV_MODE_INSERT);
+    /* S ≡ cc */
+    fresh(); key(KV_C_S);
+    CHECK_SEQ(KV_HOME, KV_HOME, KV_LSFT_KC(KV_END), KV_LCTL_KC(KV_X));
+    CHECK(kv_get_mode() == KV_MODE_INSERT);
+    /* 2cc / 3S：单次选区覆盖 N 行，同样不发 BSPC */
+    fresh(); key(KV_2); key(KV_C); key(KV_C);
+    CHECK_SEQ(KV_HOME, KV_HOME, KV_LSFT_KC(KV_END), KV_LSFT_KC(KV_DOWN), KV_LCTL_KC(KV_X));
+    fresh(); key(KV_3); key(KV_C_S);
+    CHECK_SEQ(KV_HOME, KV_HOME, KV_LSFT_KC(KV_END), KV_LSFT_KC(KV_DOWN), KV_LSFT_KC(KV_DOWN),
+              KV_LCTL_KC(KV_X));
+    /* dd 仍保留 BSPC（删整行）——两者必须可区分 */
+    fresh(); key(KV_D); key(KV_D);
+    CHECK_SEQ(KV_HOME, KV_HOME, KV_LSFT_KC(KV_END), KV_LCTL_KC(KV_X), KV_BSPC);
+    /* J：End, Space, Delete（插一个空格） */
+    fresh(); key(KV_C_J); CHECK_SEQ(KV_END, KV_SPC, KV_DEL);
+    fresh(); key(KV_3); key(KV_C_J); CHECK_SEQ(KV_END, KV_SPC, KV_DEL);
 }
 
 static void test_indent(void) {
@@ -278,7 +303,7 @@ static void test_repeat_change_only(void) {
     fresh(); key(KV_C_P); key(KV_W);
     rec_start(); key(KV_DOT); CHECK_SEQ(KV_LEFT, KV_LCTL_KC(KV_V));
     fresh(); key(KV_C_J); key(KV_W);
-    rec_start(); key(KV_DOT); CHECK_SEQ(KV_END, KV_DEL);
+    rec_start(); key(KV_DOT); CHECK_SEQ(KV_END, KV_SPC, KV_DEL);
     fresh(); key(KV_D); key(KV_D); key(KV_W);
     rec_start(); key(KV_DOT);
     CHECK_SEQ(KV_HOME, KV_HOME, KV_LSFT_KC(KV_END), KV_LCTL_KC(KV_X), KV_BSPC);
@@ -294,9 +319,9 @@ static void test_repeat_change_only(void) {
     fresh(); key(KV_C_C); kv_set_mode(KV_MODE_NORMAL); rec_start(); key(KV_DOT);
     CHECK_SEQ(KV_LSFT_KC(KV_END), KV_LCTL_KC(KV_X));
     fresh(); key(KV_C_S); kv_set_mode(KV_MODE_NORMAL); rec_start(); key(KV_DOT);
-    CHECK_SEQ(KV_HOME, KV_HOME, KV_LSFT_KC(KV_END), KV_LCTL_KC(KV_X), KV_BSPC);
+    CHECK_SEQ(KV_HOME, KV_HOME, KV_LSFT_KC(KV_END), KV_LCTL_KC(KV_X));
     fresh(); key(KV_C); key(KV_C); kv_set_mode(KV_MODE_NORMAL); rec_start(); key(KV_DOT);
-    CHECK_SEQ(KV_HOME, KV_HOME, KV_LSFT_KC(KV_END), KV_LCTL_KC(KV_X), KV_BSPC);
+    CHECK_SEQ(KV_HOME, KV_HOME, KV_LSFT_KC(KV_END), KV_LCTL_KC(KV_X));
     /* Insert 里的 `.` 是字面量（透传），不是回放 */
     fresh(); key(KV_S); rec_start(); key(KV_DOT); CHECK_SEQ(KV_DOT);
     /* 复制之后再修改，目标换成新修改 */
@@ -681,7 +706,7 @@ static void test_count_drop(void) {
     CHECK(kv_get_mode() == KV_MODE_INSERT); CHECK(kv_pending() == false);
     fresh(); key(KV_3); key(KV_P);    CHECK_SEQ(KV_LCTL_KC(KV_V)); CHECK(kv_pending() == false);
     fresh(); key(KV_3); key(KV_C_P);  CHECK_SEQ(KV_LEFT, KV_LCTL_KC(KV_V)); CHECK(kv_pending() == false);
-    fresh(); key(KV_3); key(KV_C_J);  CHECK_SEQ(KV_END, KV_DEL); CHECK(kv_pending() == false);
+    fresh(); key(KV_3); key(KV_C_J);  CHECK_SEQ(KV_END, KV_SPC, KV_DEL); CHECK(kv_pending() == false);
     fresh(); key(KV_3); key(KV_U);    CHECK_SEQ(KV_LCTL_KC(KV_Z)); CHECK(kv_pending() == false);
     fresh(); key(KV_3); key(KV_C_X);  CHECK_SEQ(KV_BSPC); CHECK(kv_pending() == false);
     fresh(); key(KV_3); key(KV_C_C);
@@ -701,7 +726,7 @@ static void test_count_drop(void) {
     /* 3S accepts the count (== 3cc), 3gg drops it */
     fresh(); key(KV_3); key(KV_C_S);
     CHECK_SEQ(KV_HOME, KV_HOME, KV_LSFT_KC(KV_END), KV_LSFT_KC(KV_DOWN),
-              KV_LSFT_KC(KV_DOWN), KV_LCTL_KC(KV_X), KV_BSPC);
+              KV_LSFT_KC(KV_DOWN), KV_LCTL_KC(KV_X));
     CHECK(kv_get_mode() == KV_MODE_INSERT); CHECK(kv_pending() == false);
     fresh(); key(KV_3); key(KV_G); key(KV_G); CHECK_SEQ(KV_LCTL_KC(KV_HOME));
     /* 42G drops the count */
@@ -1059,9 +1084,9 @@ static void test_command_guards(void) {
     CHECK_SEQ(KV_HOME, KV_HOME, KV_LSFT_KC(KV_END), KV_LCTL_KC(KV_X), KV_BSPC);
     rec_start(); kv_emit_line_op(KV_Y, 0); flush_emit();
     CHECK_SEQ(KV_HOME, KV_HOME, KV_LSFT_KC(KV_DOWN), KV_LCTL_KC(KV_C));
-    /* cc via the emitter enters Insert */
+    /* cc via the emitter enters Insert；**不发 BSPC**（留一个空行，同 Vim） */
     rec_start(); kv_emit_line_op(KV_C, 1); flush_emit();
-    CHECK_SEQ(KV_HOME, KV_HOME, KV_LSFT_KC(KV_END), KV_LCTL_KC(KV_X), KV_BSPC);
+    CHECK_SEQ(KV_HOME, KV_HOME, KV_LSFT_KC(KV_END), KV_LCTL_KC(KV_X));
 
     rec_start(); kv_emit_indent_line(KV_C_GT, 0); flush_emit();
     CHECK_SEQ(KV_HOME, KV_HOME, KV_TAB);
@@ -1225,6 +1250,7 @@ int main(void) {
     test_single();
     test_count();
     test_op();
+    test_line_change_and_join();
     test_indent();
     test_strict_clear();
     test_insert();

@@ -299,9 +299,10 @@ static void test_pure_shift_folding(void) {
     const kv_keycode_t x_up[]  = { KV_BSPC };
     const kv_keycode_t D[]     = { KV_LSFT_KC(KV_END), KV_LCTL_KC(KV_X) };
     const kv_keycode_t Y[]     = { KV_LSFT_KC(KV_END), KV_LCTL_KC(KV_C) };
-    /* cc / S contract (engine test_main.c): line select + delete + BSPC, insert */
+    /* cc / S contract (engine test_main.c): line select + delete, NO BSPC (leaves an empty
+     * line, like real Vim); dd keeps the BSPC to remove the whole line. */
     const kv_keycode_t S[]     = { KV_HOME, KV_HOME, KV_LSFT_KC(KV_END),
-                                   KV_LCTL_KC(KV_X), KV_BSPC };
+                                   KV_LCTL_KC(KV_X) };
 
     test_shift_fold(KC_G, g_big, 1, "G");
     test_shift_fold(KC_4, dlr,   1, "$");
@@ -309,7 +310,7 @@ static void test_pure_shift_folding(void) {
     test_shift_fold(KC_X, x_up,  1, "X");
     test_shift_fold(KC_D, D,     2, "D");
     test_shift_fold(KC_Y, Y,     2, "Y");
-    test_shift_fold(KC_S, S,     5, "S");
+    test_shift_fold(KC_S, S,     4, "S");
 
     /* Shift+Z enters the Z prefix (pending, no emit) */
     reset_engine();
