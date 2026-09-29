@@ -103,6 +103,9 @@ struct nv_cmd { int cmd_char; nv_func_T cmd_func; short_u cmd_flags; short cmd_a
 - 模式入口 `normal_mode`/`insert_mode`/`visual_mode`/`visual_line_mode` 切换全局 `process_func`。
 - `insert_mode()` **无条件 `clear_keyboard()`**。
 - 操作符：`start_*_action` 设 `action_key`/`action_func` 并切到 `process_vim_action`。
+- **行缩进 `N>>`/`N<<` = N 行**（2026-09 修正）：发射 `Home, Home, Shift+Down×n, Tab/Shift+Tab`。
+  真实 Vim 的 `>>` 缩进 1 行、`2>>` 2 行、`3>>` 3 行；旧实现用 `Shift+Down×(n-1)`，宿主侧
+  半开选区只覆盖 **n-1** 行，故 `2>>`/`3>>` 都少缩进一行。
 - **行选动作（`j`/`k`/`G`/`gg`）+ 操作符 = 整行操作**（2026-09 修正）：真实 Vim 的
   `dj`/`dk`/`dG`/`dgg`/`cj`/`yG`… 是**行选**（`dj` 删当前行+下一行 = 2 行，`2dj` = 3 行）。
   发射为 `Home → Shift+Down/Up×(n+1) → 动作`（`G`/`gg` 为 `Home → Ctrl+Shift+End/Home → 动作`）。
