@@ -424,7 +424,7 @@ while (queue_has()) {
 | `C D Y` | `c$` / `d$` / `y$` |
 | `S` / `NS` | 同 `cc` / `Ncc`（**×n 行**） |
 | `dd` / `Ndd` | Home, Home, Shift+End, Shift+Down×(n-1), Ctrl+X, Backspace（**×n 行**；n=1 时无 `Shift+Down`） |
-| `yy` / `Nyy` | Home, Home, Shift+Down×n, Ctrl+C, **Esc**（**×n 行**；Esc 取消宿主残留选区） |
+| `yy` / `Nyy` | Home, Home, Shift+Down×n, Ctrl+C, **Esc, Up×n**（**×n 行**；Esc 取消宿主残留选区，Up×n 把光标拉回原行——Vim 的 `y` 不移动光标） |
 | `cc` / `Ncc` | Home, Home, Shift+End, Shift+Down×(n-1), change (+Insert)（**×n 行**；n=1 时无 `Shift+Down`） |
 | `dw` / `d$` / `d0` | 选词/选到行首尾 → Ctrl+X |
 | `p` / `P` | Ctrl+V（`P` 先 `←`；不做 `yanked_line` 行选定位） |
@@ -457,6 +457,12 @@ while (queue_has()) {
   马上选中光标下的 1 个字符，因此 `v` + n 次移动 = **n+1** 个字符（`v d` 删 1 个、
   `v l l d` 删 3 个）。旧实现进入时不发键，宿主侧选区只有 n 个字符（`v d` 甚至完全没有
   宿主选区，`Ctrl+X` 退化成"复制整行且不删任何东西"）。
+  **复制不得移动光标**（2026-09 修正）：真实 Vim 的 `yy`/`y$`/`Y` 都**保持光标原位**
+  （`jyyx` 删的是被复制那一行的字符、`y$p` 在原列粘贴）。旧实现发完 `Shift+Down`/`Shift+End`
+  后宿主光标停在下一行/行尾，后续 `x`/`p` 就作用在错误位置（数据损坏级）。
+  修：`yy`/`Nyy` 复制后补 `Up×n`；`Y`/`y$` 复制后补 `Home`；`yj`/`yk` 补 `Up×(n+1)`。
+  **已知偏差**：行复制必须先 `Home` 到列 0 才能选中整行，故**列位置无法恢复**（恢复到列 0）；
+  `yw`/`ye` 的位移量取决于宿主词长，同样无法恢复。二者都只影响光标，不影响缓冲区结果。
   **已知偏差**：宿主选区是"半开区间 + 光标在最后一个字符之后"，而 Vim 的 visual 光标停在
   最后一个选中字符**上**，故字符级 VISUAL 下光标位置固有相差 1（缓冲区结果一致）。
   **字符级 VISUAL 的动作直接作用于当前选区**（2026-09 修正）：
