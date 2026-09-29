@@ -190,6 +190,22 @@ static void rec_replay(void) {
     s_rec_change = false;
 }
 
+/* `N.` 重复 N 次（真实 Vim：dw 后 3. 连删 3 个词）。总键码数必须留在发送队列内：
+ * emit 队列只有 EMIT_CAP=256 格且溢出**静默丢键**，故封顶在 99 键
+ * （与 Normal 的"2 位计数 ≤99"语义一致）。
+ * 封顶不能用"录制键数"估：`dd` 只录 2 键却发 5 键，`99dw` 录 3 键却发 100 键。
+ * 因此先回放一次、量出本次命令**实际**发出的键数，再据此决定还能重复几次。 */
+static void rec_replay_n(int n) {
+    if (s_last_len <= 0 || n < 1) return;
+    const int before = kv_emit_pending();
+    rec_replay();
+    const int per = kv_emit_pending() - before;   /* 单次回放实际发出的键数 */
+    if (per < 1) return;                          /* 该命令不发键（例如被吞掉） */
+    int maxrep = 99 / per;
+    if (maxrep < 1) maxrep = 1;
+    for (int i = 1; i < n && i < maxrep; i++) rec_replay();
+}
+
 /* ------------------------------------------------------------------ commands */
 static void do_single(kv_token_t t, kv_keycode_t kc) {
     (void)kc;
@@ -260,6 +276,8 @@ static kv_feed_t feed_normal(kv_keycode_t kc) {
                 case T_G_BIG:  kv_emit_motion(M_G_BIG, 1); reset_pending(); return R_CONSUMED;
                 case T_g_LOWER: s_state = ST_GP; return R_CONSUMED;
                 case T_Z_BIG:  s_state = ST_ZP; return R_CONSUMED;
+                /* 先清 ctx 再回放：否则刚吃的计数会漏进被回放的命令（`3.` 会变成回放 `3dw`） */
+                case T_REPEAT: reset_pending(); rec_replay_n(n); return R_CONSUMED; /* N. = 重复 N 次 */
                 case T_S_BIG:  kv_emit_line_op(KV_C, n); s_mode = KV_MODE_INSERT; reset_pending(); return R_CONSUMED;
                 case T_INSERT: kv_emit_enter_insert(kc); s_mode = KV_MODE_INSERT; reset_pending(); return R_CONSUMED;
                 case T_VISUAL:

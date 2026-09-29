@@ -304,6 +304,41 @@ static void test_repeat_change_only(void) {
     rec_start(); key(KV_DOT); CHECK_SEQ(KV_DEL);
 }
 
+/* 真实 Vim 实测：`N.` 重复 N 次（dw 后 1./2./3./9. 分别重复 1/2/3/9 次）。
+ * 本层按录制长度封顶：总键码数 ≤99（发送队列 256 格且溢出静默丢键）。 */
+static void test_repeat_count(void) {
+    /* dw（2 键）后 3. => 6 键 */
+    fresh(); key(KV_D); key(KV_W);
+    rec_start(); key(KV_3); key(KV_DOT);
+    CHECK(rec_count() == 6);
+    CHECK(rec_at(0) == KV_CS(KV_RGHT) && rec_at(1) == KV_LCTL_KC(KV_X) &&
+          rec_at(4) == KV_CS(KV_RGHT) && rec_at(5) == KV_LCTL_KC(KV_X));
+    /* 1. 等价于 . */
+    fresh(); key(KV_D); key(KV_W);
+    rec_start(); key(KV_1); key(KV_DOT);
+    CHECK(rec_count() == 2);
+    /* dw 后 99. => ⌊99/2⌋=49 次 = 98 键（封顶，不溢出） */
+    fresh(); key(KV_D); key(KV_W);
+    rec_start(); key(KV_9); key(KV_9); key(KV_DOT);
+    CHECK(rec_count() == 98);
+    /* dd（5 键）后 99. => ⌊99/5⌋=19 次 = 95 键 */
+    fresh(); key(KV_D); key(KV_D);
+    rec_start(); key(KV_9); key(KV_9); key(KV_DOT);
+    CHECK(rec_count() == 95);
+    /* 计数不跨 `.` 泄漏：3. 之后再按 . 只重复一次 */
+    fresh(); key(KV_D); key(KV_W);
+    key(KV_3); key(KV_DOT);
+    rec_start(); key(KV_DOT);
+    CHECK(rec_count() == 2);
+    /* 没有 s_last 时 N. 无输出 */
+    fresh(); rec_start(); key(KV_3); key(KV_DOT); CHECK(rec_count() == 0);
+    fresh(); rec_start(); key(KV_DOT); CHECK(rec_count() == 0);
+    /* 未完成的 . 回放里不得递归：dd 后 99. 的总量有界 */
+    fresh(); key(KV_D); key(KV_D);
+    rec_start(); key(KV_9); key(KV_9); key(KV_DOT);
+    CHECK(rec_count() <= 99);
+}
+
 static void test_big_count(void) {
     fresh(); key(KV_9); key(KV_9); key(KV_W);
     CHECK(rec_count() == 99); /* 99 motions fit in the emit queue */
@@ -655,9 +690,9 @@ static void test_count_drop(void) {
     fresh(); key(KV_3); key(KV_C_D);  CHECK_SEQ(KV_LSFT_KC(KV_END), KV_LCTL_KC(KV_X)); CHECK(kv_pending() == false);
     fresh(); key(KV_3); key(KV_C_Y);  CHECK_SEQ(KV_LSFT_KC(KV_END), KV_LCTL_KC(KV_C)); CHECK(kv_pending() == false);
 
-    /* 3. drops the count and replays the previous completed command */
+    /* 3. 重复 3 次（真实 Vim：dw 后 3. 连删 3 个词）；计数本身不泄漏进回放的命令 */
     fresh(); key(KV_X); rec_start(); key(KV_3); key(KV_DOT);
-    CHECK_SEQ(KV_DEL); CHECK(kv_pending() == false);
+    CHECK_SEQ(KV_DEL, KV_DEL, KV_DEL); CHECK(kv_pending() == false);
 
     /* 3ZZ drops the count and still saves */
     fresh(); key(KV_3); key(KV_C_Z); key(KV_C_Z);
@@ -1200,6 +1235,7 @@ int main(void) {
     test_zero_drops_count();
     test_repeat();
     test_repeat_change_only();
+    test_repeat_count();
     test_big_count();
     test_pass_through();
     test_mode_pending_clear();
