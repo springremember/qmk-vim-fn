@@ -230,7 +230,9 @@ static void test_mo9_not_esc(void) {
 }
 
 /* ======================================================================
- * D. Half repeat: `2d` -> non-vim -> `w` -> `.` replays only `w`.
+ * D. Half repeat: `2d` -> non-vim -> `w` -> `.` replays **nothing**
+ *    (neither the dropped `2d` nor the bare motion `w` may become the target;
+ *     real Vim's `.` repeats the last *change*), and a later real change does.
  * ====================================================================== */
 static void test_half_repeat_isolation(void) {
     reset_engine();
@@ -243,23 +245,35 @@ static void test_half_repeat_isolation(void) {
     CHECK(pipeline(KC_D, false) == false);
     CHECK(pipeline(KC_F5, false) == true);
 
-    /* `w` = fresh motion, recorded as last command. */
+    /* `w` = 裸移动：它本身照常执行，但**不得**成为 `.` 的目标。 */
     g_emit_n = 0;
     CHECK(pipeline(KC_W, true) == false);
     emit_flush();
     CHECK(g_emit_n == 1 && g_emit[0] == KV_LCTL_KC(KV_RGHT));
     CHECK(pipeline(KC_W, false) == false);
 
-    /* `.` replays only `w`, never `2d`/`dw`. */
+    /* `.` 什么都不回放：`2d` 已被丢弃，`w` 是移动（真实 Vim 的 `.` 重复上一次**修改**）。 */
     g_emit_n = 0;
     CHECK(pipeline(KC_DOT, true) == false);
     emit_flush();
-    if (!(g_emit_n == 1 && g_emit[0] == KV_LCTL_KC(KV_RGHT))) {
+    if (g_emit_n != 0) {
         g_fail++;
-        printf("FAIL repeat: '.' after 2d/non-vim/w emitted %d codes (want 1x Ctrl+Right):", g_emit_n);
+        printf("FAIL repeat: '.' after 2d/non-vim/w emitted %d codes (want 0):", g_emit_n);
         for (int i = 0; i < g_emit_n; i++) printf(" 0x%04X", g_emit[i]);
         printf("\n");
     } else g_pass++;
+    CHECK(pipeline(KC_DOT, false) == false);
+
+    /* 一条真正的修改会成为新的目标：`x` -> `.` 再删一个字符。 */
+    g_emit_n = 0;
+    CHECK(pipeline(KC_X, true) == false);
+    emit_flush();
+    CHECK(g_emit_n == 1 && g_emit[0] == KV_DEL);
+    CHECK(pipeline(KC_X, false) == false);
+    g_emit_n = 0;
+    CHECK(pipeline(KC_DOT, true) == false);
+    emit_flush();
+    CHECK(g_emit_n == 1 && g_emit[0] == KV_DEL);
     CHECK(pipeline(KC_DOT, false) == false);
 }
 

@@ -16,6 +16,7 @@ static kv_ctx_t   s_ctx;
 #define REC_MAX 8
 static kv_keycode_t s_rec[REC_MAX];
 static int          s_rec_len;
+static bool         s_rec_change; /* 本次录制里是否含「修改缓冲区」的命令 */
 static kv_keycode_t s_last[REC_MAX];
 static int          s_last_len;
 static bool         s_replaying;
@@ -145,6 +146,20 @@ static bool rec_should_record(kv_token_t t) {
     }
 }
 
+/* 只有「修改缓冲区」的命令才配得上 `.`（真实 Vim 的 `.` 重复上一次**修改**）：
+ * 裸移动（w/j/gg/G/计数）与纯复制（y/Y）都不改变 `.` 的目标。 */
+static bool rec_is_change(kv_token_t t, kv_keycode_t kc) {
+    switch (t) {
+        case T_OP:     return kc == KV_D || kc == KV_C;   /* y 是复制，不是修改 */
+        case T_INDENT: case T_X: case T_XUP: case T_s:
+        case T_C_BIG: case T_D_BIG: case T_P: case T_PUP:
+        case T_JOIN: case T_S_BIG:
+            return true;
+        default:
+            return false;
+    }
+}
+
 static void rec_commit(void) {
     if (s_replaying) return;
     if (s_rec_len > 0) {
@@ -152,9 +167,10 @@ static void rec_commit(void) {
         s_last_len = s_rec_len;
     }
     s_rec_len = 0;
+    s_rec_change = false;
 }
 
-static void rec_clear(void) { s_rec_len = 0; }
+static void rec_clear(void) { s_rec_len = 0; s_rec_change = false; }
 
 /* Shared abort path for every mode/enable transition (design #4.7):
  * drop the in-progress state machine AND the in-progress repeat recording.
@@ -170,6 +186,8 @@ static void rec_replay(void) {
     s_replaying = true;
     for (int i = 0; i < s_last_len; i++) kv_kbd(s_last[i]);
     s_replaying = false;
+    s_rec_len = 0;        /* 回放不产生新的录制（rec_push/rec_commit 在回放期已短路） */
+    s_rec_change = false;
 }
 
 /* ------------------------------------------------------------------ commands */
@@ -549,9 +567,14 @@ kv_result_t kv_kbd(kv_keycode_t kc) {
             if (KV_BASIC(kc) == KV_ESC) {
                 rec_clear();
             } else if (kv_is_vim_key(kc) && rec_should_record(kv_classify(kc))) {
+                if (rec_is_change(kv_classify(kc), kc)) s_rec_change = true;
                 rec_push(kc);
             }
-            if (s_state == ST_IDLE && s_rec_len > 0) rec_commit();
+            /* 命令结束（回到 Idle）才提交：只有含「修改」的录制才成为 `.` 的目标，
+             * 否则**丢弃本次录制**（s_last 保留）—— 裸移动/复制不得夺走 `.` 的目标。 */
+            if (s_state == ST_IDLE && s_rec_len > 0) {
+                if (s_rec_change) rec_commit(); else rec_clear();
+            }
             if (s_mode == KV_MODE_INSERT) rec_clear(); /* mode left NORMAL */
             return KV_CONSUMED;
         }

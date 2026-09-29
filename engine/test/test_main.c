@@ -231,10 +231,77 @@ static void test_repeat(void) {
     /* x . . does not recurse */
     fresh(); key(KV_X); key(KV_DOT); key(KV_DOT);
     CHECK(rec_count() > 0);
-    /* discarded prefix does not pollute repeat: g F5 then gg then . */
+    /* 丢弃前缀 + 裸移动都不成为 `.` 的目标：g F5 -> gg（移动）-> `.` 无输出
+     * （真实 Vim：`.` 重复上一次**修改**，移动不夺走目标） */
     fresh(); key(KV_G); key(0x3E); key(KV_G); key(KV_G); /* gg */
     rec_start(); key(KV_DOT);
-    CHECK_SEQ(KV_LCTL_KC(KV_HOME)); /* replays gg, not ggg */
+    CHECK(rec_count() == 0); /* gg 是移动，不记录；也不回放 ggg */
+}
+
+/* 真实 Vim 实测（vim.tiny 9.1）：`.` 重复的是上一次**修改** —— 裸移动与 `y`/`Y` 都不夺走目标。
+ *   dw w .   => 再执行 dw      x yy w . => 再执行 x      x Y w . => 再执行 x
+ *   >> w .   => 再执行 >>      p w .    => 再执行 p      J w .   => 再执行 J
+ *   dd w .   => 再执行 dd      w . / 3j . / gg . => 无动作（没有更早的修改） */
+static void test_repeat_change_only(void) {
+    /* 用户实测缺陷回归：dw 后按 w 再按 . => 必须回放 dw，而不是 w */
+    fresh(); key(KV_D); key(KV_W);
+    key(KV_W);                                        /* 裸移动：不得覆盖 */
+    rec_start(); key(KV_DOT);
+    CHECK_SEQ(KV_CS(KV_RGHT), KV_LCTL_KC(KV_X));      /* dw */
+    /* 裸移动本身不成为目标 */
+    fresh(); key(KV_W); key(KV_J);
+    rec_start(); key(KV_DOT); CHECK(rec_count() == 0);
+    /* 计数+移动同样不提交 */
+    fresh(); key(KV_3); key(KV_J);
+    rec_start(); key(KV_DOT); CHECK(rec_count() == 0);
+    /* gg / G 是移动 */
+    fresh(); key(KV_G); key(KV_G);
+    rec_start(); key(KV_DOT); CHECK(rec_count() == 0);
+    fresh(); key(KV_C_G);
+    rec_start(); key(KV_DOT); CHECK(rec_count() == 0);
+    /* y / yy / Y 是复制，不是修改：`. ` 仍回放更早的 x */
+    fresh(); key(KV_X); key(KV_Y); key(KV_Y);
+    rec_start(); key(KV_DOT); CHECK_SEQ(KV_DEL);
+    fresh(); key(KV_X); key(KV_Y); key(KV_W);
+    rec_start(); key(KV_DOT); CHECK_SEQ(KV_DEL);
+    fresh(); key(KV_X); key(KV_C_Y); key(KV_W);
+    rec_start(); key(KV_DOT); CHECK_SEQ(KV_DEL);
+    /* 缩进 / 粘贴 / 连接 / 行删 都是修改，会夺走目标 */
+    fresh(); key(KV_C_GT); key(KV_C_GT); key(KV_W);
+    rec_start(); key(KV_DOT);
+    CHECK_SEQ(KV_HOME, KV_HOME, KV_TAB);
+    fresh(); key(KV_C_LT); key(KV_C_LT); key(KV_W);
+    rec_start(); key(KV_DOT);
+    CHECK_SEQ(KV_HOME, KV_HOME, KV_LSFT_KC(KV_TAB));
+    fresh(); key(KV_P); key(KV_W);
+    rec_start(); key(KV_DOT); CHECK_SEQ(KV_LCTL_KC(KV_V));
+    fresh(); key(KV_C_P); key(KV_W);
+    rec_start(); key(KV_DOT); CHECK_SEQ(KV_LEFT, KV_LCTL_KC(KV_V));
+    fresh(); key(KV_C_J); key(KV_W);
+    rec_start(); key(KV_DOT); CHECK_SEQ(KV_END, KV_DEL);
+    fresh(); key(KV_D); key(KV_D); key(KV_W);
+    rec_start(); key(KV_DOT);
+    CHECK_SEQ(KV_HOME, KV_HOME, KV_LSFT_KC(KV_END), KV_LCTL_KC(KV_X), KV_BSPC);
+    /* 单键修改：x / X / D 留在 Normal；s / C / S / cc 会进 Insert —— 此时 `.` 是**字面量**
+     * （真实 Vim 实测：`x cc w .` 里 `w.` 被当成插入文本），所以切回 Normal 再验证它们
+     * 确实已经成为 `.` 的目标。 */
+    fresh(); key(KV_X); key(KV_W); rec_start(); key(KV_DOT); CHECK_SEQ(KV_DEL);
+    fresh(); key(KV_C_X); key(KV_W); rec_start(); key(KV_DOT); CHECK_SEQ(KV_BSPC);
+    fresh(); key(KV_C_D); key(KV_W); rec_start(); key(KV_DOT);
+    CHECK_SEQ(KV_LSFT_KC(KV_END), KV_LCTL_KC(KV_X));
+    fresh(); key(KV_S); kv_set_mode(KV_MODE_NORMAL); rec_start(); key(KV_DOT);
+    CHECK_SEQ(KV_LSFT_KC(KV_RGHT), KV_DEL);
+    fresh(); key(KV_C_C); kv_set_mode(KV_MODE_NORMAL); rec_start(); key(KV_DOT);
+    CHECK_SEQ(KV_LSFT_KC(KV_END), KV_LCTL_KC(KV_X));
+    fresh(); key(KV_C_S); kv_set_mode(KV_MODE_NORMAL); rec_start(); key(KV_DOT);
+    CHECK_SEQ(KV_HOME, KV_HOME, KV_LSFT_KC(KV_END), KV_LCTL_KC(KV_X), KV_BSPC);
+    fresh(); key(KV_C); key(KV_C); kv_set_mode(KV_MODE_NORMAL); rec_start(); key(KV_DOT);
+    CHECK_SEQ(KV_HOME, KV_HOME, KV_LSFT_KC(KV_END), KV_LCTL_KC(KV_X), KV_BSPC);
+    /* Insert 里的 `.` 是字面量（透传），不是回放 */
+    fresh(); key(KV_S); rec_start(); key(KV_DOT); CHECK_SEQ(KV_DOT);
+    /* 复制之后再修改，目标换成新修改 */
+    fresh(); key(KV_Y); key(KV_Y); key(KV_X);
+    rec_start(); key(KV_DOT); CHECK_SEQ(KV_DEL);
 }
 
 static void test_big_count(void) {
@@ -280,13 +347,14 @@ static void test_mode_pending_clear(void) {
     kv_enable();
     CHECK(kv_get_mode() == KV_MODE_INSERT);
 
-    /* a dropped prefix must not pollute repeat: 2d <switch> w . => replay w */
+    /* 被丢弃的前缀不得污染 repeat，且裸移动不成为目标：
+     * 2d <切模式> w . => 既不是 2dw 也不是 w（无更早修改 => 0 输出） */
     fresh(); key(KV_2); key(KV_D);
     kv_set_mode(KV_MODE_INSERT);
     kv_set_mode(KV_MODE_NORMAL);
     key(KV_W);
     rec_start(); key(KV_DOT);
-    CHECK_SEQ(KV_LCTL_KC(KV_RGHT)); /* w, not 2dw */
+    CHECK(rec_count() == 0);
 
     /* a completed command survives a mode round-trip: dd <switch> . => dd */
     fresh(); key(KV_D); key(KV_D);
@@ -401,7 +469,7 @@ static void test_contract_extra(void) {
     flush_emit();
     CHECK_SEQ(KV_LCTL_KC(KV_RGHT)); /* w only */
     rec_start(); key(KV_DOT);
-    CHECK_SEQ(KV_LCTL_KC(KV_RGHT)); /* replay w, never 2dw */
+    CHECK(rec_count() == 0); /* w 是移动：既不是 2dw，也不夺走 `.` 的目标 */
 }
 
 /* ------------------------------------------------------------------ expanded
@@ -1131,6 +1199,7 @@ int main(void) {
     test_op_mismatch();
     test_zero_drops_count();
     test_repeat();
+    test_repeat_change_only();
     test_big_count();
     test_pass_through();
     test_mode_pending_clear();
