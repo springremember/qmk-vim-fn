@@ -443,11 +443,16 @@ static void caps_mode_enter(void) {
     if (s_caps_mode) caps_mode_exit();
     s_caps_mode      = true;
     // 物理影子里 Ctrl 是否按住（影子在第 0 步更新，不受合成位影响）。
-    s_caps_phys_ctrl = (vim_glue_mods() & (MOD_BIT(KC_LCTL) | MOD_BIT(KC_RCTL))) != 0;
+    // 第 7 轮 P0-1：LCTL 与 RCTL 在真机是**不同 bit**，必须逐位记录**实际按住的那一侧**。
+    // 旧实现只要按住任一侧就把两侧都记成"物理在位"，于是"物理按住右 Ctrl 时进入模式"
+    // 会留下一个永不清除的合成左 Ctrl 位。
+    const uint8_t caps_entry_mods = vim_glue_mods();
+    s_caps_phys_ctrl = (caps_entry_mods & (MOD_BIT(KC_LCTL) | MOD_BIT(KC_RCTL))) != 0;
     // 进入时物理 Ctrl 已按住 -> 同时记入 held 掩码，避免模式内首个非 F 键又合成一个 Ctrl
     // （第 4 轮 P1-1：否则"进入时已按 Ctrl"后松开，后续键会丢 Ctrl）。
     s_caps_phys_ctrl_held = 0;
-    if (s_caps_phys_ctrl) s_caps_phys_ctrl_held = (uint8_t)(CAPS_OWN_LCTL | CAPS_OWN_RCTL);
+    if (caps_entry_mods & MOD_BIT(KC_LCTL)) s_caps_phys_ctrl_held |= CAPS_OWN_LCTL;
+    if (caps_entry_mods & MOD_BIT(KC_RCTL)) s_caps_phys_ctrl_held |= CAPS_OWN_RCTL;
     s_caps_ctrl_n    = 0;
     caps_held_reset();
 }
@@ -535,6 +540,10 @@ static bool caps_mode_process(uint16_t keycode, keyrecord_t *record) {
         // 物理 Ctrl 的 release：同样交回 QMK（由 QMK 清位）。
         s_caps_phys_ctrl = false;
         s_caps_phys_ctrl_held &= (base == KC_LCTL) ? (uint8_t)~CAPS_OWN_LCTL : (uint8_t)~CAPS_OWN_RCTL;
+        // 第 7 轮 P0-2：若该 press 曾被 held 表溢出吞掉（pair_add 过），其 release 会被配对表
+        // 消费，**永远不会到达 QMK 的 del_mods**；而下面又清掉了 owned —— 合成位就永久残留。
+        // 先把配对记录丢掉，让 release 透传给 QMK 自己清位。
+        vim_glue_pair_drop(base);
         // 真机 Ctrl 是**共享位**：QMK 会在**同一事件内**（process_action）反注册该位，
         // 因此在本回调里 register_code 会被立刻抵消（第 5 轮审核证实无效）。
         // 正确做法：清掉 owned 闩锁，让**下一个**非 F 键按条件重新注册（跨事件，不被抵消）。
@@ -555,8 +564,10 @@ static bool caps_mode_process(uint16_t keycode, keyrecord_t *record) {
         // 只有"本模式注册的合成位"且"当前没有物理 Ctrl 在位"时才反注册
         // （第 4 轮 P1-2：物理 LCTL 仍按住时反注册会把它一起清掉）。
         // 注意判据是 s_caps_phys_ctrl_held（"物理 Ctrl 当前是否在位"），而不是进入时的快照。
+        // 第 7 轮 P2-1：与退出路径一致地**逐位**判断（整字节判断会在"物理按的是另一侧
+        // Ctrl"时误抑制合成位的反注册，让 Ctrl 一直挂到模式退出）。
         if (s_caps_ctrl_n == 0 && (s_caps_ctrl_owned & CAPS_OWN_LCTL) &&
-            !s_caps_phys_ctrl && !s_caps_phys_ctrl_held) {
+            !(s_caps_phys_ctrl_held & CAPS_OWN_LCTL)) {
             unregister_code(KC_LCTL);
             s_caps_ctrl_owned &= (uint8_t)~CAPS_OWN_LCTL;
         }

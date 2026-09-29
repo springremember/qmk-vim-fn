@@ -94,7 +94,8 @@ void vim_glue_release_all(void) {
         s_held_expect[i] = false; // a mode switch cancels the pending hold too
     }
     if (s_rshift_lazy) {
-        unregister_mods(MOD_BIT_LSHIFT);
+        // 第 7 轮 P1-2：同上 —— 物理左 Shift 按住时不要动共享位。
+        if ((s_shadow & MOD_BIT_LSHIFT) == 0) unregister_mods(MOD_BIT_LSHIFT);
         s_rshift_lazy = false;
     }
 }
@@ -166,7 +167,10 @@ static bool rshift_exempt(uint16_t keycode) {
 // If the physical Left Shift is already held, do nothing: it already provides
 // the required Shift and must not be unregistered on Right Shift release.
 static void rshift_lazy_assert(void) {
-    if (!s_rshift_lazy && (s_shadow & MOD_BIT_LSHIFT) == 0) {
+    // 第 7 轮 P1-1：判据要看**当前报告位**，不能只看闩锁 —— 物理左 Shift 按下再松开会把
+    // 共享 LSHIFT 位清掉，而 s_rshift_lazy 仍为 true，于是后续键再也补不上 Shift
+    // （违反 design §4.10"右Shift+a=A"）。
+    if ((get_mods() & MOD_BIT_LSHIFT) == 0 && (s_shadow & MOD_BIT_LSHIFT) == 0) {
         register_mods(MOD_BIT_LSHIFT);
         s_rshift_lazy = true;
     }
@@ -259,7 +263,8 @@ bool vim_glue_engine(uint16_t keycode, keyrecord_t *record) {
         // key-up: pass through unless the matching press was consumed.  The
         // held-motion arrow is unregistered here (design §4.10).
         if (keycode == KC_RSFT && s_rshift_lazy) {
-            unregister_mods(MOD_BIT_LSHIFT); // drop the lazily-held Shift
+            // 第 7 轮 P1-2：若物理左 Shift 仍按住，共享位归它所有，不能在这里反注册。
+            if ((s_shadow & MOD_BIT_LSHIFT) == 0) unregister_mods(MOD_BIT_LSHIFT);
             s_rshift_lazy = false;
         }
         if (mi >= 0) {
