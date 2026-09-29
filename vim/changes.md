@@ -238,3 +238,18 @@
 | `3D` / `3C` / `3Y` | `L4` / `\|L4`（作用到下面第 2 行的行尾） | 只作用到当前行尾 | `Shift+End[,Shift+Down×2,Shift+End]` + 动作 |
 
 仍按设计丢弃计数：`G`/`gg`（§2b）、`ZZ`、插入键 `i I a A o O`、`v`/`V`。
+
+### 7.7 适配层：Caps 合成 Ctrl 位模型与右 Shift 懒 Shift（2026-09 全面审核）
+
+独立审核（编译宿主探针复现）发现 2 个 **P0（宿主按键永久卡住）** 与 2 个 **P1**：
+
+| 编号 | 缺陷 | 真实后果 | 修法 |
+| :--- | :--- | :--- | :--- |
+| P0-1 | `caps_mode_enter` 把 LCTL/RCTL 当作同一个"物理 Ctrl 位"：只要按住任一侧就两侧都记为物理在位 | 物理按住**右** Ctrl 时进入 Caps 模式 → 松开右 Ctrl 后，合成的左 Ctrl 位**永久残留**（宿主表现为幽灵 Ctrl，`Ctrl+A` 变全选） | 按实际按住的那一侧**逐位**记录 |
+| P0-2 | held 表溢出吞掉物理 Ctrl 的 press 后，其 release 被配对表消费、到不了 QMK 的 `del_mods`，而 `owned` 闩锁又被清掉 | 合成位永久残留 | 清 `owned` 前调用既有的 `vim_glue_pair_drop()`（该函数此前是**死代码**，正是根因） |
+| P1-1 | `rshift_lazy_assert` 只看"懒 Shift 已置位"的闩锁 | 物理左 Shift 按下再松开会清掉共享位而闩锁仍真 → 此后右 Shift 再也补不上 Shift（违反 §4.10「右Shift+a=A」） | 判据改为**当前报告位** `get_mods() & MOD_BIT_LSHIFT` |
+| P1-2 | 右 Shift 抬起 / 关闭 vim 时无条件反注册懒 Shift | 物理左 Shift 仍按住时被一起清掉 | 只在**没有物理左 Shift 占位**时才反注册 |
+| P2-1 | Caps 非 F 键 release 用整字节判断 | 物理按住另一侧 Ctrl 时误抑制合成位反注册 | 改为**逐位**判断 |
+
+两个宿主探针已收编为常驻回归套件 `engine/test/glue/test_adapter_regress{,2}.c`（48 + 67 断言），
+每个修法都有对应的变异验证（改回旧实现即变红）。详见 [`design.md`](design.md) §4.10。

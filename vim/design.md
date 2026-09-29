@@ -581,6 +581,17 @@ while (queue_has()) {
   且宿主永不见孤立 Shift。右 Shift 的 press/release 由共享配对表吞掉。修饰键/Esc/层键豁免（不包装）。
   vim 关闭时右 Shift 为普通修饰键。`vim_glue_mods()` 影子**照常记录右 Shift**，故 Normal 下的 Shift 折叠
   （`右Shift+p`→`P`）与 `右Shift+Esc`→`` ` `` 仍成立。
+  **实现约束（2026-09 审核修正）**：①补注册的判据必须是**当前报告位**（`get_mods() & MOD_BIT_LSHIFT`），
+  不能只看"懒 Shift 已置位"的闩锁——物理左 Shift 按下再松开会清掉共享位而闩锁仍为真，此后右 Shift
+  就再也补不上 Shift；②反注册（右 Shift 抬起、或模式/使能切换的 `vim_glue_release_all()`）必须只在
+  **没有物理左 Shift 占位**时才执行，否则会把物理按住的 Shift 一起清掉；③`Esc` 属豁免集合，
+  **不得**被懒 Shift 包住（否则 Normal 下的 `右Shift+Esc` 会变成宿主的 `Shift+Esc`）。
+- **Caps 模式的 Ctrl 是**位模型**（2026-09 审核修正）**：LCTL 与 RCTL 在真机是**不同 bit**，且
+  `register_code`/`unregister_code` 是**无引用计数**的裸位操作。因此：
+  ①进入模式时按**实际按住的那一侧**逐位记录 `s_caps_phys_ctrl_held`（不能"按住任一侧就把两侧都记为物理在位"，
+  否则"物理按住右 Ctrl 时进入"会留下永不清除的合成左 Ctrl 位）；②物理 Ctrl 的 release 必须先
+  `vim_glue_pair_drop()` 再清 `owned` 闩锁——若该 press 曾被 held 表溢出吞掉，其 release 会被配对表消费、
+  永远到不了 QMK 的 `del_mods`；③合成位的反注册判据一律**逐位**（与退出路径一致）。
 - **emit 非阻塞**：`kv_task()` 按计时发送；不使用 `wait_ms`。
 
 ### 4.12 glue 层（QMK 适配层）职责规格
