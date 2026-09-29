@@ -48,6 +48,19 @@ static void emit_op_range(kv_motion_t m, int n) {
         case M_GG:     sel = KV_CS(KV_HOME);       break;
         default:       return;
     }
+    /* 行选动作（j/k/G/gg）在 Vim 里是**整行**操作：先把光标移到行首再扩选。
+     * `dj` = 当前行 + 下一行 = 2 行（即 n+1 行），`2dj` = 3 行；`dG`/`dgg` 到文档端。
+     * 旧实现从**当前列**开始 Shift+Down，实际切掉"上一行尾部 + 下一行头部"（数据损坏）。 */
+    if (m == M_J || m == M_K) {
+        kv_emit_tap(KV_HOME);
+        kv_emit_taps(sel, n + 1);
+        return;
+    }
+    if (m == M_G_BIG || m == M_GG) {
+        kv_emit_tap(KV_HOME);
+        kv_emit_taps(sel, 1);
+        return;
+    }
     kv_emit_taps(sel, n);
 }
 

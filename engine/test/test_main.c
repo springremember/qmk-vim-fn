@@ -100,10 +100,11 @@ static void test_op(void) {
     fresh(); key(KV_2); key(KV_D); key(KV_3); key(KV_W);
     CHECK(rec_count() == 7); /* 6 x CS(RGHT) + Ctrl+X */
 
-    fresh(); key(KV_D); key(KV_C_G); CHECK_SEQ(KV_CS(KV_END), KV_LCTL_KC(KV_X));
-    fresh(); key(KV_2); key(KV_D); key(KV_C_G); CHECK_SEQ(KV_CS(KV_END), KV_LCTL_KC(KV_X));
-    fresh(); key(KV_D); key(KV_2); key(KV_C_G); CHECK_SEQ(KV_CS(KV_END), KV_LCTL_KC(KV_X));
-    fresh(); key(KV_D); key(KV_G); key(KV_G); CHECK_SEQ(KV_CS(KV_HOME), KV_LCTL_KC(KV_X));
+    /* 行选：Home 先到行首，再整行扩选（真实 Vim 的 dG/dgg 是行选） */
+    fresh(); key(KV_D); key(KV_C_G); CHECK_SEQ(KV_HOME, KV_CS(KV_END), KV_LCTL_KC(KV_X));
+    fresh(); key(KV_2); key(KV_D); key(KV_C_G); CHECK_SEQ(KV_HOME, KV_CS(KV_END), KV_LCTL_KC(KV_X));
+    fresh(); key(KV_D); key(KV_2); key(KV_C_G); CHECK_SEQ(KV_HOME, KV_CS(KV_END), KV_LCTL_KC(KV_X));
+    fresh(); key(KV_D); key(KV_G); key(KV_G); CHECK_SEQ(KV_HOME, KV_CS(KV_HOME), KV_LCTL_KC(KV_X));
 
     /* line ops */
     fresh(); key(KV_D); key(KV_D);
@@ -117,6 +118,32 @@ static void test_op(void) {
 
 /* 全面审核（对照 vim.tiny 9.1）：`cc`/`S`/`Ncc` 必须**留一个空行**
  * （旧实现与 `dd` 完全相同、多发 Backspace 把整行并掉）；`J` 必须**插一个空格**。 */
+/* 行选动作 + 操作符（真实 Vim：dj 删当前行+下一行 = 2 行、2dj = 3 行、dG 删到末行）。 */
+static void test_linewise_operator_motions(void) {
+    fresh(); key(KV_D); key(KV_J);
+    CHECK_SEQ(KV_HOME, KV_LSFT_KC(KV_DOWN), KV_LSFT_KC(KV_DOWN), KV_LCTL_KC(KV_X));
+    fresh(); key(KV_2); key(KV_D); key(KV_J);
+    CHECK_SEQ(KV_HOME, KV_LSFT_KC(KV_DOWN), KV_LSFT_KC(KV_DOWN), KV_LSFT_KC(KV_DOWN),
+              KV_LCTL_KC(KV_X));
+    fresh(); key(KV_D); key(KV_2); key(KV_J);
+    CHECK_SEQ(KV_HOME, KV_LSFT_KC(KV_DOWN), KV_LSFT_KC(KV_DOWN), KV_LSFT_KC(KV_DOWN),
+              KV_LCTL_KC(KV_X));
+    fresh(); key(KV_D); key(KV_K);
+    CHECK_SEQ(KV_HOME, KV_LSFT_KC(KV_UP), KV_LSFT_KC(KV_UP), KV_LCTL_KC(KV_X));
+    /* yj 同样是行选（复制 2 行） */
+    fresh(); key(KV_Y); key(KV_J);
+    CHECK_SEQ(KV_HOME, KV_LSFT_KC(KV_DOWN), KV_LSFT_KC(KV_DOWN), KV_LCTL_KC(KV_C), KV_ESC);
+    /* cj 行选 + 进 Insert */
+    fresh(); key(KV_C); key(KV_J);
+    CHECK_SEQ(KV_HOME, KV_LSFT_KC(KV_DOWN), KV_LSFT_KC(KV_DOWN), KV_LCTL_KC(KV_X));
+    CHECK(kv_get_mode() == KV_MODE_INSERT);
+    /* 非行选动作不受影响（dh 仍是字符级） */
+    fresh(); key(KV_D); key(KV_H);
+    CHECK_SEQ(KV_LSFT_KC(KV_LEFT), KV_LCTL_KC(KV_X));
+    fresh(); key(KV_D); key(KV_L);
+    CHECK_SEQ(KV_LSFT_KC(KV_RGHT), KV_LCTL_KC(KV_X));
+}
+
 static void test_line_change_and_join(void) {
     /* cc：Home,Home,Shift+End,Ctrl+X（**不发 BSPC**）+ 进 Insert */
     fresh(); key(KV_C); key(KV_C);
@@ -141,15 +168,16 @@ static void test_line_change_and_join(void) {
 }
 
 static void test_indent(void) {
+    /* >j 是**行选**（Vim：缩进当前行 + 下一行 = 2 行） */
     fresh(); key(KV_C_GT); key(KV_J);
-    CHECK_SEQ(KV_LSFT_KC(KV_DOWN), KV_TAB);
+    CHECK_SEQ(KV_HOME, KV_LSFT_KC(KV_DOWN), KV_LSFT_KC(KV_DOWN), KV_TAB);
     fresh(); key(KV_C_GT); key(KV_C_GT); CHECK_SEQ(KV_HOME, KV_HOME, KV_TAB);
     fresh(); key(KV_3); key(KV_C_LT); key(KV_C_LT);
     CHECK_SEQ(KV_HOME, KV_HOME, KV_LSFT_KC(KV_DOWN), KV_LSFT_KC(KV_DOWN), KV_LSFT_KC(KV_TAB));
     fresh(); key(KV_C_GT); key(KV_1); key(KV_0); key(KV_J);
-    CHECK(rec_count() == 11); /* 10 x LSFT(DOWN) + TAB */
+    CHECK(rec_count() == 13); /* HOME + 11 x LSFT(DOWN)（n+1 行）+ TAB */
     fresh(); key(KV_2); key(KV_C_GT); key(KV_3); key(KV_J);
-    CHECK(rec_count() == 7); /* 6 x LSFT(DOWN) + TAB */
+    CHECK(rec_count() == 9); /* HOME + 7 x LSFT(DOWN)（2*3+1 行）+ TAB */
     fresh(); key(KV_C_GT); key(KV_0); CHECK_SEQ(KV_TAB);
     fresh(); key(KV_C_LT); key(KV_0); CHECK_SEQ(KV_LSFT_KC(KV_TAB));
     /* > < is not >> : strict clear, < re-identified */
@@ -598,13 +626,13 @@ static void test_op_corners(void) {
     CHECK(rec_at(0) == KV_CS(KV_RGHT));
     CHECK(rec_at(20) == KV_LCTL_KC(KV_X));
 
-    /* G always drops counts: dG / 2dG / d2G are all dG */
-    fresh(); key(KV_D); key(KV_C_G); CHECK_SEQ(KV_CS(KV_END), KV_LCTL_KC(KV_X));
-    fresh(); key(KV_2); key(KV_D); key(KV_C_G); CHECK_SEQ(KV_CS(KV_END), KV_LCTL_KC(KV_X));
-    fresh(); key(KV_D); key(KV_2); key(KV_C_G); CHECK_SEQ(KV_CS(KV_END), KV_LCTL_KC(KV_X));
+    /* G always drops counts: dG / 2dG / d2G are all dG（行选：先 Home） */
+    fresh(); key(KV_D); key(KV_C_G); CHECK_SEQ(KV_HOME, KV_CS(KV_END), KV_LCTL_KC(KV_X));
+    fresh(); key(KV_2); key(KV_D); key(KV_C_G); CHECK_SEQ(KV_HOME, KV_CS(KV_END), KV_LCTL_KC(KV_X));
+    fresh(); key(KV_D); key(KV_2); key(KV_C_G); CHECK_SEQ(KV_HOME, KV_CS(KV_END), KV_LCTL_KC(KV_X));
     /* dgg / d2gg are both dgg */
-    fresh(); key(KV_D); key(KV_G); key(KV_G); CHECK_SEQ(KV_CS(KV_HOME), KV_LCTL_KC(KV_X));
-    fresh(); key(KV_D); key(KV_2); key(KV_G); key(KV_G); CHECK_SEQ(KV_CS(KV_HOME), KV_LCTL_KC(KV_X));
+    fresh(); key(KV_D); key(KV_G); key(KV_G); CHECK_SEQ(KV_HOME, KV_CS(KV_HOME), KV_LCTL_KC(KV_X));
+    fresh(); key(KV_D); key(KV_2); key(KV_G); key(KV_G); CHECK_SEQ(KV_HOME, KV_CS(KV_HOME), KV_LCTL_KC(KV_X));
     /* mismatched key after a postfix count: d2x -> x */
     fresh(); key(KV_D); key(KV_2); key(KV_X); CHECK_SEQ(KV_DEL);
     CHECK(kv_pending() == false);
@@ -627,31 +655,32 @@ static void test_op_corners(void) {
     /* G3 (design §4.4 / command.c emit_op_range L36): operator + k selects the
      * line above (Shift+Up), then the register op. */
     fresh(); key(KV_D); key(KV_K);
-    CHECK_SEQ(KV_LSFT_KC(KV_UP), KV_LCTL_KC(KV_X));
-    /* postfix count multiplies: d2k -> 2 x Shift+Up + Ctrl+X */
+    CHECK_SEQ(KV_HOME, KV_LSFT_KC(KV_UP), KV_LSFT_KC(KV_UP), KV_LCTL_KC(KV_X));
+    /* postfix count multiplies: d2k -> Home + 3 x Shift+Up (n+1 行) + Ctrl+X */
     fresh(); key(KV_D); key(KV_2); key(KV_K);
-    CHECK(rec_count() == 3);
+    CHECK(rec_count() == 5);
     CHECK(kv_pending() == false);
 }
 
 /* testcase.md §4 §6 — indent corners: >G / >gg / >2G / >2gg, the default
  * (non-expected key) path, and 2-digit postfix-count saturation. */
 static void test_indent_corners(void) {
+    /* 行选：先 Home 到行首，再整行扩选（Vim 的 >G/>gg 是行选） */
     fresh(); key(KV_C_GT); key(KV_C_G);
-    CHECK_SEQ(KV_CS(KV_END), KV_TAB);
+    CHECK_SEQ(KV_HOME, KV_CS(KV_END), KV_TAB);
     fresh(); key(KV_2); key(KV_C_GT); key(KV_C_G);
-    CHECK_SEQ(KV_CS(KV_END), KV_TAB);
+    CHECK_SEQ(KV_HOME, KV_CS(KV_END), KV_TAB);
     fresh(); key(KV_C_GT); key(KV_2); key(KV_C_G);
-    CHECK_SEQ(KV_CS(KV_END), KV_TAB);
+    CHECK_SEQ(KV_HOME, KV_CS(KV_END), KV_TAB);
     fresh(); key(KV_C_GT); key(KV_G); key(KV_G);
-    CHECK_SEQ(KV_CS(KV_HOME), KV_TAB);
+    CHECK_SEQ(KV_HOME, KV_CS(KV_HOME), KV_TAB);
     fresh(); key(KV_2); key(KV_C_GT); key(KV_G); key(KV_G);
-    CHECK_SEQ(KV_CS(KV_HOME), KV_TAB);
+    CHECK_SEQ(KV_HOME, KV_CS(KV_HOME), KV_TAB);
     fresh(); key(KV_C_GT); key(KV_2); key(KV_G); key(KV_G);
-    CHECK_SEQ(KV_CS(KV_HOME), KV_TAB);
+    CHECK_SEQ(KV_HOME, KV_CS(KV_HOME), KV_TAB);
     /* < variant keeps the >/< identity */
     fresh(); key(KV_C_LT); key(KV_2); key(KV_G); key(KV_G);
-    CHECK_SEQ(KV_CS(KV_HOME), KV_LSFT_KC(KV_TAB));
+    CHECK_SEQ(KV_HOME, KV_CS(KV_HOME), KV_LSFT_KC(KV_TAB));
     /* >^ (caret branch: indent only, no selection) */
     fresh(); key(KV_C_GT); key(KV_C_CARET); CHECK_SEQ(KV_TAB);
     /* >x: x is unexpected -> clear >, re-identify x */
@@ -659,7 +688,7 @@ static void test_indent_corners(void) {
     CHECK(kv_pending() == false);
     /* >234j: postfix count stops at 2 digits (34 ignored -> 23) */
     fresh(); key(KV_C_GT); key(KV_2); key(KV_3); key(KV_4); key(KV_J);
-    CHECK(rec_count() == 24); /* 23 x Shift+Down + Tab */
+    CHECK(rec_count() == 26); /* HOME + 24 x Shift+Down（n+1 行）+ Tab */
     CHECK(kv_pending() == false);
 
     /* G2 (design §4.4 engine.c L260-276, ST_ANGCnt default): >2x clears the
@@ -671,7 +700,7 @@ static void test_indent_corners(void) {
     /* G3 (design §4.4 / command.c emit_op_range L36): indent + k selects the
      * line above (Shift+Up), then Tab. */
     fresh(); key(KV_C_GT); key(KV_K);
-    CHECK_SEQ(KV_LSFT_KC(KV_UP), KV_TAB);
+    CHECK_SEQ(KV_HOME, KV_LSFT_KC(KV_UP), KV_LSFT_KC(KV_UP), KV_TAB);
     CHECK(kv_pending() == false);
 }
 
@@ -1253,6 +1282,7 @@ int main(void) {
     test_count();
     test_op();
     test_line_change_and_join();
+    test_linewise_operator_motions();
     test_indent();
     test_strict_clear();
     test_insert();

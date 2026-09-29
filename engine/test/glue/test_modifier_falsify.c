@@ -172,12 +172,12 @@ static void test_op_modifier_second(const char *name, uint16_t op, uint16_t mod,
 static void test_op_modifier_family(void) {
     const kv_keycode_t d_dlr[]   = { KV_LSFT_KC(KV_END),  KV_LCTL_KC(KV_X) };
     const kv_keycode_t d_caret[] = { KV_LSFT_KC(KV_HOME), KV_LCTL_KC(KV_X) };
-    const kv_keycode_t d_G[]     = { KV_CS(KV_END),       KV_LCTL_KC(KV_X) };
+    const kv_keycode_t d_G[]     = { KV_HOME, KV_CS(KV_END), KV_LCTL_KC(KV_X) };
     const kv_keycode_t y_dlr[]   = { KV_LSFT_KC(KV_END),  KV_LCTL_KC(KV_C), KV_ESC };
 
     test_op_modifier_second("d $", KC_D, KC_LSFT, KC_4, d_dlr,   2);
     test_op_modifier_second("d ^", KC_D, KC_RSFT, KC_6, d_caret, 2);
-    test_op_modifier_second("d G", KC_D, KC_LSFT, KC_G, d_G,     2);
+    test_op_modifier_second("d G", KC_D, KC_LSFT, KC_G, d_G,     3);
     test_op_modifier_second("y $", KC_Y, KC_LSFT, KC_4, y_dlr,   3);
 }
 
