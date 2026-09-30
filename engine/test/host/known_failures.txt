@@ -23,15 +23,11 @@
 # Run `cd engine && make matrix-test` (or `python3 test/host/matrix.py --all`
 # for per-case detail) to see the current split.
 
-2cc                    reg
-2ccx                   reg
 2cw                    buf+reg
 2dd-last               cur
 2ddp                   cur
 2dj                    cur
 2yw                    cur
-3S                     reg
-3cc                    reg
 3dd                    cur
 3dw                    buf+reg
 <G                     cur
@@ -42,17 +38,12 @@
 >e                     cur
 >w                     cur
 Dp                     buf+cur
-S                      reg
 Yp                     cur
 ZZ                     buf
 Zx                     buf+reg
 cE                     buf+reg
 cW                     buf+reg
 cb-b                   buf
-cc                     reg
-cc-first               reg
-cc-last                reg
-ccx                    reg
 ce                     buf+reg
 cj                     buf+cur+reg
 ck                     buf+cur+reg
@@ -111,9 +102,7 @@ mot-j-last             cur
 pp-3ylp                buf+cur
 pp-Dp                  buf+cur
 pp-J-leadspace         buf
-pp-Sp                  reg
 pp-Yp                  cur
-pp-ccp                 reg
 pp-dd-then-P           cur
 pp-vlyP                cur
 pp-vlyp                buf+cur
