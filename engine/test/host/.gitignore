@@ -1,0 +1,3 @@
+# build artifacts of the matrix test (see ../Makefile: matrix-test)
+probe
+__pycache__/

@@ -244,3 +244,33 @@
 | A6 | 左右修饰符混按 | 键码正确、不破坏 |
 | A7 | 计数上限 | 不溢出、不触发看门狗 |
 | A8 | 直接映射的模键码 | 不再打包；修饰位由物理影子提供，键码自带修饰位不被剥离 |
+
+## 14. 矩阵对拍：真 Vim（`make matrix-test`）
+
+> 仓库内自包含的端到端对拍：把引擎按当前 `engine/src/*.c` 发出的**宿主键码流**喂给
+> `engine/test/host/kvhost.py` 的宿主编辑器模型，再与真实 `/usr/bin/vim.tiny`（VIM 9.1）
+> 对同一按键序列的结果逐例比较（共 599 例：Normal / Visual / Visual-Line / 粘贴寄存器）。
+
+运行（在 `engine/` 下）：
+
+- `make matrix-test` —— 先编译 `test/host/probe`，再跑完整矩阵；
+- `python3 test/host/matrix.py --all` —— 打印每例（含通过）的明细。
+
+比较三个维度，任一不符即该例不通过：
+
+| 维度 | 模型侧 | Vim 侧 |
+|---|---|---|
+| 缓冲区 | 宿主模型编辑后的全文 | `:w!` 写出的全文 |
+| 无名寄存器 | 宿主剪贴板文本 | `p` 还原出的寄存器文本 |
+| 光标 | 绝对偏移换算的（行,列） | 插入 `@` 标记后的偏移 |
+
+Vim 侧统一使用 `vim.tiny -Nu NONE -N -es -c 'set nofixendofline' -c "silent! normal! <KEYS>" -c 'w! OUT' -c 'qall!' IN`；
+转义字节是**真实** `\x1b`（不是 `\e` 两个字符），且总是先 `gg` 到第 1 行（`-es` 下光标从末行开始）。
+
+**xfail 归属**：`engine/test/host/matrix.py` 顶部的 `XFAIL` 表把用例名映射到
+[`design.md`](design.md) §4.9「已知偏差」列表的编号 ①–⑩（`DEVIATIONS` 表给出每个编号的含义），
+每个 xfail 都必须写明编号以保证可审计。只有命中该表的用例才允许不符；其余不符一律判 FAIL，
+打印用例名/输入缓冲/按键序列/模型结果/Vim 结果。表中已能对上真 Vim 的用例以 `XPASS` 列出，提示删除。
+
+**退出码**：0 = 全部通过或全部命中已声明偏差；非 0 = 存在未声明的不符（当前引擎仍有此类，
+见输出末尾的 `FAILING CASES` 汇总）。`make test` / `make glue-test` 不受影响。

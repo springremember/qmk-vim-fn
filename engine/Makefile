@@ -10,7 +10,7 @@ TEST_SRC = $(wildcard test/*.c)
 GLUE_ROOT  = $(abspath $(CURDIR)/../..)
 GLUE_TESTS = test_glue test_glue_falsify test_visual_passthrough test_pending_clear_probe test_strict_clear_falsify test_modifiers test_rgb test_modifier_falsify test_adapter_regress test_adapter_regress2
 
-.PHONY: all test glue-test clean
+.PHONY: all test glue-test matrix-test clean
 
 all: test
 
@@ -26,5 +26,13 @@ glue-test: $(SRC) ../qmk/vim_glue.c ../qmk/vim_keymap_common.c
 		./test/glue/$$t || exit 1; \
 	done
 
+# Repo-resident matrix test: compare the engine's host-visible key stream
+# against real Vim (vim.tiny) through the host-editor model in
+# test/host/kvhost.py.  Exit status is 0 only when every case matches Vim or
+# is a declared deviation (vim/design.md §4.9 ①–⑩, see test/host/matrix.py).
+matrix-test: $(SRC)
+	$(CC) $(CFLAGS) -o test/host/probe test/host/probe.c $(SRC)
+	python3 test/host/matrix.py
+
 clean:
-	rm -f test/kv_tests test/glue/test_adapter_regress test/glue/test_adapter_regress2 test/glue/test_glue test/glue/test_glue_falsify test/glue/test_visual_passthrough test/glue/test_pending_clear_probe test/glue/test_strict_clear_falsify test/glue/test_modifiers test/glue/test_rgb test/glue/test_modifier_falsify
+	rm -f test/kv_tests test/host/probe test/glue/test_adapter_regress test/glue/test_adapter_regress2 test/glue/test_glue test/glue/test_glue_falsify test/glue/test_visual_passthrough test/glue/test_pending_clear_probe test/glue/test_strict_clear_falsify test/glue/test_modifiers test/glue/test_rgb test/glue/test_modifier_falsify
