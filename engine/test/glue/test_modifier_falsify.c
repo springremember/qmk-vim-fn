@@ -302,8 +302,10 @@ static void test_pure_shift_folding(void) {
     const kv_keycode_t Y[]     = { KV_HOME, KV_HOME, KV_LSFT_KC(KV_DOWN), KV_LCTL_KC(KV_C), KV_ESC, KV_UP }; /* Y ≡ yy */
     /* cc / S contract (engine test_main.c): line select + delete, NO BSPC (leaves an empty
      * line, like real Vim); dd keeps the BSPC to remove the whole line. */
-    const kv_keycode_t S[]     = { KV_HOME, KV_HOME, KV_LSFT_KC(KV_END),
-                                   KV_LCTL_KC(KV_X) };
+    /* cc/S 现与 dd 同形：先把行尾换行纳入选区（寄存器行级），再补 Shift+Enter 造出
+     * Vim 要求的空行、补 ← 把光标退回空行（见 design §4.8 的 cc/Ncc 行）。 */
+    const kv_keycode_t S[]     = { KV_HOME, KV_HOME, KV_LSFT_KC(KV_END), KV_LSFT_KC(KV_RGHT),
+                                   KV_LCTL_KC(KV_X), KV_LSFT_KC(KV_ENT), KV_LEFT };
 
     test_shift_fold(KC_G, g_big, 1, "G");
     test_shift_fold(KC_4, dlr,   1, "$");
@@ -311,7 +313,7 @@ static void test_pure_shift_folding(void) {
     test_shift_fold(KC_X, x_up,  3, "X");
     test_shift_fold(KC_D, D,     2, "D");
     test_shift_fold(KC_Y, Y,     6, "Y");
-    test_shift_fold(KC_S, S,     4, "S");
+    test_shift_fold(KC_S, S,     7, "S");
 
     /* Shift+Z enters the Z prefix (pending, no emit) */
     reset_engine();
