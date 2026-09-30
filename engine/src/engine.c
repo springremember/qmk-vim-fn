@@ -564,6 +564,7 @@ void kv_init(void) {
     s_last_len = 0;
     s_replaying = false;
     kv_emit_clear();
+    kv_emit_reset_reg();   /* 无名寄存器类型复位（design §4.4 p/P 定位） */
 }
 
 void kv_set_emit(kv_emit_fn fn) {

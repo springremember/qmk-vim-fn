@@ -1,6 +1,15 @@
 #include "command.h"
 #include "emit.h"
 
+/* 宿主剪贴板里"无名寄存器"的类型（design §4.4/§4.9）：真实 Vim 的 `p` 对**行级**寄存器
+ * 粘到下一行、对**字符级**寄存器粘到光标字符之后。宿主只有一条剪贴板，但引擎知道最近一次
+ * 写剪贴板的命令是不是行级（`dd`/`yy`/`dj`/`yG`/行选动作…），故据此选择定位键码（D7）。
+ * 不写剪贴板的命令（`p`/`J`/`u`/缩进…）不改它；`u` 会恢复寄存器，属已知偏差。 */
+static bool s_reg_linewise;
+
+void kv_emit_reset_reg(void) { s_reg_linewise = false; }
+bool kv_emit_reg_linewise(void) { return s_reg_linewise; }
+
 static void emit_motion_once(kv_motion_t m) {
     switch (m) {
         case M_H:      kv_emit_tap(KV_LEFT);  break;
@@ -81,6 +90,8 @@ static void emit_op_range(kv_motion_t m, int n) {
 
 void kv_emit_op_motion(kv_keycode_t op, kv_motion_t m, int n) {
     if (n < 1) n = 1;
+    /* 行级动作（j/k/G/gg）在 Vim 里写进行级寄存器；其余为字符级。 */
+    s_reg_linewise = (m == M_J || m == M_K || m == M_G_BIG || m == M_GG);
     emit_op_range(m, n);
     if (op == KV_C) {
         kv_emit_tap(KV_LCTL_KC(KV_X));
@@ -90,9 +101,20 @@ void kv_emit_op_motion(kv_keycode_t op, kv_motion_t m, int n) {
     } else if (op == KV_Y) {
         kv_emit_tap(KV_LCTL_KC(KV_C));
         kv_emit_tap(KV_ESC);   /* 复制后取消宿主残留选区 */
-        /* Vim 的 y 不移动光标：把宿主光标拉回原处（列无法恢复） */
-        if (m == M_DOLLAR) kv_emit_tap(KV_HOME);
-        else if (m == M_J || m == M_K) kv_emit_taps(KV_UP, n + 1);
+        /* 真实 Vim 的 `y` **不移动光标**；宿主扩选把光标带到了动作目标，必须按动作回位，
+         * 否则漂移是**缓冲区可见的**（`ywp`/`ylp` 会粘错位置，独立审查 D11）。列无法恢复的
+         * 动作（0/^/$/G/gg）只能回到行首/文端，属已知偏差。 */
+        switch (m) {
+            case M_H:      kv_emit_tap(KV_RGHT);      break;  /* Shift+Left 回退 → 右移 1 */
+            case M_L:      kv_emit_tap(KV_LEFT);      break;  /* Shift+Right 前进 → 左移 1 */
+            case M_W: case M_WBIG: case M_E: case M_EBIG:
+                           kv_emit_tap(KV_LCTL_KC(KV_LEFT));  break; /* 回到本词词首 */
+            case M_B: case M_BBIG:
+                           kv_emit_tap(KV_LCTL_KC(KV_RGHT));  break; /* 回到原词词首 */
+            case M_DOLLAR: kv_emit_tap(KV_HOME);      break;
+            case M_J: case M_K: kv_emit_taps(KV_UP, n + 1); break;
+            default: break;
+        }
     } else {
         kv_emit_tap(KV_LCTL_KC(KV_X));
     }
@@ -100,6 +122,7 @@ void kv_emit_op_motion(kv_keycode_t op, kv_motion_t m, int n) {
 
 void kv_emit_line_op(kv_keycode_t op, int n) {
     if (n < 1) n = 1;
+    s_reg_linewise = true;      /* dd/yy/cc/Y/S 都是行级 */
     if (op == KV_Y) {
         kv_emit_tap(KV_HOME);
         kv_emit_tap(KV_HOME);
@@ -112,17 +135,13 @@ void kv_emit_line_op(kv_keycode_t op, int n) {
     kv_emit_tap(KV_HOME);
     kv_emit_tap(KV_HOME);
     kv_emit_tap(KV_LSFT_KC(KV_END));
+    /* `dd` 必须把**行尾换行**也纳入选区（`Shift+End` 只到末字符之前）：否则删不掉换行，
+     * 在**首行**会留下一个空行（数据损坏，独立审查未列出的新发现）；`Ctrl+X` 后光标正好
+     * 停在接替行行首。`cc`/`S` 相反：只删行内容、**留一个空行**（Vim 语义），故不加
+     * `Shift+Right`。 */
+    if (op != KV_C) kv_emit_tap(KV_LSFT_KC(KV_RGHT));
     if (n > 1) kv_emit_taps(KV_LSFT_KC(KV_DOWN), n - 1);
     kv_emit_tap(KV_LCTL_KC(KV_X));
-    /* `cc`/`S` 必须**留一个空行**（真实 Vim：L1|L2|L3 上 cc => L1||L3、2cc => L1||L4）。
-     * 只有 `dd` 才补 Backspace 把整行并掉（末行也因此可删）。 */
-    if (op != KV_C) {
-        kv_emit_tap(KV_BSPC);
-        /* 真实 Vim 的 `dd` 把光标留在**接替行的行首**（jddx 删 L3 首字符、Gddx 删新末行首字符）；
-         * 只发到 Backspace 会停在上一行行尾，紧随其后的 x/p 就作用在错误位置。 */
-        kv_emit_tap(KV_DOWN);
-        kv_emit_tap(KV_HOME);
-    }
     if (op == KV_C) kv_emit_enter_insert(KV_I);
 }
 
@@ -271,6 +290,7 @@ void kv_emit_vline_G(bool dir_up, int off) {
  * 与真实 Vim 一致：y=复制、d/x=删除整行、c/s=删整行+留一个空行+Insert（二者等价）、
  * p=用寄存器覆盖选区。Ctrl+C 后宿主通常保留高亮选区，故补 Esc 取消（Vim 也取消）。 */
 void kv_emit_vline_action(kv_keycode_t op, bool dir_up) {
+    if (op == KV_Y || op == KV_D || op == KV_C) s_reg_linewise = true; /* 行选动作写行级寄存器 */
     if (!dir_up) kv_emit_tap(KV_LSFT_KC(KV_RGHT));   /* 纳入行尾换行 → linewise */
     switch (op) {
         case KV_Y: kv_emit_tap(KV_LCTL_KC(KV_C)); kv_emit_tap(KV_ESC); break;
@@ -303,22 +323,42 @@ void kv_emit_visual_motion(kv_keycode_t kc) {
     }
 }
 
-void kv_emit_delete_char(void)    { kv_emit_tap(KV_DEL); }
-void kv_emit_backspace_char(void) { kv_emit_tap(KV_BSPC); }
-
-void kv_emit_substitute(void) {
+/* `x`：真实 Vim 删光标下 1 字符**并写无名寄存器**（`xp` 交换字符）。旧实现只发 Delete，
+ * 剪贴板不更新 ⇒ `xp` 变成"删一个字符"（独立审查 D7）。Shift+Right 选中的就是光标下 1 字符
+ * （宿主 Shift+→ 按**字符**前进，行尾时选中的是末字符本身而非换行）。 */
+void kv_emit_delete_char(void) {
+    s_reg_linewise = false;
     kv_emit_tap(KV_LSFT_KC(KV_RGHT));
-    kv_emit_tap(KV_DEL);
+    kv_emit_tap(KV_LCTL_KC(KV_X));
+}
+
+/* `X`：删光标**前** 1 字符并写寄存器。列 0 时 Vim 是 no-op；若用 Shift+Left,Ctrl+X，宿主
+ * 空选区会被当成"剪切整行"（数据损坏），故先 Ctrl+C 复制选区再 BSPC 删选区：列 0 时缓冲区
+ * 不变（仅剪贴板被污染 = 已知偏差），列 >0 时与 Vim 完全一致。 */
+void kv_emit_backspace_char(void) {
+    s_reg_linewise = false;
+    kv_emit_tap(KV_LSFT_KC(KV_LEFT));
+    kv_emit_tap(KV_LCTL_KC(KV_C));
+    kv_emit_tap(KV_BSPC);
+}
+
+/* `s`：真实 Vim 的 `s` = `cl`（删光标下 1 字符 + Insert），寄存器同样是字符级。 */
+void kv_emit_substitute(void) {
+    s_reg_linewise = false;
+    kv_emit_tap(KV_LSFT_KC(KV_RGHT));
+    kv_emit_tap(KV_LCTL_KC(KV_X));
     kv_emit_enter_insert(KV_I);
 }
 
 void kv_emit_change_to_eol(void) {
+    s_reg_linewise = false;
     kv_emit_tap(KV_LSFT_KC(KV_END));
     kv_emit_tap(KV_LCTL_KC(KV_X));
     kv_emit_enter_insert(KV_I);
 }
 
 void kv_emit_delete_to_eol(void) {
+    s_reg_linewise = false;
     kv_emit_tap(KV_LSFT_KC(KV_END));
     kv_emit_tap(KV_LCTL_KC(KV_X));
 }
@@ -326,6 +366,7 @@ void kv_emit_delete_to_eol(void) {
 /* 复制后补 Esc：宿主在 Ctrl+C 后保留高亮选区，不取消则下一个键会替换刚复制的内容
  * （实测 `yy` 后按 `x` 会删掉整行 = 数据损坏）。 */
 void kv_emit_yank_to_eol(void) {
+    s_reg_linewise = true;  /* 真实 Vim 的 `Y` ≡ `yy`（行级） */
     kv_emit_tap(KV_LSFT_KC(KV_END));
     kv_emit_tap(KV_LCTL_KC(KV_C));
     kv_emit_tap(KV_ESC);
@@ -341,20 +382,30 @@ static void emit_eol_range(int n) {
     }
 }
 
-void kv_emit_delete_to_eol_n(int n) { if (n < 1) n = 1; emit_eol_range(n); kv_emit_tap(KV_LCTL_KC(KV_X)); }
-void kv_emit_change_to_eol_n(int n) { if (n < 1) n = 1; emit_eol_range(n); kv_emit_tap(KV_LCTL_KC(KV_X)); kv_emit_enter_insert(KV_I); }
-void kv_emit_yank_to_eol_n(int n)   { if (n < 1) n = 1; emit_eol_range(n); kv_emit_tap(KV_LCTL_KC(KV_C)); kv_emit_tap(KV_ESC); kv_emit_tap(KV_HOME); }
+void kv_emit_delete_to_eol_n(int n) { if (n < 1) n = 1; s_reg_linewise = false; emit_eol_range(n); kv_emit_tap(KV_LCTL_KC(KV_X)); }
+void kv_emit_change_to_eol_n(int n) { if (n < 1) n = 1; s_reg_linewise = false; emit_eol_range(n); kv_emit_tap(KV_LCTL_KC(KV_X)); kv_emit_enter_insert(KV_I); }
+void kv_emit_yank_to_eol_n(int n)   { if (n < 1) n = 1; s_reg_linewise = true;  emit_eol_range(n); kv_emit_tap(KV_LCTL_KC(KV_C)); kv_emit_tap(KV_ESC); kv_emit_tap(KV_HOME); }
 
 void kv_emit_visual_enter(void) { kv_emit_tap(KV_LSFT_KC(KV_RGHT)); }
 
-/* 字符级 VISUAL：动作直接作用于当前选区，不再自行扩选。 */
-void kv_emit_visual_cut(void)    { kv_emit_tap(KV_LCTL_KC(KV_X)); }
-void kv_emit_visual_yank(void)   { kv_emit_tap(KV_LCTL_KC(KV_C)); kv_emit_tap(KV_ESC); }
-void kv_emit_visual_change(void) { kv_emit_tap(KV_LCTL_KC(KV_X)); kv_emit_enter_insert(KV_I); }
+/* 字符级 VISUAL：动作直接作用于当前选区，不再自行扩选。寄存器是**字符级**。 */
+void kv_emit_visual_cut(void)    { s_reg_linewise = false; kv_emit_tap(KV_LCTL_KC(KV_X)); }
+void kv_emit_visual_yank(void)   { s_reg_linewise = false; kv_emit_tap(KV_LCTL_KC(KV_C)); kv_emit_tap(KV_ESC); }
+void kv_emit_visual_change(void) { s_reg_linewise = false; kv_emit_tap(KV_LCTL_KC(KV_X)); kv_emit_enter_insert(KV_I); }
+/* 可视 `p` 会用被替换的文本覆盖寄存器（Vim 语义），本引擎无法同时保存两份 → 已知偏差⑧，
+ * 故**不改** s_reg_linewise。 */
 void kv_emit_visual_paste(void)  { kv_emit_tap(KV_LCTL_KC(KV_V)); kv_emit_tap(KV_ESC); }
 
+/* `p`/`P` 的定位（design §4.4，独立审查 D7）：
+ *   字符级寄存器：Vim 插在**光标字符之后** ⇒ 先 `→` 再 Ctrl+V（`P` 插在光标字符之前 ⇒ 直接粘）。
+ *   行级寄存器：Vim 在**下一行**新建一行粘贴 ⇒ 先 `End, →`（越过行尾换行到下一行行首）再 Ctrl+V；
+ *               末行无换行时 `→` 夹取到缓冲末尾，正好在末尾追加一行。
+ * 旧实现一律 Ctrl+V（`P` 先 `←`）：`xp`/`ylp`/`ddp` 都会粘错位置（行级 `yyp` 恰好蒙对）。 */
 void kv_emit_paste(bool before) {
-    if (before) kv_emit_tap(KV_LEFT);
+    if (!before) {
+        if (s_reg_linewise) { kv_emit_tap(KV_END); kv_emit_tap(KV_RGHT); }
+        else                { kv_emit_tap(KV_RGHT); }
+    }
     kv_emit_tap(KV_LCTL_KC(KV_V));
 }
 

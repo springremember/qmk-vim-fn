@@ -23,6 +23,16 @@ static int seq_eq(const kv_keycode_t *exp, int n) {
 #define NSEQ(...) (int)(sizeof((const kv_keycode_t[]){__VA_ARGS__}) / sizeof(kv_keycode_t))
 #define CHECK_SEQ(...) CHECK(seq_eq(SEQ(__VA_ARGS__), NSEQ(__VA_ARGS__)))
 
+/* 独立审查 D7/D11：单键编辑现在写宿主无名寄存器；p/P 按寄存器类型定位。
+ * 这些宏把"一条命令的完整键码序列"打包，便于在断言里复用。 */
+#define S_X     KV_LSFT_KC(KV_RGHT), KV_LCTL_KC(KV_X)                    /* x：选中光标下 1 字符 + 剪切 */
+#define S_XUP   KV_LSFT_KC(KV_LEFT), KV_LCTL_KC(KV_C), KV_BSPC           /* X：选前 1 字符 + 复制 + 删选区 */
+#define S_S     KV_LSFT_KC(KV_RGHT), KV_LCTL_KC(KV_X)                    /* s：同 x，随后进 Insert（无输出） */
+#define S_P     KV_RGHT, KV_LCTL_KC(KV_V)                                /* p：字符级寄存器 → 光标字符之后 */
+#define S_PLINE KV_END, KV_RGHT, KV_LCTL_KC(KV_V)                        /* p：行级寄存器 → 下一行 */
+#define S_PUP   KV_LCTL_KC(KV_V)                                         /* P：光标字符之前 */
+#define S_DD    KV_HOME, KV_HOME, KV_LSFT_KC(KV_END), KV_LSFT_KC(KV_RGHT), KV_LCTL_KC(KV_X) /* dd：整行含换行 */
+
 /* fresh NORMAL-mode engine with a clean recorder */
 static void fresh(void) {
     kv_init();
@@ -56,18 +66,18 @@ static void test_single(void) {
     fresh(); key(KV_C_CARET); CHECK_SEQ(KV_HOME);
     fresh(); key(KV_C_DLR); CHECK_SEQ(KV_END);
     fresh(); key(KV_C_G); CHECK_SEQ(KV_LCTL_KC(KV_END));
-    fresh(); key(KV_X); CHECK_SEQ(KV_DEL);
-    fresh(); key(KV_C_X); CHECK_SEQ(KV_BSPC);
+    fresh(); key(KV_X); CHECK_SEQ(S_X);
+    fresh(); key(KV_C_X); CHECK_SEQ(S_XUP);
     fresh(); key(KV_C_D); CHECK_SEQ(KV_LSFT_KC(KV_END), KV_LCTL_KC(KV_X));
     fresh(); key(KV_C_Y); CHECK_SEQ(KV_HOME, KV_HOME, KV_LSFT_KC(KV_DOWN), KV_LCTL_KC(KV_C), KV_ESC, KV_UP);
-    fresh(); key(KV_P); CHECK_SEQ(KV_LCTL_KC(KV_V));
-    fresh(); key(KV_C_P); CHECK_SEQ(KV_LEFT, KV_LCTL_KC(KV_V));
+    fresh(); key(KV_P); CHECK_SEQ(S_P);
+    fresh(); key(KV_C_P); CHECK_SEQ(S_PUP);
     fresh(); key(KV_C_J); CHECK_SEQ(KV_END, KV_SPC, KV_DEL);
     fresh(); key(KV_U); CHECK_SEQ(KV_LCTL_KC(KV_Z));
     fresh(); key(KV_C_Z); key(KV_C_Z); CHECK_SEQ(KV_LCTL_KC(KV_S));
     fresh(); key(KV_G); key(KV_G); CHECK_SEQ(KV_LCTL_KC(KV_HOME));
-    /* s = Shift+Right, Delete, Insert */
-    fresh(); key(KV_S); CHECK_SEQ(KV_LSFT_KC(KV_RGHT), KV_DEL);
+    /* s = Shift+Right, Ctrl+X, Insert（D7：寄存器同 x） */
+    fresh(); key(KV_S); CHECK_SEQ(S_S);
 }
 
 static void test_count(void) {
@@ -83,7 +93,7 @@ static void test_count(void) {
     CHECK(rec_count() == 12); /* 3rd digit ignored */
 
     fresh(); key(KV_3); CHECK(rec_count() == 0); key(KV_X);
-    CHECK_SEQ(KV_DEL, KV_DEL, KV_DEL); /* 计数作用于 x（真实 Vim：3x 删 3 个字符） */
+    CHECK_SEQ(S_X, S_X, S_X); /* 计数作用于 x（真实 Vim：3x 删 3 个字符） */
     fresh(); key(KV_3); key(KV_C_G); CHECK_SEQ(KV_LCTL_KC(KV_END));
     fresh(); key(KV_3); key(KV_G); key(KV_G); CHECK_SEQ(KV_LCTL_KC(KV_HOME));
     fresh(); key(KV_3); key(KV_C_S);
@@ -109,10 +119,10 @@ static void test_op(void) {
 
     /* line ops */
     fresh(); key(KV_D); key(KV_D);
-    CHECK_SEQ(KV_HOME, KV_HOME, KV_LSFT_KC(KV_END), KV_LCTL_KC(KV_X), KV_BSPC, KV_DOWN, KV_HOME);
+    CHECK_SEQ(KV_HOME, KV_HOME, KV_LSFT_KC(KV_END), KV_LSFT_KC(KV_RGHT), KV_LCTL_KC(KV_X));
     fresh(); key(KV_3); key(KV_D); key(KV_D);
-    CHECK_SEQ(KV_HOME, KV_HOME, KV_LSFT_KC(KV_END), KV_LSFT_KC(KV_DOWN), KV_LSFT_KC(KV_DOWN),
-              KV_LCTL_KC(KV_X), KV_BSPC, KV_DOWN, KV_HOME);
+    CHECK_SEQ(KV_HOME, KV_HOME, KV_LSFT_KC(KV_END), KV_LSFT_KC(KV_RGHT), KV_LSFT_KC(KV_DOWN),
+              KV_LSFT_KC(KV_DOWN), KV_LCTL_KC(KV_X));
     fresh(); key(KV_Y); key(KV_Y);
     CHECK_SEQ(KV_HOME, KV_HOME, KV_LSFT_KC(KV_DOWN), KV_LCTL_KC(KV_C), KV_ESC, KV_UP);
 }
@@ -162,7 +172,7 @@ static void test_line_change_and_join(void) {
               KV_LCTL_KC(KV_X));
     /* dd 仍保留 BSPC（删整行）——两者必须可区分 */
     fresh(); key(KV_D); key(KV_D);
-    CHECK_SEQ(KV_HOME, KV_HOME, KV_LSFT_KC(KV_END), KV_LCTL_KC(KV_X), KV_BSPC, KV_DOWN, KV_HOME);
+    CHECK_SEQ(KV_HOME, KV_HOME, KV_LSFT_KC(KV_END), KV_LSFT_KC(KV_RGHT), KV_LCTL_KC(KV_X));
     /* J：End, Space, Delete（插一个空格） */
     fresh(); key(KV_C_J); CHECK_SEQ(KV_END, KV_SPC, KV_DEL);
     fresh(); key(KV_3); key(KV_C_J);
@@ -196,13 +206,13 @@ static void test_indent(void) {
 }
 
 static void test_strict_clear(void) {
-    fresh(); key(KV_D); CHECK(rec_count() == 0); key(KV_X); CHECK_SEQ(KV_DEL);
+    fresh(); key(KV_D); CHECK(rec_count() == 0); key(KV_X); CHECK_SEQ(S_X);
     fresh(); key(KV_D); key(0x3E /*F5*/); CHECK_SEQ(0x3E);
-    fresh(); key(KV_3); key(KV_X); CHECK_SEQ(KV_DEL, KV_DEL, KV_DEL);
+    fresh(); key(KV_3); key(KV_X); CHECK_SEQ(S_X, S_X, S_X);
     fresh(); key(KV_D); key(KV_ESC); CHECK(rec_count() == 0);
     fresh(); key(KV_G); key(0x3E); CHECK_SEQ(0x3E);
-    fresh(); key(KV_G); key(KV_X); CHECK_SEQ(KV_DEL);
-    fresh(); key(KV_C_Z); key(KV_X); CHECK_SEQ(KV_DEL);
+    fresh(); key(KV_G); key(KV_X); CHECK_SEQ(S_X);
+    fresh(); key(KV_C_Z); key(KV_X); CHECK_SEQ(S_X);
     /* dangling count */
     fresh(); key(KV_D); key(KV_W); CHECK(rec_count() == 2); /* dw */
     key(KV_3); CHECK(rec_count() == 2);                     /* 3 pending, no emit */
@@ -237,7 +247,7 @@ static void test_visual(void) {
 
 static void test_regress(void) {
     /* A1: count must not leak */
-    fresh(); key(KV_3); key(KV_X); CHECK_SEQ(KV_DEL, KV_DEL, KV_DEL);
+    fresh(); key(KV_3); key(KV_X); CHECK_SEQ(S_X, S_X, S_X);
     fresh(); key(KV_J); CHECK_SEQ(KV_DOWN);
     /* E4: dd then u => single Ctrl+Z */
     fresh(); key(KV_D); key(KV_D);
@@ -245,7 +255,7 @@ static void test_regress(void) {
     /* A2: repeat dd then . */
     fresh(); key(KV_D); key(KV_D);
     rec_start(); key(KV_DOT);
-    CHECK_SEQ(KV_HOME, KV_HOME, KV_LSFT_KC(KV_END), KV_LCTL_KC(KV_X), KV_BSPC, KV_DOWN, KV_HOME);
+    CHECK_SEQ(KV_HOME, KV_HOME, KV_LSFT_KC(KV_END), KV_LSFT_KC(KV_RGHT), KV_LCTL_KC(KV_X));
     /* E2: no modifier wrapping of plain motion output */
     fresh(); key(KV_H);
     CHECK(KV_MODS(rec_at(0)) == 0);
@@ -273,7 +283,7 @@ static void test_changes_enter_insert(void) {
 static void test_op_mismatch(void) {
     /* d y / y d / d c are not line ops: strict clear, second key re-identified */
     fresh(); key(KV_D); key(KV_Y); CHECK(rec_count() == 0); /* y is a pending operator */
-    fresh(); key(KV_D); key(KV_X); CHECK_SEQ(KV_DEL);       /* d x -> x */
+    fresh(); key(KV_D); key(KV_X); CHECK_SEQ(S_X);          /* d x -> x */
     fresh(); key(KV_C_GT); key(KV_C_LT); CHECK(rec_count() == 0);
 }
 
@@ -288,10 +298,10 @@ static void test_repeat(void) {
     /* dd then . replays dd (no recursion) */
     fresh(); key(KV_D); key(KV_D);
     rec_start(); key(KV_DOT);
-    CHECK_SEQ(KV_HOME, KV_HOME, KV_LSFT_KC(KV_END), KV_LCTL_KC(KV_X), KV_BSPC, KV_DOWN, KV_HOME);
+    CHECK_SEQ(KV_HOME, KV_HOME, KV_LSFT_KC(KV_END), KV_LSFT_KC(KV_RGHT), KV_LCTL_KC(KV_X));
     /* a second . replays again, does not crash */
     rec_start(); key(KV_DOT);
-    CHECK_SEQ(KV_HOME, KV_HOME, KV_LSFT_KC(KV_END), KV_LCTL_KC(KV_X), KV_BSPC, KV_DOWN, KV_HOME);
+    CHECK_SEQ(KV_HOME, KV_HOME, KV_LSFT_KC(KV_END), KV_LSFT_KC(KV_RGHT), KV_LCTL_KC(KV_X));
     /* x . . does not recurse */
     fresh(); key(KV_X); key(KV_DOT); key(KV_DOT);
     CHECK(rec_count() > 0);
@@ -325,11 +335,11 @@ static void test_repeat_change_only(void) {
     rec_start(); key(KV_DOT); CHECK(rec_count() == 0);
     /* y / yy / Y 是复制，不是修改：`. ` 仍回放更早的 x */
     fresh(); key(KV_X); key(KV_Y); key(KV_Y);
-    rec_start(); key(KV_DOT); CHECK_SEQ(KV_DEL);
+    rec_start(); key(KV_DOT); CHECK_SEQ(S_X);
     fresh(); key(KV_X); key(KV_Y); key(KV_W);
-    rec_start(); key(KV_DOT); CHECK_SEQ(KV_DEL);
+    rec_start(); key(KV_DOT); CHECK_SEQ(S_X);
     fresh(); key(KV_X); key(KV_C_Y); key(KV_W);
-    rec_start(); key(KV_DOT); CHECK_SEQ(KV_DEL);
+    rec_start(); key(KV_DOT); CHECK_SEQ(S_X);
     /* 缩进 / 粘贴 / 连接 / 行删 都是修改，会夺走目标 */
     fresh(); key(KV_C_GT); key(KV_C_GT); key(KV_W);
     rec_start(); key(KV_DOT);
@@ -338,23 +348,23 @@ static void test_repeat_change_only(void) {
     rec_start(); key(KV_DOT);
     CHECK_SEQ(KV_HOME, KV_LSFT_KC(KV_TAB));
     fresh(); key(KV_P); key(KV_W);
-    rec_start(); key(KV_DOT); CHECK_SEQ(KV_LCTL_KC(KV_V));
+    rec_start(); key(KV_DOT); CHECK_SEQ(S_P);
     fresh(); key(KV_C_P); key(KV_W);
-    rec_start(); key(KV_DOT); CHECK_SEQ(KV_LEFT, KV_LCTL_KC(KV_V));
+    rec_start(); key(KV_DOT); CHECK_SEQ(S_PUP);
     fresh(); key(KV_C_J); key(KV_W);
     rec_start(); key(KV_DOT); CHECK_SEQ(KV_END, KV_SPC, KV_DEL);
     fresh(); key(KV_D); key(KV_D); key(KV_W);
     rec_start(); key(KV_DOT);
-    CHECK_SEQ(KV_HOME, KV_HOME, KV_LSFT_KC(KV_END), KV_LCTL_KC(KV_X), KV_BSPC, KV_DOWN, KV_HOME);
+    CHECK_SEQ(KV_HOME, KV_HOME, KV_LSFT_KC(KV_END), KV_LSFT_KC(KV_RGHT), KV_LCTL_KC(KV_X));
     /* 单键修改：x / X / D 留在 Normal；s / C / S / cc 会进 Insert —— 此时 `.` 是**字面量**
      * （真实 Vim 实测：`x cc w .` 里 `w.` 被当成插入文本），所以切回 Normal 再验证它们
      * 确实已经成为 `.` 的目标。 */
-    fresh(); key(KV_X); key(KV_W); rec_start(); key(KV_DOT); CHECK_SEQ(KV_DEL);
-    fresh(); key(KV_C_X); key(KV_W); rec_start(); key(KV_DOT); CHECK_SEQ(KV_BSPC);
+    fresh(); key(KV_X); key(KV_W); rec_start(); key(KV_DOT); CHECK_SEQ(S_X);
+    fresh(); key(KV_C_X); key(KV_W); rec_start(); key(KV_DOT); CHECK_SEQ(S_XUP);
     fresh(); key(KV_C_D); key(KV_W); rec_start(); key(KV_DOT);
     CHECK_SEQ(KV_LSFT_KC(KV_END), KV_LCTL_KC(KV_X));
     fresh(); key(KV_S); kv_set_mode(KV_MODE_NORMAL); rec_start(); key(KV_DOT);
-    CHECK_SEQ(KV_LSFT_KC(KV_RGHT), KV_DEL);
+    CHECK_SEQ(S_S);
     fresh(); key(KV_C_C); kv_set_mode(KV_MODE_NORMAL); rec_start(); key(KV_DOT);
     CHECK_SEQ(KV_LSFT_KC(KV_END), KV_LCTL_KC(KV_X));
     fresh(); key(KV_C_S); kv_set_mode(KV_MODE_NORMAL); rec_start(); key(KV_DOT);
@@ -365,7 +375,7 @@ static void test_repeat_change_only(void) {
     fresh(); key(KV_S); rec_start(); key(KV_DOT); CHECK_SEQ(KV_DOT);
     /* 复制之后再修改，目标换成新修改 */
     fresh(); key(KV_Y); key(KV_Y); key(KV_X);
-    rec_start(); key(KV_DOT); CHECK_SEQ(KV_DEL);
+    rec_start(); key(KV_DOT); CHECK_SEQ(S_X);
 }
 
 /* 真实 Vim 实测：`N.` 重复 N 次（dw 后 1./2./3./9. 分别重复 1/2/3/9 次）。
@@ -388,7 +398,7 @@ static void test_repeat_count(void) {
     /* dd（5 键）后 99. => ⌊99/5⌋=19 次 = 95 键 */
     fresh(); key(KV_D); key(KV_D);
     rec_start(); key(KV_9); key(KV_9); key(KV_DOT);
-    CHECK(rec_count() == 98);
+    CHECK(rec_count() == 95);
     /* 计数不跨 `.` 泄漏：3. 之后再按 . 只重复一次 */
     fresh(); key(KV_D); key(KV_W);
     key(KV_3); key(KV_DOT);
@@ -460,7 +470,7 @@ static void test_mode_pending_clear(void) {
     kv_set_mode(KV_MODE_INSERT);
     kv_set_mode(KV_MODE_NORMAL);
     rec_start(); key(KV_DOT);
-    CHECK_SEQ(KV_HOME, KV_HOME, KV_LSFT_KC(KV_END), KV_LCTL_KC(KV_X), KV_BSPC, KV_DOWN, KV_HOME);
+    CHECK_SEQ(KV_HOME, KV_HOME, KV_LSFT_KC(KV_END), KV_LSFT_KC(KV_RGHT), KV_LCTL_KC(KV_X));
 }
 
 /* testcase.md §9 — Shift folds into the modifier bits (LSFT+Esc); the Esc
@@ -481,7 +491,7 @@ static void test_contract_extra(void) {
     /* recording is normal: dd then . replays dd */
     fresh(); key(KV_D); key(KV_D);
     rec_start(); key(KV_DOT);
-    CHECK_SEQ(KV_HOME, KV_HOME, KV_LSFT_KC(KV_END), KV_LCTL_KC(KV_X), KV_BSPC, KV_DOWN, KV_HOME);
+    CHECK_SEQ(KV_HOME, KV_HOME, KV_LSFT_KC(KV_END), KV_LSFT_KC(KV_RGHT), KV_LCTL_KC(KV_X));
 
     /* recording is normal: dw then . replays dw */
     fresh(); key(KV_D); key(KV_W);
@@ -493,7 +503,7 @@ static void test_contract_extra(void) {
     kv_set_mode(KV_MODE_INSERT);
     kv_set_mode(KV_MODE_NORMAL);
     rec_start(); key(KV_DOT);
-    CHECK_SEQ(KV_HOME, KV_HOME, KV_LSFT_KC(KV_END), KV_LCTL_KC(KV_X), KV_BSPC, KV_DOWN, KV_HOME);
+    CHECK_SEQ(KV_HOME, KV_HOME, KV_LSFT_KC(KV_END), KV_LSFT_KC(KV_RGHT), KV_LCTL_KC(KV_X));
 
     /* half command then Esc: in-progress rec dropped, s_last kept
      * (dd, d, Esc, . => dd, not "d d d") */
@@ -503,7 +513,7 @@ static void test_contract_extra(void) {
     key(KV_ESC);
     CHECK(kv_pending() == false);
     rec_start(); key(KV_DOT);
-    CHECK_SEQ(KV_HOME, KV_HOME, KV_LSFT_KC(KV_END), KV_LCTL_KC(KV_X), KV_BSPC, KV_DOWN, KV_HOME);
+    CHECK_SEQ(KV_HOME, KV_HOME, KV_LSFT_KC(KV_END), KV_LSFT_KC(KV_RGHT), KV_LCTL_KC(KV_X));
 
     /* half command then kv_cancel(): in-progress rec dropped, s_last kept */
     fresh(); key(KV_D); key(KV_D);
@@ -512,7 +522,7 @@ static void test_contract_extra(void) {
     kv_cancel();
     CHECK(kv_pending() == false);
     rec_start(); key(KV_DOT);
-    CHECK_SEQ(KV_HOME, KV_HOME, KV_LSFT_KC(KV_END), KV_LCTL_KC(KV_X), KV_BSPC, KV_DOWN, KV_HOME);
+    CHECK_SEQ(KV_HOME, KV_HOME, KV_LSFT_KC(KV_END), KV_LSFT_KC(KV_RGHT), KV_LCTL_KC(KV_X));
 
     /* kv_init() drops s_last too: after dd, re-init, . replays nothing */
     fresh(); key(KV_D); key(KV_D);
@@ -598,11 +608,11 @@ static void test_yank_motion(void) {
     /* 复制后必须补 Esc：宿主在 Ctrl+C 后保留高亮选区，不取消则下一个键会替换它
      * （实测 `yy` 后按 `x` 会删掉整行 = 数据损坏）。 */
     fresh(); key(KV_Y); key(KV_E);
-    CHECK_SEQ(KV_CS(KV_RGHT), KV_LCTL_KC(KV_C), KV_ESC);
+    CHECK_SEQ(KV_CS(KV_RGHT), KV_LCTL_KC(KV_C), KV_ESC, KV_LCTL_KC(KV_LEFT)); /* D11：y 不移动光标 */
     fresh(); key(KV_Y); key(KV_W);
-    CHECK_SEQ(KV_CS(KV_RGHT), KV_LCTL_KC(KV_C), KV_ESC);
+    CHECK_SEQ(KV_CS(KV_RGHT), KV_LCTL_KC(KV_C), KV_ESC, KV_LCTL_KC(KV_LEFT));
     fresh(); key(KV_Y); key(KV_B);
-    CHECK_SEQ(KV_CS(KV_LEFT), KV_LCTL_KC(KV_C), KV_ESC);
+    CHECK_SEQ(KV_CS(KV_LEFT), KV_LCTL_KC(KV_C), KV_ESC, KV_LCTL_KC(KV_RGHT));
     fresh(); key(KV_Y); key(KV_C_DLR);
     CHECK_SEQ(KV_LSFT_KC(KV_END), KV_LCTL_KC(KV_C), KV_ESC, KV_HOME);
     fresh(); key(KV_Y); key(KV_C_CARET);
@@ -645,7 +655,7 @@ static void test_op_corners(void) {
     fresh(); key(KV_D); key(KV_G); key(KV_G); CHECK_SEQ(KV_END, KV_RGHT, KV_CS(KV_HOME), KV_LCTL_KC(KV_X));
     fresh(); key(KV_D); key(KV_2); key(KV_G); key(KV_G); CHECK_SEQ(KV_END, KV_RGHT, KV_CS(KV_HOME), KV_LCTL_KC(KV_X));
     /* mismatched key after a postfix count: d2x -> x */
-    fresh(); key(KV_D); key(KV_2); key(KV_X); CHECK_SEQ(KV_DEL);
+    fresh(); key(KV_D); key(KV_2); key(KV_X); CHECK_SEQ(S_X);
     CHECK(kv_pending() == false);
     /* postfix count multiplies the prefix (2d3w = d6w) */
     fresh(); key(KV_2); key(KV_D); key(KV_3); key(KV_W);
@@ -704,7 +714,7 @@ static void test_indent_corners(void) {
     CHECK_SEQ(KV_HOME, KV_HOME, KV_LSFT_KC(KV_DOWN), KV_LSFT_KC(KV_DOWN), KV_TAB,
               KV_ESC, KV_UP, KV_UP, KV_HOME, KV_RGHT);
     /* >x: x is unexpected -> clear >, re-identify x */
-    fresh(); key(KV_C_GT); key(KV_X); CHECK_SEQ(KV_DEL);
+    fresh(); key(KV_C_GT); key(KV_X); CHECK_SEQ(S_X);
     CHECK(kv_pending() == false);
     /* >234j: postfix count stops at 2 digits (34 ignored -> 23) => 24 行
      * HOME×2 + 24×Shift+Down + TAB + ESC + UP×24 + HOME + RIGHT */
@@ -715,7 +725,7 @@ static void test_indent_corners(void) {
     /* G2 (design §4.4 engine.c L260-276, ST_ANGCnt default): >2x clears the
      * indent prefix and re-identifies x in IDLE -> delete char. */
     fresh(); key(KV_C_GT); key(KV_2); key(KV_X);
-    CHECK_SEQ(KV_DEL);
+    CHECK_SEQ(S_X);
     CHECK(kv_pending() == false);
 
     /* G3 (design §4.4 / command.c kv_emit_indent_motion): >k 向上选 n+1 行，活动端在
@@ -758,14 +768,14 @@ static void test_count_drop(void) {
 
     /* single-key commands behave exactly as without a count */
     fresh(); key(KV_3); key(KV_S);
-    CHECK_SEQ(KV_LSFT_KC(KV_RGHT), KV_DEL, KV_LSFT_KC(KV_RGHT), KV_DEL, KV_LSFT_KC(KV_RGHT), KV_DEL);
+    CHECK_SEQ(S_S, S_S, S_S);
     CHECK(kv_get_mode() == KV_MODE_INSERT); CHECK(kv_pending() == false);
     /* 计数作用于单键编辑（真实 Vim：3p 粘 3 次、3J 连 3 行、3u 撤 3 次、3X 删 3 个） */
-    fresh(); key(KV_3); key(KV_P);    CHECK_SEQ(KV_LCTL_KC(KV_V), KV_LCTL_KC(KV_V), KV_LCTL_KC(KV_V)); CHECK(kv_pending() == false);
-    fresh(); key(KV_3); key(KV_C_P);  CHECK_SEQ(KV_LEFT, KV_LCTL_KC(KV_V), KV_LEFT, KV_LCTL_KC(KV_V), KV_LEFT, KV_LCTL_KC(KV_V)); CHECK(kv_pending() == false);
+    fresh(); key(KV_3); key(KV_P);    CHECK_SEQ(S_P, S_P, S_P); CHECK(kv_pending() == false);
+    fresh(); key(KV_3); key(KV_C_P);  CHECK_SEQ(S_PUP, S_PUP, S_PUP); CHECK(kv_pending() == false);
     fresh(); key(KV_3); key(KV_C_J);  CHECK_SEQ(KV_END, KV_SPC, KV_DEL, KV_END, KV_SPC, KV_DEL); CHECK(kv_pending() == false);
     fresh(); key(KV_3); key(KV_U);    CHECK_SEQ(KV_LCTL_KC(KV_Z), KV_LCTL_KC(KV_Z), KV_LCTL_KC(KV_Z)); CHECK(kv_pending() == false);
-    fresh(); key(KV_3); key(KV_C_X);  CHECK_SEQ(KV_BSPC, KV_BSPC, KV_BSPC); CHECK(kv_pending() == false);
+    fresh(); key(KV_3); key(KV_C_X);  CHECK_SEQ(S_XUP, S_XUP, S_XUP); CHECK(kv_pending() == false);
     fresh(); key(KV_3); key(KV_C_C);
     CHECK_SEQ(KV_LSFT_KC(KV_END), KV_LSFT_KC(KV_DOWN), KV_LSFT_KC(KV_DOWN), KV_LSFT_KC(KV_END), KV_LCTL_KC(KV_X));
     CHECK(kv_get_mode() == KV_MODE_INSERT); CHECK(kv_pending() == false);
@@ -775,7 +785,7 @@ static void test_count_drop(void) {
 
     /* 3. 重复 3 次（真实 Vim：dw 后 3. 连删 3 个词）；计数本身不泄漏进回放的命令 */
     fresh(); key(KV_X); rec_start(); key(KV_3); key(KV_DOT);
-    CHECK_SEQ(KV_DEL, KV_DEL, KV_DEL); CHECK(kv_pending() == false);
+    CHECK_SEQ(S_X, S_X, S_X); CHECK(kv_pending() == false);
 
     /* 3ZZ drops the count and still saves */
     fresh(); key(KV_3); key(KV_C_Z); key(KV_C_Z);
@@ -794,8 +804,8 @@ static void test_count_drop(void) {
 /* testcase.md §5 — Z prefix: Z + non-Z (vim key or not) clears Z and
  * re-identifies; ZZ saves. */
 static void test_z_prefix(void) {
-    fresh(); key(KV_C_Z); key(KV_X); CHECK_SEQ(KV_DEL); CHECK(kv_pending() == false);
-    fresh(); key(KV_C_Z); key(KV_C_P); CHECK_SEQ(KV_LEFT, KV_LCTL_KC(KV_V)); CHECK(kv_pending() == false);
+    fresh(); key(KV_C_Z); key(KV_X); CHECK_SEQ(S_X); CHECK(kv_pending() == false);
+    fresh(); key(KV_C_Z); key(KV_C_P); CHECK_SEQ(S_PUP); CHECK(kv_pending() == false);
     fresh(); key(KV_C_Z); key(0x3E /*F5*/); CHECK_SEQ(0x3E); CHECK(kv_pending() == false);
     fresh(); key(KV_C_Z); key(KV_C_Z); CHECK_SEQ(KV_LCTL_KC(KV_S)); CHECK(kv_pending() == false);
 }
@@ -1139,7 +1149,7 @@ static void test_command_guards(void) {
     rec_start(); kv_emit_op_motion(KV_D, M_NONE, 1); flush_emit(); CHECK_SEQ(KV_LCTL_KC(KV_X));
 
     rec_start(); kv_emit_line_op(KV_D, 0); flush_emit();
-    CHECK_SEQ(KV_HOME, KV_HOME, KV_LSFT_KC(KV_END), KV_LCTL_KC(KV_X), KV_BSPC, KV_DOWN, KV_HOME);
+    CHECK_SEQ(KV_HOME, KV_HOME, KV_LSFT_KC(KV_END), KV_LSFT_KC(KV_RGHT), KV_LCTL_KC(KV_X));
     rec_start(); kv_emit_line_op(KV_Y, 0); flush_emit();
     CHECK_SEQ(KV_HOME, KV_HOME, KV_LSFT_KC(KV_DOWN), KV_LCTL_KC(KV_C), KV_ESC, KV_UP);
     /* cc via the emitter enters Insert；**不发 BSPC**（留一个空行，同 Vim） */
@@ -1191,35 +1201,35 @@ static void test_emit_queue_timing(void) {
     fresh();
     kv_kbd(KV_D); kv_kbd(KV_D);
     CHECK(rec_count() == 0);        /* queued, nothing sent synchronously */
-    CHECK(kv_emit_pending() == 7);  /* Home,Home,Shift+End,Ctrl+X,Bspc */
+    CHECK(kv_emit_pending() == 5);  /* Home,Home,Shift+End,Shift+Right,Ctrl+X */
 
     kv_task(100);
     CHECK(rec_count() == 1);        /* first key sent immediately */
-    CHECK(kv_emit_pending() == 6);
+    CHECK(kv_emit_pending() == 4);
 
     /* same timestamp: gap not elapsed -> suppressed */
     kv_task(100);
     CHECK(rec_count() == 1);
-    CHECK(kv_emit_pending() == 6);
+    CHECK(kv_emit_pending() == 4);
 
     /* after KV_EMIT_GAP_MS the next key is released */
     kv_task(100 + KV_EMIT_GAP_MS);
     CHECK(rec_count() == 2);
-    CHECK(kv_emit_pending() == 5);
+    CHECK(kv_emit_pending() == 3);
 
     /* flush drains the remainder and resets the gap timer */
     flush_emit();
     CHECK(kv_emit_pending() == 0);
-    CHECK(rec_count() == 7);
+    CHECK(rec_count() == 5);
 
     kv_kbd(KV_W);
     CHECK(kv_emit_pending() == 1);
     kv_task(200);
-    CHECK(rec_count() == 8);        /* sends immediately after flush */
+    CHECK(rec_count() == 6);        /* sends immediately after flush */
 
     /* service with an empty queue is a no-op */
     kv_task(500);
-    CHECK(rec_count() == 8);
+    CHECK(rec_count() == 6);
 }
 
 /* testcase.md §11 / emit.h — queue primitives and the overflow boundary. */
@@ -1351,7 +1361,7 @@ static void test_rec_cap_boundary_replay(void) {
 static void test_disable_clears_queue(void) {
     fresh();
     kv_kbd(KV_D); kv_kbd(KV_D);   /* dd: 5 keys queued, none sent */
-    CHECK(kv_emit_pending() == 7);
+    CHECK(kv_emit_pending() == 5);
     kv_disable();
     CHECK(kv_emit_pending() == 0);
     kv_task(1000);
@@ -1365,15 +1375,15 @@ static void test_disable_clears_queue(void) {
 static void test_repeat_recorded_commands(void) {
     /* X (backspace char) */
     fresh(); key(KV_C_X); rec_start(); key(KV_DOT);
-    CHECK_SEQ(KV_BSPC);
+    CHECK_SEQ(S_XUP);
     /* D (delete to eol) */
     fresh(); key(KV_C_D); rec_start(); key(KV_DOT);
     CHECK_SEQ(KV_LSFT_KC(KV_END), KV_LCTL_KC(KV_X));
     /* p / P (paste) */
     fresh(); key(KV_P);   rec_start(); key(KV_DOT);
-    CHECK_SEQ(KV_LCTL_KC(KV_V));
+    CHECK_SEQ(S_P);
     fresh(); key(KV_C_P); rec_start(); key(KV_DOT);
-    CHECK_SEQ(KV_LEFT, KV_LCTL_KC(KV_V));
+    CHECK_SEQ(S_PUP);
     /* >> (indent line) */
     fresh(); key(KV_C_GT); key(KV_C_GT); rec_start(); key(KV_DOT);
     CHECK_SEQ(KV_HOME, KV_TAB);
@@ -1383,9 +1393,51 @@ static void test_repeat_recorded_commands(void) {
     fresh(); key(KV_C_C); kv_set_mode(KV_MODE_NORMAL); rec_start(); key(KV_DOT);
     CHECK_SEQ(KV_LSFT_KC(KV_END), KV_LCTL_KC(KV_X));
     fresh(); key(KV_S);   kv_set_mode(KV_MODE_NORMAL); rec_start(); key(KV_DOT);
-    CHECK_SEQ(KV_LSFT_KC(KV_RGHT), KV_DEL);
+    CHECK_SEQ(S_S);
 }
 
+
+/* 独立审查 D7/D11 的定点覆盖：p/P 的定位必须**取决于最近一次写剪贴板的命令**，
+ * 且 `y` + 动作必须按动作回位（否则漂移是缓冲区可见的）。 */
+static void test_reg_kind_and_yank_restore(void) {
+    /* --- 无名寄存器类型 → p/P 定位 --- */
+    /* 字符级：x / s / dw / yw → p 先 →（粘到光标字符之后） */
+    fresh(); key(KV_X);              rec_start(); key(KV_P); CHECK_SEQ(S_P);
+    fresh(); key(KV_S); kv_set_mode(KV_MODE_NORMAL); rec_start(); key(KV_P); CHECK_SEQ(S_P);
+    fresh(); key(KV_D); key(KV_W);   rec_start(); key(KV_P); CHECK_SEQ(S_P);
+    fresh(); key(KV_Y); key(KV_W);   rec_start(); key(KV_P); CHECK_SEQ(S_P);
+    fresh(); key(KV_X);              rec_start(); key(KV_C_P); CHECK_SEQ(S_PUP);
+    /* 行级：dd / yy / Y / dj / dG / 行选动作 → p 先 End,→（下一行新建一行） */
+    fresh(); key(KV_D); key(KV_D);   rec_start(); key(KV_P); CHECK_SEQ(S_PLINE);
+    fresh(); key(KV_Y); key(KV_Y);   rec_start(); key(KV_P); CHECK_SEQ(S_PLINE);
+    fresh(); key(KV_C_Y);            rec_start(); key(KV_P); CHECK_SEQ(S_PLINE);
+    fresh(); key(KV_D); key(KV_J);   rec_start(); key(KV_P); CHECK_SEQ(S_PLINE);
+    fresh(); key(KV_D); key(KV_C_G); rec_start(); key(KV_P); CHECK_SEQ(S_PLINE);
+    fresh(); key(KV_D); key(KV_D);   rec_start(); key(KV_C_P); CHECK_SEQ(S_PUP);
+    /* 后一次写剪贴板的命令覆盖前一次的类型（x 把行级覆盖回字符级） */
+    fresh(); key(KV_D); key(KV_D); key(KV_X); rec_start(); key(KV_P); CHECK_SEQ(S_P);
+    fresh(); key(KV_X); key(KV_Y); key(KV_Y); rec_start(); key(KV_P); CHECK_SEQ(S_PLINE);
+    /* 不写剪贴板的命令不改变类型 */
+    fresh(); key(KV_X); key(KV_J);   rec_start(); key(KV_P); CHECK_SEQ(S_P);
+    fresh(); key(KV_D); key(KV_D); key(KV_U); rec_start(); key(KV_P); CHECK_SEQ(S_PLINE);
+
+    /* --- y + 动作必须回位（D11） --- */
+    fresh(); key(KV_Y); key(KV_H);
+    CHECK_SEQ(KV_LSFT_KC(KV_LEFT), KV_LCTL_KC(KV_C), KV_ESC, KV_RGHT);
+    fresh(); key(KV_Y); key(KV_L);
+    CHECK_SEQ(KV_LSFT_KC(KV_RGHT), KV_LCTL_KC(KV_C), KV_ESC, KV_LEFT);
+    fresh(); key(KV_Y); key(KV_B);
+    CHECK_SEQ(KV_CS(KV_LEFT), KV_LCTL_KC(KV_C), KV_ESC, KV_LCTL_KC(KV_RGHT));
+    fresh(); key(KV_Y); key(KV_C_B);
+    CHECK_SEQ(KV_CS(KV_LEFT), KV_LCTL_KC(KV_C), KV_ESC, KV_LCTL_KC(KV_RGHT));
+    fresh(); key(KV_Y); key(KV_W);
+    CHECK_SEQ(KV_CS(KV_RGHT), KV_LCTL_KC(KV_C), KV_ESC, KV_LCTL_KC(KV_LEFT));
+    fresh(); key(KV_Y); key(KV_C_E);
+    CHECK_SEQ(KV_CS(KV_RGHT), KV_LCTL_KC(KV_C), KV_ESC, KV_LCTL_KC(KV_LEFT));
+    /* yj/yk 是行级：Up×(n+1) 回位（既有行为，顺带锁定） */
+    fresh(); key(KV_Y); key(KV_J);
+    CHECK_SEQ(KV_HOME, KV_LSFT_KC(KV_DOWN), KV_LSFT_KC(KV_DOWN), KV_LCTL_KC(KV_C), KV_ESC, KV_UP, KV_UP);
+}
 
 int main(void) {
     test_single();
@@ -1431,6 +1483,7 @@ int main(void) {
     test_rec_cap_boundary_replay(); /* G20 */
     test_disable_clears_queue();    /* G40 */
     test_repeat_recorded_commands();/* R01-R09 */
+    test_reg_kind_and_yank_restore();/* D7/D11 */
     printf("pass=%d fail=%d\n", g_pass, g_fail);
     return g_fail ? 1 : 0;
 }

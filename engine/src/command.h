@@ -72,4 +72,9 @@ void kv_emit_undo(void);            /* u  */
 void kv_emit_save(void);            /* ZZ */
 void kv_emit_enter_insert(kv_keycode_t kc); /* i I a A o O */
 
+/* 无名寄存器类型（行级/字符级）跟踪：由所有写宿主剪贴板的 emitter 维护，
+ * `kv_emit_paste` 据此选择定位键码；`kv_init` 复位。 */
+void kv_emit_reset_reg(void);
+bool kv_emit_reg_linewise(void);
+
 #endif /* KV_COMMAND_H */
