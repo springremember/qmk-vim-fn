@@ -65,6 +65,21 @@ void kv_emit_visual_paste(void);   /* p  : Ctrl+V + Esc */
 void kv_emit_delete_char(void);     /* x  */
 void kv_emit_backspace_char(void);  /* X  */
 void kv_emit_substitute(void);      /* s  */
+
+/* 带计数的单键编辑（真实 Vim 的 `Nx`/`NX`/`Ns`）：**一次**选中 N 个字符再剪切 ——
+ * 寄存器里是**全部** N 个字符（逐个删只剩最后一个，独立审查 P0-6），键码数也只有
+ * N+1（逐个删是 3N，`99X` = 297 键会撑爆 256 格发送队列 → **静默丢键**，审查 P0-1）。 */
+void kv_emit_delete_char_n(int n);      /* Nx */
+void kv_emit_backspace_char_n(int n);   /* NX */
+void kv_emit_substitute_n(int n);       /* Ns */
+
+/* 带计数的粘贴：**只定位一次**，随后 Ctrl+V ×N（逐个"定位+粘贴"会把副本交错插入，
+ * 审查 P0-5）。 */
+void kv_emit_paste_n(bool before, int n);   /* Np / NP */
+
+/* 带计数的连接：`NJ` = N−1 次连接（每次 4 键）；超出队列预算时**截断**（审查 P0-1）。 */
+void kv_emit_join_n(int n);                 /* NJ */
+
 void kv_emit_change_to_eol(void);   /* C  */
 void kv_emit_delete_to_eol(void);   /* D  */
 void kv_emit_yank_to_eol(void);

@@ -7,6 +7,10 @@
  * 不写剪贴板的命令（`p`/`J`/`u`/缩进…）不改它；`u` 会恢复寄存器，属已知偏差。 */
 static bool s_reg_linewise;
 
+/* 单条命令可用的键码预算。发送队列是 256 格且**溢出静默丢键**（= 数据损坏，见 design §2），
+ * 故带计数的命令按实测每键成本自行截断，绝不让队列到顶。留 6 格余量。 */
+#define KV_CMD_KEY_BUDGET 250
+
 void kv_emit_reset_reg(void) { s_reg_linewise = false; }
 bool kv_emit_reg_linewise(void) { return s_reg_linewise; }
 
@@ -107,19 +111,23 @@ void kv_emit_op_motion(kv_keycode_t op, kv_motion_t m, int n) {
     } else if (op == KV_Y) {
         kv_emit_tap(KV_LCTL_KC(KV_C));
         kv_emit_tap(KV_ESC);   /* 复制后取消宿主残留选区 */
-        /* 真实 Vim 的 `y` **不移动光标**；宿主扩选把光标带到了动作目标，必须按动作回位，
-         * 否则漂移是**缓冲区可见的**（`ywp`/`ylp` 会粘错位置，独立审查 D11）。列无法恢复的
-         * 动作（0/^/$/G/gg）只能回到行首/文端，属已知偏差。 */
+        /* 真实 Vim 的 `y` 把光标留在**被复制区间的起点**（独立审查实测：`yh`→列−1、
+         * `yb`→词首、`yj`/`yk`→区间首行；只有 `yl`/`yw`/`ye`/`y$` 保持原列）。
+         * 宿主的 Shift+方向 正好也把光标带到区间起点，故：
+         *   h / b / B / 0 / ^ ：宿主光标已在 Vim 的位置 → **不发键**（旧实现多发回位键，
+         *                       反而把光标推回原处，`yhp`/`ybp` 会粘错位置 = 缓冲区可见）。
+         *   l ：Shift+Right 前进 1 → 左移 1 复位。
+         *   w/e ：Ctrl+Shift+Right 落到下一个词首；只有起点在词首时 Ctrl+Left 才回到原列，
+         *         词中/行尾无法恢复 → 已知偏差（design §4.4）。
+         *   j/k ：Shift+Down×(n+1) → Up×(n+1) 回到区间首行（动作被夹取时会过冲，见 §4.4）。
+         *   $ ：宿主在行尾、Vim 保持原列，列无法恢复 → 回到行首（已知偏差）。 */
         switch (m) {
-            case M_H:      kv_emit_tap(KV_RGHT);      break;  /* Shift+Left 回退 → 右移 1 */
-            case M_L:      kv_emit_tap(KV_LEFT);      break;  /* Shift+Right 前进 → 左移 1 */
+            case M_L:      kv_emit_tap(KV_LEFT);      break;
             case M_W: case M_WBIG: case M_E: case M_EBIG:
-                           kv_emit_tap(KV_LCTL_KC(KV_LEFT));  break; /* 回到本词词首 */
-            case M_B: case M_BBIG:
-                           kv_emit_tap(KV_LCTL_KC(KV_RGHT));  break; /* 回到原词词首 */
+                           kv_emit_tap(KV_LCTL_KC(KV_LEFT));  break;
             case M_DOLLAR: kv_emit_tap(KV_HOME);      break;
             case M_J: case M_K: kv_emit_taps(KV_UP, n + 1); break;
-            default: break;
+            default: break;   /* M_H / M_B / M_BBIG / M_0 / M_CARET / M_G_BIG / M_GG：不发键 */
         }
     } else {
         kv_emit_tap(KV_LCTL_KC(KV_X));
@@ -376,29 +384,41 @@ void kv_emit_visual_word_fwd_anchor(void) {
 /* `x`：真实 Vim 删光标下 1 字符**并写无名寄存器**（`xp` 交换字符）。旧实现只发 Delete，
  * 剪贴板不更新 ⇒ `xp` 变成"删一个字符"（独立审查 D7）。Shift+Right 选中的就是光标下 1 字符
  * （宿主 Shift+→ 按**字符**前进，行尾时选中的是末字符本身而非换行）。 */
-void kv_emit_delete_char(void) {
+/* `x`/`Nx`：真实 Vim 删光标下 N 字符**并写无名寄存器**（`xp` 交换字符）。一次选中 N 个字符
+ * 再剪切 —— 寄存器拿到全部 N 个（审查 P0-6），键码 N+1（逐个删是 3N，`99X` = 297 键会撑爆
+ * 256 格发送队列 → **静默丢键** = 数据损坏，审查 P0-1）。Shift+→ 按**字符**前进，行尾时
+ * 选中的是末字符本身而非换行。 */
+void kv_emit_delete_char_n(int n) {
+    if (n < 1) n = 1;
     s_reg_linewise = false;
-    kv_emit_tap(KV_LSFT_KC(KV_RGHT));
+    kv_emit_taps(KV_LSFT_KC(KV_RGHT), n);
     kv_emit_tap(KV_LCTL_KC(KV_X));
 }
+void kv_emit_delete_char(void) { kv_emit_delete_char_n(1); }
 
-/* `X`：删光标**前** 1 字符并写寄存器。列 0 时 Vim 是 no-op；若用 Shift+Left,Ctrl+X，宿主
- * 空选区会被当成"剪切整行"（数据损坏），故先 Ctrl+C 复制选区再 BSPC 删选区：列 0 时缓冲区
- * 不变（仅剪贴板被污染 = 已知偏差），列 >0 时与 Vim 完全一致。 */
-void kv_emit_backspace_char(void) {
+/* `X`/`NX`：删光标**前** N 字符并写寄存器。列 0 时 Vim 是 no-op；若用 Shift+Left,Ctrl+X，
+ * 宿主空选区会被当成"剪切整行"（数据损坏），故先 Ctrl+C 复制选区再 BSPC 删选区。
+ * **已知偏差**：列 0 且**不在缓冲区开头**时，宿主 `Shift+Left` 会回绕选中上一行的换行，
+ * BSPC 就把它删掉 → 两行被拼接（Vim 是 no-op）。引擎读不到列号，固有。 */
+void kv_emit_backspace_char_n(int n) {
+    if (n < 1) n = 1;
     s_reg_linewise = false;
-    kv_emit_tap(KV_LSFT_KC(KV_LEFT));
+    kv_emit_taps(KV_LSFT_KC(KV_LEFT), n);
     kv_emit_tap(KV_LCTL_KC(KV_C));
     kv_emit_tap(KV_BSPC);
 }
+void kv_emit_backspace_char(void) { kv_emit_backspace_char_n(1); }
 
-/* `s`：真实 Vim 的 `s` = `cl`（删光标下 1 字符 + Insert），寄存器同样是字符级。 */
-void kv_emit_substitute(void) {
+/* `s`/`Ns`：真实 Vim 的 `s` = `cl`（删光标下 1 字符 + Insert），寄存器是字符级；
+ * `Ns` 一次删 N 个字符（寄存器同样拿到全部 N 个）。 */
+void kv_emit_substitute_n(int n) {
+    if (n < 1) n = 1;
     s_reg_linewise = false;
-    kv_emit_tap(KV_LSFT_KC(KV_RGHT));
+    kv_emit_taps(KV_LSFT_KC(KV_RGHT), n);
     kv_emit_tap(KV_LCTL_KC(KV_X));
     kv_emit_enter_insert(KV_I);
 }
+void kv_emit_substitute(void) { kv_emit_substitute_n(1); }
 
 void kv_emit_change_to_eol(void) {
     s_reg_linewise = false;
@@ -451,20 +471,37 @@ void kv_emit_visual_paste(void)  { kv_emit_tap(KV_LCTL_KC(KV_V)); kv_emit_tap(KV
  *   行级寄存器：Vim 在**下一行**新建一行粘贴 ⇒ 先 `End, →`（越过行尾换行到下一行行首）再 Ctrl+V；
  *               末行无换行时 `→` 夹取到缓冲末尾，正好在末尾追加一行。
  * 旧实现一律 Ctrl+V（`P` 先 `←`）：`xp`/`ylp`/`ddp` 都会粘错位置（行级 `yyp` 恰好蒙对）。 */
-void kv_emit_paste(bool before) {
+void kv_emit_paste_n(bool before, int n) {
+    if (n < 1) n = 1;
+    /* **只定位一次**：逐个"定位 + 粘贴"会把副本交错插到不同位置（审查 P0-5）。 */
     if (!before) {
         if (s_reg_linewise) { kv_emit_tap(KV_END); kv_emit_tap(KV_RGHT); }
         else                { kv_emit_tap(KV_RGHT); }
     }
-    kv_emit_tap(KV_LCTL_KC(KV_V));
+    kv_emit_taps(KV_LCTL_KC(KV_V), n);
 }
+void kv_emit_paste(bool before) { kv_emit_paste_n(before, 1); }
 
-/* 真实 Vim 的 `J` 会插**一个空格**（three + four => three four）。已知偏差：Vim 还会去掉
- * 下一行的前导空白，固件读不到空白长度，故保留。 */
+/* 真实 Vim 的 `J` 会插**一个空格**（three + four => three four），并把光标留在那个空格上
+ * （故末尾补 `←`；否则紧随的 `x` 会删到下一行的首字符 = 数据损坏，审查 P2-1）。
+ * 已知偏差：Vim 还会去掉下一行的前导空白，固件读不到空白长度，故保留。 */
 void kv_emit_join(void) {
     kv_emit_tap(KV_END);
     kv_emit_tap(KV_SPC);
     kv_emit_tap(KV_DEL);
+    kv_emit_tap(KV_LEFT);
+}
+
+/* `NJ` = N−1 次连接，每次 4 键。超出发送队列预算时**截断**（溢出会静默丢键 = 数据损坏，
+ * 审查 P0-1）；截断量已在 design §4.4 声明。 */
+void kv_emit_join_n(int n) {
+    if (n < 1) n = 1;
+    int reps = (n > 1) ? n - 1 : 1;
+    int room = KV_CMD_KEY_BUDGET - kv_emit_pending();
+    int maxr = room / 4;                       /* J = End, Space, Delete, Left */
+    if (maxr < 1) maxr = 1;
+    if (reps > maxr) reps = maxr;
+    for (int i = 0; i < reps; i++) kv_emit_join();
 }
 
 void kv_emit_undo(void) { kv_emit_tap(KV_LCTL_KC(KV_Z)); }

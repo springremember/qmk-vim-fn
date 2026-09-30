@@ -405,13 +405,16 @@ static kv_feed_t feed_normal(kv_keycode_t kc) {
                 case T_Z_BIG:  s_state = ST_ZP; return R_CONSUMED;
                 /* 先清 ctx 再回放：否则刚吃的计数会漏进被回放的命令（`3.` 会变成回放 `3dw`） */
                 case T_REPEAT: reset_pending(); rec_replay_n(n); return R_CONSUMED; /* N. = 重复 N 次 */
-                /* 计数作用于单键编辑命令（真实 Vim：3x 删 3 字符、3p 粘 3 次、3J 连 3 行…） */
-                case T_X:     for (i = 0; i < n; i++) kv_emit_delete_char();    reset_pending(); return R_CONSUMED;
-                case T_XUP:   for (i = 0; i < n; i++) kv_emit_backspace_char(); reset_pending(); return R_CONSUMED;
-                case T_s:     for (i = 0; i < n; i++) kv_emit_substitute();     s_mode = KV_MODE_INSERT; reset_pending(); return R_CONSUMED;
-                case T_P:     for (i = 0; i < n; i++) kv_emit_paste(false);     reset_pending(); return R_CONSUMED;
-                case T_PUP:   for (i = 0; i < n; i++) kv_emit_paste(true);      reset_pending(); return R_CONSUMED;
-                case T_JOIN:  for (i = 0; i < (n > 1 ? n - 1 : 1); i++) kv_emit_join(); reset_pending(); return R_CONSUMED; /* NJ 连 N-1 次 */
+                /* 计数作用于单键编辑命令（真实 Vim：3x 删 3 字符、3p 粘 3 次、3J 连 3 行…）。
+                 * x/X/s 用**一次**选中 N 字符的版本：寄存器拿到全部 N 个（审查 P0-6），
+                 * 键码 N+1 而非 3N（`99X` = 297 键会撑爆 256 格队列 = 静默丢键，审查 P0-1）。
+                 * p/P 只定位一次再 Ctrl+V×N（逐个定位会把副本交错插入，审查 P0-5）。 */
+                case T_X:     kv_emit_delete_char_n(n);    reset_pending(); return R_CONSUMED;
+                case T_XUP:   kv_emit_backspace_char_n(n); reset_pending(); return R_CONSUMED;
+                case T_s:     kv_emit_substitute_n(n);     s_mode = KV_MODE_INSERT; reset_pending(); return R_CONSUMED;
+                case T_P:     kv_emit_paste_n(false, n);   reset_pending(); return R_CONSUMED;
+                case T_PUP:   kv_emit_paste_n(true, n);    reset_pending(); return R_CONSUMED;
+                case T_JOIN:  kv_emit_join_n(n);           reset_pending(); return R_CONSUMED; /* NJ 连 N-1 次 */
                 case T_UNDO:  for (i = 0; i < n; i++) kv_emit_undo();           reset_pending(); return R_CONSUMED;
                 case T_D_BIG: kv_emit_delete_to_eol_n(n);                       reset_pending(); return R_CONSUMED;
                 case T_C_BIG: kv_emit_change_to_eol_n(n); s_mode = KV_MODE_INSERT; reset_pending(); return R_CONSUMED;
@@ -634,7 +637,9 @@ static kv_feed_t feed_visual(kv_keycode_t kc) {
         if (vline) kv_emit_vline_action(KV_C, s_vl_up); else kv_emit_visual_change(); /* Vim: 字符级 s ≡ c */
         s_mode = KV_MODE_INSERT; vline_reset(); reset_pending(); return R_CONSUMED;
     }
-    if (kc == KV_P) {
+    /* 真实 Vim 的可视模式里 `p` 与 `P` **同义**（都用寄存器覆盖选区）；旧实现只匹配小写
+     * `p`，`P` 落到"非法键 → 吞掉"，`vllP`/`VjP` 什么都不做（独立审查 P1-6）。 */
+    if (kc == KV_P || kc == KV_C_P) {
         if (vline) kv_emit_vline_action(KV_P, s_vl_up); else kv_emit_visual_paste();
         s_mode = KV_MODE_NORMAL; vline_reset(); reset_pending(); return R_CONSUMED;
     }
