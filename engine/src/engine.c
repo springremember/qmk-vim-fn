@@ -59,6 +59,12 @@ static int  s_v_hi;
 static bool s_v_end_r;
 static bool s_v_abs;
 static bool s_v_word_ok;
+/* D22：宿主光标是否比 Vim 光标**右一列**。`v` 的预选把宿主光标放到 A+1；
+ * 此后只把光标在垂直/词方向搬动、不重锚的动作（`j`/`k`/`w`/`e`/`$`）都保持这个 +1；
+ * `0`/`^` 把宿主光标送到列 0（= Vim 光标）所以 +1 消失。Esc 只需要这一个比特
+ * 就能补对落点，**不需要 lo/hi 偏移**（后者已被纵向动作作废为 s_v_abs）
+ * —— 这正是 `vj<Esc>x` 此前删错字符的原因。 */
+static bool s_v_rt1;
 
 /* 字符级偏移上限（同 KV_VLINE_MAX_OFF 的理由）：单条命令的键码数受发送队列
  * EMIT_CAP=256 限制，溢出静默丢键。到上限后**拒绝继续扩展**（不发键），而不是
@@ -67,11 +73,13 @@ static bool s_v_word_ok;
 
 static void vchar_reset(void) {
     s_v_lo = 0; s_v_hi = 0; s_v_end_r = true; s_v_abs = true; s_v_word_ok = false;
+    s_v_rt1 = false;
 }
 
 /* 进入字符级 VISUAL（`v` 已发 Shift+Right）：宿主选区 = 光标下 1 字符。 */
 static void vchar_enter(void) {
     s_v_lo = 0; s_v_hi = 1; s_v_end_r = true; s_v_abs = false; s_v_word_ok = true;
+    s_v_rt1 = true;
 }
 
 /* 重置两套可视状态。所有进入/离开可视、模式切换、kv_init、V/v 切换都经此
@@ -132,6 +140,10 @@ static void vline_motion(kv_keycode_t kc, int n) {
  *      否则宿主 Shift+方向 会把半开选区塌成空 → Ctrl+X 退化成剪切整行（数据损坏）。
  * 偏移超过 KV_VCHAR_MAX_OFF 时**拒绝扩展**（不发键、不改状态），与 vline_move 同。 */
 static void vchar_move(bool right, int n) {
+    /* h/l 之后光标落在**选区边界**上（右移=右端 ⇒ 仍是 Vim 光标+1；左移或向左重锚后
+     * 落在最左端 = Vim 光标）。为稳妥统一按"不一定 +1"处理：右端情形由下面的
+     * `!s_v_abs && s_v_end_r` 分支负责补 `←`，不依赖 s_v_rt1。 */
+    s_v_rt1 = false;
     if (n < 1) n = 1;
     if (n > 99) n = 99;
     if (s_v_abs) {                        /* 偏移已失效：旧的"每步一个 Shift+方向" */
@@ -213,17 +225,25 @@ static void vchar_motion(kv_keycode_t kc, int n) {
             if (!s_v_abs && s_v_end_r) kv_emit_visual_zero_from_right(s_v_hi - s_v_lo);
             else                       kv_emit_visual_motion(kc);
             s_v_abs = true; s_v_word_ok = false;
+            s_v_rt1 = false;   /* 宿主光标到列 0 = Vim 光标，+1 消失 */
             return;
         case KV_C_DLR:
             /* 光标在左端时锚点在右端，直接 Shift+End 会漏掉锚字符 → 先重锚。 */
             if (!s_v_abs && !s_v_end_r) kv_emit_visual_dollar_from_left(s_v_hi - s_v_lo);
             kv_emit_visual_motion(KV_C_DLR);
             s_v_abs = true; s_v_word_ok = false;
+            s_v_rt1 = true;    /* Shift+End 落在末字符**之后** = Vim $ 位置 +1 */
             return;
-        case KV_J: case KV_K: case KV_C_G:
+        case KV_J: case KV_K:
+            /* 纵向动作：只作废 lo/hi 偏移，**保持** s_v_rt1（列方向没变）。 */
+            for (int i = 0; i < n; i++) kv_emit_visual_motion(kc);
+            s_v_abs = true; s_v_word_ok = false;
+            return;
+        case KV_C_G:
         default:
             for (int i = 0; i < n; i++) kv_emit_visual_motion(kc);
             s_v_abs = true; s_v_word_ok = false;
+            s_v_rt1 = false;   /* 绝对位置：无法保证 +1 */
             return;
     }
 }
@@ -583,7 +603,7 @@ static kv_feed_t feed_visual(kv_keycode_t kc) {
          * 的那个字符上）；而宿主的光标在最后一个选中字符**之后**，
          * 所以只差一格（cur_end=R 时补一个 `←`；cur_end=L 时两者已重合）。
          * 不补的话 `vll<Esc>x` 会删到下一个字符（缓冲区可见）。 */
-        if (!vline && !s_v_abs && s_v_end_r) kv_emit_tap(KV_LEFT);
+        if (!vline && (s_v_rt1 || (!s_v_abs && s_v_end_r))) kv_emit_tap(KV_LEFT);
         s_mode = KV_MODE_NORMAL;
         s_visual_digits = 0;
         s_visual_gp     = false;

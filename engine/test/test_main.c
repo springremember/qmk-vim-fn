@@ -1631,6 +1631,19 @@ static void test_yank_motion_count_restore(void) {
               KV_LCTL_KC(KV_C), KV_ESC);
 }
 
+/* D22：纵向（`j`/`k`）与词（`w`/`e`）动作只作废 lo/hi **偏移**，列方向的 +1 仍已知
+ * ⇒ Esc 仍要补 1 个 `←`。不补则 `vj<Esc>x` 删到下一列（缓冲区可见，已对照真实 Vim）。
+ * 反例：`0`/`^` 把宿主光标送到列 0 = Vim 光标，+1 消失，Esc 不应补。 */
+static void test_visual_vertical_esc_cursor(void) {
+    fresh(); key(KV_V); key(KV_J); key(KV_ESC);
+    CHECK_SEQ(KV_LSFT_KC(KV_RGHT), KV_LSFT_KC(KV_DOWN), KV_ESC, KV_LEFT);
+    fresh(); key(KV_V); key(KV_K); key(KV_ESC);
+    CHECK_SEQ(KV_LSFT_KC(KV_RGHT), KV_LSFT_KC(KV_UP), KV_ESC, KV_LEFT);
+    fresh(); key(KV_V); key(KV_W); key(KV_ESC);
+    CHECK_SEQ(KV_LSFT_KC(KV_RGHT), KV_LSFT_KC(KV_LEFT), KV_CS(KV_RGHT),
+              KV_LSFT_KC(KV_RGHT), KV_ESC, KV_LEFT);
+}
+
 int main(void) {
     test_single();
     test_count();
@@ -1679,6 +1692,7 @@ int main(void) {
     test_reg_kind_and_yank_restore();/* D7/D11 */
     test_count_queue_budget();      /* P0-1 */
     test_visual_y_esc_cursor();     /* D20 */
+    test_visual_vertical_esc_cursor();/* D22 */
     test_yank_motion_count_restore();/* D21 */
     printf("pass=%d fail=%d\n", g_pass, g_fail);
     return g_fail ? 1 : 0;
