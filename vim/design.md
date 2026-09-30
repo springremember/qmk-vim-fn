@@ -460,7 +460,7 @@ while (queue_has()) {
 | `Y` | **≡ `yy`（行级）**：Home, Home, Shift+Down×1, Ctrl+C, Esc, Up×1（真实 Vim 的 `Y` 是行级，不是 `y$`） |
 | `NJ` | `End, Space, Delete, ←` ×(N−1)（N=1 时 1 次；真实 Vim：`J`/`2J` 连 2 行、`3J` 连 3 行） |
 | `yy` / `Nyy` | Home, Home, Shift+Down×n, Ctrl+C, **Esc, Up×n**（**×n 行**；Esc 取消宿主残留选区，Up×n 把光标拉回原行——Vim 的 `y` 不移动光标） |
-| `cc` / `Ncc` | Home, Home, Shift+End, Shift+Down×(n-1), change (+Insert)（**×n 行**；n=1 时无 `Shift+Down`） |
+| `cc` / `Ncc` | Home, Home, Shift+End, **Shift+→**[, Shift+Down×(n-1)], Ctrl+X, **Shift+Enter, ←**, change (+Insert)（**×n 行**；寄存器**行级**，同时留一个空行） |
 | `dw` / `d$` / `d0` | 选词/选到行首尾 → Ctrl+X |
 | `p` / `P` | **按无名寄存器类型定位**（D7）：字符级 `p` = `→, Ctrl+V`（粘到光标字符**之后**）、`P` = `Ctrl+V`；行级 `p` = `End, →, Ctrl+V`（**下一行**新建一行）、`P` = `Ctrl+V`。寄存器类型由最近一次写剪贴板的命令跟踪（`dd`/`yy`/`dj`/`yG`/行选动作 = 行级；`x`/`X`/`s`/`dw`/`yl`/… = 字符级）；`Np`/`NP` **只定位一次**再 `Ctrl+V×N`（逐个定位+粘贴会把副本交错插入，独立审查 P0-5） |
 | `J` | End, Space, Delete, ←（**插一个空格**，并把光标留在那个空格上——Vim 同；旧文档写 `End, Delete` 是错的） |
@@ -502,9 +502,12 @@ while (queue_has()) {
   `NJ` 每次 4 键，`99J` 需 392 键 ⇒ **截断到 62 次**（实测 248 键）。
   即使未截断，超出缓冲区末尾的连接在 Vim 里也是 no-op，而宿主的
   `End, Space, Delete` 会真的改缓冲区 ⇒ 属**动作失败**类。
-- **带计数的 `Ncc`/`NS` 超出剩余行时多删一个换行**：`4cc` 在 L2 上
-  模型得 `L1\n`、Vim 得 `L1\n\n`；在末行 `4cc` 模型删掉末行、Vim 整体放弃。
-  根因同上（`Shift+Down×(n−1)` 被夹取到缓冲区末尾之后），属**固有**。
+- **带计数的 `Ncc`/`NS` 在末行（n≥２）**：Vim **整体放弃**（缓冲区不变），
+  模型会删掉末行并留一个空行。根因同“动作失败”类（宿主 `Shift+Down×(n−1)` 只夹取、
+  不报失败；引擎读不到剩余行数），属**固有**。
+  **已核实（2026-09）**：除此之外 `Ncc`/`NS` 与 Vim 完全一致 —— 包括计数**超出剩余行**的
+  情形：`4cc`/`9cc`@L2 在 `L1|L2|L3|L4` 上模型与 Vim 同为 `L1\n`（并非旧文档说的 `L1\n\n`）。
+  旧描述来自审查当时被并发进程扰乱的 harness 输出，已用直接 `vim.tiny` 跑正。
 - **行尾删除后的 `x`/`xx`/`xp`**（扩展 §4.4 原来的“行尾删除后的光标”）：删完最后
   一个字符后宿主光标停在**换行上**，故 `xx`/`xp` 会再吃一个换行或在下一行粘贴
   （`xx`@末字符模型 `one two thre`、Vim `one two thr`）；`99x` 同理会跨行（Vim 到行尾就停）。
