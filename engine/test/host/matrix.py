@@ -352,8 +352,11 @@ add('rep->>-dot', B4, 1, 0, '>>.')
 add('rep-ddp', B4, 1, 0, 'ddp')
 
 # ============================ paste/register cases (audit pp.py) ============================
-for k in ['ylp', 'ylP', 'yhp', 'yhP', 'yep', 'yeP', 'ywp', 'ywP', 'yl l p', 'yllp', 'yllP']:
-    add('pp-' + k.replace(' ', ''), B3, 0, 0, k)
+# NB: the old list contained 'yl l p' — a **literal space** key.  The host model does not
+# implement space-as-motion, so that case tested the model, not the engine; and its generated
+# name collided with 'yllp' (hiding it).  Dropped, and the name now escapes spaces.
+for k in ['ylp', 'ylP', 'yhp', 'yhP', 'yep', 'yeP', 'ywp', 'ywP', 'yllp', 'yllP']:
+    add('pp-' + k.replace(' ', '_'), B3, 0, 0, k)   # '_' 保名唯一：'yl l p' 与 'yllp' 曾同名
 add('pp-xp', B3, 0, 0, 'xp')
 add('pp-xP', B3, 0, 0, 'xP')
 add('pp-Xp', B3, 0, 5, 'Xp')
@@ -425,6 +428,7 @@ DEVIATIONS = {
     'IND':    'indent leaves the cursor at the edit point, not the first non-blank of the range first line (design §4.4 ①②③)',
     'PASTEC': 'dd on the last line / linewise p,P leave the cursor at the pasted text end (design §4.4)',
     'EOLDEL': 'after deleting at EOL the host cursor sits on the newline; Vim moves left (design §4.4)',
+    'VCAP': 'charwise VISUAL offset cap (KV_VCHAR_MAX_OFF 100): past the cap the engine refuses to extend, so a counted motion can select less than Vim (design §4.9)',
     'FAILMOT': 'a motion that FAILS in Vim (k on line 1, j on the last line) aborts the operator; the host arrow keys only clamp, so d/c/> still act (design §4.4)',
     'GPFX':   'only the g->gg prefix is implemented; other g/Z continuations are swallowed (design §4.4)',
 }
@@ -573,6 +577,26 @@ XFAIL = {
     'dj': 'FAILMOT',
     'dk': 'FAILMOT',
     'vis-ky': 'VCUR',
+    # ---- migrated from known_failures.txt (round 2) ----
+    '3dd': 'PASTEC',
+    'dw-b': 'D2',
+    'last-Gddx': 'D14',
+    'pp-Yp': 'PASTEC',
+    'pp-dd-then-P': 'PASTEC',
+    'pp-yG-x': 'YCOL',
+    'pp-yeP': 'E-W',
+    'pp-yep': 'E-W',
+    'pp-yhP': 'D16',
+    'pp-yhp': 'D16',
+    'v-e0-d': 'E-W',
+    'v-w0-y': 'VCUR',
+    'vis-99ld': 'VCAP',
+    'vis-Wy': 'VCUR',
+    'vis-j-y-p': 'VCUR',
+    'vis-jEsc-x': 'VCUR',
+    'vis-wy': 'VCUR',
+    'vl-Gd': '②',
+    'yep': 'E-W',
 }
 
 
