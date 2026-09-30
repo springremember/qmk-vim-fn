@@ -444,17 +444,17 @@ while (queue_has()) {
 | `b B` | Ctrl+← |
 | `0` / `^` / `$` | Home / Home / End |
 | `G` / `gg` | Ctrl+End / Ctrl+Home |
-| `x` / `X` | Delete / Backspace |
-| `s` | Shift+→, change |
-| `C D Y` | `c$` / `d$` / `y$` |
+| `x` / `X` | Shift+→, Ctrl+X / Shift+←, Ctrl+C, Backspace（**写宿主剪贴板**，D7：`xp` 才能交换字符） |
+| `s` | Shift+→, Ctrl+X, Insert（真实 Vim：`s` ≡ `cl`） |
+| `C D Y` | `c$` / `d$` / `y$`（`Y` **≡ `yy` 行级**） |
 | `S` / `NS` | 同 `cc` / `Ncc`（**×n 行**） |
-| `dd` / `Ndd` | Home, Home, Shift+End, Shift+Down×(n-1), Ctrl+X, Backspace（**×n 行**；n=1 时无 `Shift+Down`） |
+| `dd` / `Ndd` | Home, Home, Shift+End, **Shift+→**, Shift+Down×(n-1), Ctrl+X（**×n 行**；n=1 时无 `Shift+Down`。`Shift+→` 把**行尾换行**纳入选区，否则**首行**会留下空行 = 数据损坏） |
 | `Y` | **≡ `yy`（行级）**：Home, Home, Shift+Down×1, Ctrl+C, Esc, Up×1（真实 Vim 的 `Y` 是行级，不是 `y$`） |
 | `NJ` | `End, Space, Delete` ×(N−1)（N=1 时 1 次；真实 Vim：`J`/`2J` 连 2 行、`3J` 连 3 行） |
 | `yy` / `Nyy` | Home, Home, Shift+Down×n, Ctrl+C, **Esc, Up×n**（**×n 行**；Esc 取消宿主残留选区，Up×n 把光标拉回原行——Vim 的 `y` 不移动光标） |
 | `cc` / `Ncc` | Home, Home, Shift+End, Shift+Down×(n-1), change (+Insert)（**×n 行**；n=1 时无 `Shift+Down`） |
 | `dw` / `d$` / `d0` | 选词/选到行首尾 → Ctrl+X |
-| `p` / `P` | Ctrl+V（`P` 先 `←`；不做 `yanked_line` 行选定位） |
+| `p` / `P` | **按无名寄存器类型定位**（D7）：字符级 `p` = `→, Ctrl+V`（粘到光标字符**之后**）、`P` = `Ctrl+V`；行级 `p` = `End, →, Ctrl+V`（**下一行**新建一行）、`P` = `Ctrl+V`。寄存器类型由最近一次写剪贴板的命令跟踪（`dd`/`yy`/`dj`/`yG`/行选动作 = 行级；`x`/`X`/`s`/`dw`/`yl`/… = 字符级） |
 | `J` | End, Delete |
 | `u` | Ctrl+Z（单次） |
 | `ZZ` | Ctrl+S |
@@ -468,11 +468,23 @@ while (queue_has()) {
 | `>w` `>e` `>b` `>W` `>E` `>B` | 字符级扩选 → `Tab/Shift+Tab, Esc`（**行范围**由宿主半开选区决定，与 Vim 一致；**光标停在移动目标**，见下偏差） |
 
 - 插入：`i` 原地；`I`=Home 后；`a`=→ 后；`A`=End 后；`o`=End,**Shift+Enter**；`O`=Home,**Shift+Enter**,↑。
-- 粘贴定位：`p` 直接 `Ctrl+V`；`P` 先 `←` 再 `Ctrl+V`。
-  **不实现 `yanked_line` 行选定位**（旧设计曾写"行选后 p 先 End+→、P 先 End+→+↑"）：引擎是纯键码层、
-  读不到宿主的真实选区与列位置，用方向键"定位"在多数编辑器里会破坏选区/插入点，可靠性不足；
-  与之配套的 `kv_emit_paste(before, yanked_line)` 形参因此不存在（现为 `kv_emit_paste(bool before)`）。
-- **多行（`N` 行）展开**：先 `Home×2`；`yy` 扩选 `Shift+Down×n`；`dd`/`cc` 扩选 `Shift+End` + `Shift+Down×(n-1)`（覆盖含换行的 `N` 行）；`>>`/`<<` 见上（`n=1` 用无选区的 `Home, Tab`）。
+- 粘贴定位（D7，2026-09 修正）：**按无名寄存器类型**选择定位键码，`kv_emit_paste(bool before)`
+  内部读取 `s_reg_linewise`（由所有写剪贴板的 emitter 维护，`kv_init` 复位）：
+  - **字符级**（`x`/`X`/`s`/`dw`/`yl`/`yw`…）：Vim 的 `p` 插在**光标字符之后** ⇒ `→, Ctrl+V`；
+    `P` 插在光标字符之前 ⇒ `Ctrl+V`。
+  - **行级**（`dd`/`yy`/`Y`/`dj`/`dk`/`dG`/`dgg`/行选动作…）：Vim 的 `p` 在**下一行**新建一行
+    ⇒ `End, →, Ctrl+V`（`End,→` 越过行尾换行到下一行行首；末行无换行时 `→` 夹取到缓冲末尾，
+    正好追加一行）；`P` 在**上一行** ⇒ `Ctrl+V`。
+  旧实现一律 `Ctrl+V`（`P` 先 `←`），且 `x`/`X`/`s` 只发 `Delete`/`Backspace` **不写剪贴板**，
+  于是 `xp` 交换字符、`ylp`、`ddp` 全都作用错位置（`yyp` 恰好蒙对）——独立审查 D7。
+  **不跟踪 `u`**：真实 Vim 的 `u` 会恢复无名寄存器，本层不保存历史，属已知偏差。
+- **`y` 不移动光标（D11）**：宿主扩选把光标带到了动作目标，故 `Ctrl+C`+`Esc` 之后必须按动作
+  回位——`h`→`→`、`l`→`←`、`w`/`e`→`Ctrl+←`、`b`→`Ctrl+→`、`j`/`k`→`Up×(n+1)`、`$`→`Home`。
+  否则漂移是**缓冲区可见的**（`ywp` 会粘错位置）。列无法恢复的动作（`0`/`^`/`$`/`G`/`gg`）与
+  **动作本身未移动**时（如 `yh`/`yb` 在行首）仍有光标偏差。
+- **多行（`N` 行）展开**：先 `Home×2`；`yy` 扩选 `Shift+Down×n`；`dd` 扩选 `Shift+End, Shift+→` + `Shift+Down×(n-1)`（覆盖含换行的 `N` 行）；`cc` 只扩选到 `Shift+End`（**留一个空行**）；`>>`/`<<` 见上（`n=1` 用无选区的 `Home, Tab`）。
+- **已知偏差（粘贴/行删的光标）**：`dd` 在**末行**、以及行级 `p`/`P` 之后，宿主光标停在
+  **被删/被粘文本的末尾**，而真实 Vim 停在替换行或粘贴文本的**起始行**（**缓冲区内容始终正确**）。
 - **缩进/反缩进后的光标位置（已知偏差）**：宿主 `Tab`/`Shift+Tab` 把光标留在**编辑点**，而真实 Vim
   把光标留在范围内**首行的首个非空白**。二者在「未缩进行 + `>`」上重合（`>>x` 删首字符），
   以下情形仍有偏差（**缓冲区内容始终正确**，仅光标位置）：
