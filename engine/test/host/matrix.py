@@ -593,7 +593,6 @@ XFAIL = {
     'vis-99ld': 'VCAP',
     'vis-Wy': 'VCUR',
     'vis-j-y-p': 'VCUR',
-    'vis-jEsc-x': 'VCUR',
     'vis-wy': 'VCUR',
     'vl-Gd': '②',
     'yep': 'E-W',
