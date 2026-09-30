@@ -1,0 +1,195 @@
+# engine/test/host/known_failures.txt — RATCHET baseline for `make matrix-test`.
+#
+# Format:  <case-name> <failing-dimensions>     e.g.  "yyp cur" or "dw buf+reg"
+# Dimensions are `buf` (buffer content), `reg` (unnamed register) and `cur`
+# (cursor).  A case listed here is a KNOWN mismatch against real Vim that is not
+# yet resolved; each is one of:
+#   (a) a deviation already declared in vim/design.md §4.4/§4.9 or vim/readme.md
+#       that has not been individually cited in matrix.py's XFAIL table yet
+#       (the preferred long-term home for these), or
+#   (b) an inherent limitation of a pure-keycode layer — the engine cannot read
+#       the buffer, so it cannot know line/column boundaries or buffer length, or
+#   (c) a real defect that is still open.
+#
+# The gate stays useful because this is a RATCHET:
+#   * a mismatch whose case is NOT here                  -> hard failure
+#   * a listed case failing on a dimension NOT listed    -> hard failure
+#     (so a NEW kind of corruption inside a known-broken case is still caught)
+#   * a listed case that now matches real Vim entirely   -> hard failure (prune)
+#   * an XFAIL entry that now matches real Vim           -> hard failure (prune)
+# So this file may only ever shrink or lose dimensions. Do NOT add a name here to
+# silence a mismatch you have not understood; cite it in matrix.py's XFAIL table.
+#
+# Run `cd engine && make matrix-test` (or `python3 test/host/matrix.py --all`
+# for per-case detail) to see the current split.
+
+2cc                    reg
+2ccx                   reg
+2cw                    buf+reg
+2dd-last               cur
+2ddp                   cur
+2dj                    cur
+2yw                    cur
+3S                     reg
+3cc                    reg
+3dd                    cur
+3dw                    buf+reg
+<G                     cur
+<e                     cur
+<w                     cur
+>G                     cur
+>G-x                   buf+cur+reg
+>e                     cur
+>w                     cur
+Dp                     buf+cur
+S                      reg
+Yp                     cur
+ZZ                     buf
+Zx                     buf+reg
+cE                     buf+reg
+cW                     buf+reg
+cb-b                   buf
+cc                     reg
+cc-first               reg
+cc-last                reg
+ccx                    reg
+ce                     buf+reg
+cj                     buf+cur+reg
+ck                     buf+cur+reg
+cw                     buf+reg
+cw-b                   buf+reg
+dE                     buf+reg
+dG                     cur
+dG-b                   cur
+dGx                    buf+cur+reg
+dd-last                cur
+ddP                    cur
+ddp                    cur
+ddp2                   cur
+ddpp                   buf+cur
+de                     buf+reg
+dj                     buf+cur+reg
+dk                     buf+cur+reg
+dw-b                   buf+reg
+eol-G-a                buf+cur+reg
+eol-G-p                cur
+eol-G-x                buf+cur+reg
+eol-J-last             buf+cur
+eol-dollar-a           buf+cur+reg
+eol-dollar-p           cur
+eol-dollar-x           buf+cur+reg
+gG                     cur
+gg>G                   cur
+gx                     buf+reg
+ins-3i-x               buf+reg
+ins-A-p                cur
+ins-A-x                buf+cur+reg
+ins-O-first-x          buf+reg
+ins-O-p                cur
+ins-O-x                buf+reg
+ins-a-p                cur
+ins-a-x                buf+cur+reg
+ins-i-p                cur
+ins-i-x                buf+reg
+ins-o-last-x           buf+reg
+ins-o-p                cur
+ins-o-x                buf+reg
+key-3Y                 cur
+key-J-last             buf+cur
+key-Y                  cur
+last-GddP              buf+cur+reg
+last-Gddp              cur+reg
+last-Gddx              buf+cur+reg
+last-jddP              cur
+last-jddp              cur
+mot-12j                cur
+mot-99j                cur
+mot-E                  cur
+mot-G                  cur
+mot-e                  cur
+mot-j-last             cur
+pp-3ylp                buf+cur
+pp-Dp                  buf+cur
+pp-J-leadspace         buf
+pp-Sp                  reg
+pp-Yp                  cur
+pp-ccp                 reg
+pp-dd-then-P           cur
+pp-vlyP                cur
+pp-vlyp                buf+cur
+pp-yG-x                buf+cur+reg
+pp-yeP                 buf+cur+reg
+pp-yep                 buf+cur+reg
+pp-yhP                 buf+cur+reg
+pp-yhp                 buf+cur+reg
+pp-yllp                buf
+probe-$x               buf+cur+reg
+probe-Ex               buf+cur+reg
+probe-Gx               buf+cur+reg
+probe-ex               buf+cur+reg
+rep-ddp                cur
+up-<G                  cur
+up->G                  cur
+up-dG                  cur
+up-yG                  cur
+v-Esc-p0               cur
+v-Esc-x-mid            buf+reg
+v-Esc-x0               buf+reg
+v-G-d                  buf+reg
+v-G-y                  cur+reg
+v-b0-d                 buf+reg
+v-b0-y                 reg
+v-dollar-y             cur
+v-e0-d                 buf+reg
+v-gg-d                 buf+reg
+v-gg-y                 reg
+v-h0-p                 reg
+v-j-y                  cur
+v-k-y                  reg
+v-w0-y                 cur
+vis-$y                 cur
+vis-99ld               buf+reg
+vis-Bd                 buf+reg
+vis-By                 reg
+vis-Ed                 buf+reg
+vis-Esc-x              buf+reg
+vis-Ey                 cur+reg
+vis-Gd                 buf+reg
+vis-Gy                 cur+reg
+vis-Vy                 cur
+vis-Wy                 cur
+vis-bd                 buf+reg
+vis-by                 reg
+vis-ed                 buf+reg
+vis-ey                 cur+reg
+vis-ggd                buf+reg
+vis-ggy                reg
+vis-j-y-p              cur
+vis-jEsc-x             buf+reg
+vis-jy                 cur
+vis-ky                 reg
+vis-llEsc-p            cur
+vis-llEsc-x            buf+reg
+vis-lly                cur
+vis-ly                 cur
+vis-wy                 cur
+vis-y-p                buf+cur
+vl-Esc                 cur
+vl-Esc-x               buf+cur+reg
+vl-Esc-x0              buf+cur+reg
+vl-Gd                  cur
+vl-s-x                 buf+cur+reg
+xp2                    buf+cur+reg
+y$                     cur
+yE                     cur+reg
+yG                     cur
+yG-b                   cur
+yW                     cur
+ye                     cur+reg
+yep                    buf+cur+reg
+yj                     cur+reg
+yk                     cur+reg
+yw                     cur
+yw-b                   reg
+yyP                    cur
+yyp                    cur

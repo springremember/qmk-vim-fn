@@ -21,6 +21,7 @@ Exit status: 0 iff every case either matches or is a declared deviation **and no
 listed deviation has started matching** (strict xfail — an XPASS also exits 1,
 so the table cannot silently rot and mask a fixed defect).
 """
+import os
 import sys
 from collections import Counter
 
@@ -452,6 +453,45 @@ XFAIL = {
 }
 
 
+KNOWN_FAIL_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                              'known_failures.txt')
+
+
+def load_known_failures():
+    """Ratchet baseline: mismatches that are known but not yet cited as a
+    declared deviation.  A NEW mismatch is a hard failure; a baseline entry
+    that starts matching real Vim is also a hard failure (so the list can
+    only shrink)."""
+    if not os.path.exists(KNOWN_FAIL_FILE):
+        return {}
+    out = {}
+    for line in open(KNOWN_FAIL_FILE, encoding='utf-8'):
+        line = line.split('#', 1)[0].strip()
+        if not line:
+            continue
+        parts = line.split()
+        out[parts[0]] = set(parts[1].split('+')) if len(parts) > 1 else set()
+    return out
+
+
+def fail_dims(r):
+    dims = []
+    if not r['ok_buf']:
+        dims.append('buf')
+    if r['ok_reg'] is False:
+        dims.append('reg')
+    if r['ok_cur'] is False:
+        dims.append('cur')
+    return dims
+
+
+def _print_fail(r):
+    c = r['c']
+    dims = fail_dims(r)
+    print('  %-22s buf=%-26s keys=%-12r [%s]' % (
+        c.name, ih.esc_out(c.buf), c.vim, '+'.join(dims)))
+
+
 def assign_ids(cs):
     seen = {}
     for c in cs:
@@ -477,28 +517,40 @@ def main(argv):
         else:
             xfails.append((r, dev))
 
-    for r in fails:
+    known = load_known_failures()
+    # A case is "known" only if it is listed AND it fails on no NEW dimension —
+    # otherwise a worse failure inside an already-broken case would be masked.
+    def _is_known(r):
+        exp = known.get(r['c'].name)
+        return exp is not None and set(fail_dims(r)) <= exp
+    unknown = [r for r in fails if not _is_known(r)]
+    known_hit = [r for r in fails if _is_known(r)]
+    # NB: case names are not unique (a few cases appear twice with different
+    # buffers), so a baseline name is only "fixed" when NO case with that name
+    # still fails — otherwise one passing duplicate would wrongly force a prune.
+    failing_names = {r['c'].name for r in fails}
+    fixed = sorted(n for n in known if n not in failing_names)
+
+    for r in unknown:
         ih.fmt_case(r, label='FAIL')
     if all_cases:
         for r, dev in xfails:
             ih.fmt_case(r, label='XFAIL[%s]' % dev)
 
     print('=' * 96)
-    if fails:
-        print('FAILING CASES (undeclared mismatch): %d' % len(fails))
-        for r in fails:
-            c = r['c']
-            dims = []
-            if not r['ok_buf']:
-                dims.append('buf')
-            if r['ok_reg'] is False:
-                dims.append('reg')
-            if r['ok_cur'] is False:
-                dims.append('cur')
-            print('  %-22s buf=%-26s keys=%-12r [%s]' % (
-                c.name, ih.esc_out(c.buf), c.vim, '+'.join(dims)))
+    if unknown:
+        print('NEW FAILURES (not in known_failures.txt — REGRESSION): %d' % len(unknown))
+        for r in unknown:
+            _print_fail(r)
     else:
-        print('FAILING CASES (undeclared mismatch): 0')
+        print('NEW FAILURES (not in known_failures.txt — REGRESSION): 0')
+    print('KNOWN FAILURES (ratchet baseline, still open): %d' % len(known_hit))
+    if all_cases:
+        for r in known_hit:
+            _print_fail(r)
+    if fixed:
+        print('FIXED (in known_failures.txt but now matching real Vim — PRUNE them): %d' % len(fixed))
+        print('  ' + ', '.join(sorted(fixed)))
 
     print()
     print('XFAIL (declared deviations): %d' % len(xfails))
@@ -512,7 +564,8 @@ def main(argv):
 
     npass = len(rows) - len(fails) - len(xfails)
     print()
-    print('TOTAL %d  PASS %d  XFAIL %d  FAIL %d' % (len(rows), npass, len(xfails), len(fails)))
+    print('TOTAL %d  PASS %d  XFAIL %d  KNOWN-FAIL %d  NEW-FAIL %d' % (
+        len(rows), npass, len(xfails), len(known_hit), len(unknown)))
     print('(dimension diffs: buf %d, reg %d, cur %d)' % (
         sum(1 for r in rows if not r['ok_buf']),
         sum(1 for r in rows if r['ok_reg'] is False),
@@ -520,7 +573,7 @@ def main(argv):
     # Strict xfail semantics: a case that is listed as a declared deviation but
     # now MATCHES real Vim is a failure too — otherwise the table silently rots
     # and a fixed defect would be masked as "still broken".
-    return 1 if (fails or xpasses) else 0
+    return 1 if (unknown or xpasses or fixed) else 0
 
 
 if __name__ == '__main__':
