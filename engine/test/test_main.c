@@ -59,7 +59,7 @@ static void test_single(void) {
     fresh(); key(KV_X); CHECK_SEQ(KV_DEL);
     fresh(); key(KV_C_X); CHECK_SEQ(KV_BSPC);
     fresh(); key(KV_C_D); CHECK_SEQ(KV_LSFT_KC(KV_END), KV_LCTL_KC(KV_X));
-    fresh(); key(KV_C_Y); CHECK_SEQ(KV_LSFT_KC(KV_END), KV_LCTL_KC(KV_C), KV_ESC, KV_HOME);
+    fresh(); key(KV_C_Y); CHECK_SEQ(KV_HOME, KV_HOME, KV_LSFT_KC(KV_DOWN), KV_LCTL_KC(KV_C), KV_ESC, KV_UP);
     fresh(); key(KV_P); CHECK_SEQ(KV_LCTL_KC(KV_V));
     fresh(); key(KV_C_P); CHECK_SEQ(KV_LEFT, KV_LCTL_KC(KV_V));
     fresh(); key(KV_C_J); CHECK_SEQ(KV_END, KV_SPC, KV_DEL);
@@ -166,7 +166,7 @@ static void test_line_change_and_join(void) {
     /* J：End, Space, Delete（插一个空格） */
     fresh(); key(KV_C_J); CHECK_SEQ(KV_END, KV_SPC, KV_DEL);
     fresh(); key(KV_3); key(KV_C_J);
-    CHECK_SEQ(KV_END, KV_SPC, KV_DEL, KV_END, KV_SPC, KV_DEL, KV_END, KV_SPC, KV_DEL);
+    CHECK_SEQ(KV_END, KV_SPC, KV_DEL, KV_END, KV_SPC, KV_DEL);
 }
 
 static void test_indent(void) {
@@ -741,14 +741,15 @@ static void test_count_drop(void) {
     /* 计数作用于单键编辑（真实 Vim：3p 粘 3 次、3J 连 3 行、3u 撤 3 次、3X 删 3 个） */
     fresh(); key(KV_3); key(KV_P);    CHECK_SEQ(KV_LCTL_KC(KV_V), KV_LCTL_KC(KV_V), KV_LCTL_KC(KV_V)); CHECK(kv_pending() == false);
     fresh(); key(KV_3); key(KV_C_P);  CHECK_SEQ(KV_LEFT, KV_LCTL_KC(KV_V), KV_LEFT, KV_LCTL_KC(KV_V), KV_LEFT, KV_LCTL_KC(KV_V)); CHECK(kv_pending() == false);
-    fresh(); key(KV_3); key(KV_C_J);  CHECK_SEQ(KV_END, KV_SPC, KV_DEL, KV_END, KV_SPC, KV_DEL, KV_END, KV_SPC, KV_DEL); CHECK(kv_pending() == false);
+    fresh(); key(KV_3); key(KV_C_J);  CHECK_SEQ(KV_END, KV_SPC, KV_DEL, KV_END, KV_SPC, KV_DEL); CHECK(kv_pending() == false);
     fresh(); key(KV_3); key(KV_U);    CHECK_SEQ(KV_LCTL_KC(KV_Z), KV_LCTL_KC(KV_Z), KV_LCTL_KC(KV_Z)); CHECK(kv_pending() == false);
     fresh(); key(KV_3); key(KV_C_X);  CHECK_SEQ(KV_BSPC, KV_BSPC, KV_BSPC); CHECK(kv_pending() == false);
     fresh(); key(KV_3); key(KV_C_C);
     CHECK_SEQ(KV_LSFT_KC(KV_END), KV_LSFT_KC(KV_DOWN), KV_LSFT_KC(KV_DOWN), KV_LSFT_KC(KV_END), KV_LCTL_KC(KV_X));
     CHECK(kv_get_mode() == KV_MODE_INSERT); CHECK(kv_pending() == false);
     fresh(); key(KV_3); key(KV_C_D);  CHECK_SEQ(KV_LSFT_KC(KV_END), KV_LSFT_KC(KV_DOWN), KV_LSFT_KC(KV_DOWN), KV_LSFT_KC(KV_END), KV_LCTL_KC(KV_X)); CHECK(kv_pending() == false);
-    fresh(); key(KV_3); key(KV_C_Y);  CHECK_SEQ(KV_LSFT_KC(KV_END), KV_LSFT_KC(KV_DOWN), KV_LSFT_KC(KV_DOWN), KV_LSFT_KC(KV_END), KV_LCTL_KC(KV_C), KV_ESC, KV_HOME); CHECK(kv_pending() == false);
+    /* Y ≡ yy（行级）：3Y == 3yy */
+    fresh(); key(KV_3); key(KV_C_Y);  CHECK_SEQ(KV_HOME, KV_HOME, KV_LSFT_KC(KV_DOWN), KV_LSFT_KC(KV_DOWN), KV_LSFT_KC(KV_DOWN), KV_LCTL_KC(KV_C), KV_ESC, KV_UP, KV_UP, KV_UP); CHECK(kv_pending() == false);
 
     /* 3. 重复 3 次（真实 Vim：dw 后 3. 连删 3 个词）；计数本身不泄漏进回放的命令 */
     fresh(); key(KV_X); rec_start(); key(KV_3); key(KV_DOT);
@@ -865,7 +866,7 @@ static void test_visual_commands(void) {
     fresh_visual(); key(KV_3); key(KV_C_G); CHECK_SEQ(KV_CS(KV_END));
     /* 计数不跨模式残留：3 后 Esc 退出，再进可视按 j 只推进 1 次 */
     fresh_visual(); key(KV_3); key(KV_ESC); key(KV_V); key(KV_J);
-    CHECK_SEQ(KV_LSFT_KC(KV_RGHT), KV_LSFT_KC(KV_DOWN)); /* v 入口 + j */
+    CHECK_SEQ(KV_ESC, KV_LSFT_KC(KV_RGHT), KV_LSFT_KC(KV_DOWN)); /* Esc 取消选区 + v 入口 + j */
 
     /* p: paste */
     fresh_visual(); key(KV_P); CHECK_SEQ(KV_LCTL_KC(KV_V), KV_ESC);

@@ -215,7 +215,7 @@ static void do_single(kv_token_t t, kv_keycode_t kc) {
         case T_s:      kv_emit_substitute();     s_mode = KV_MODE_INSERT; break;
         case T_C_BIG:  kv_emit_change_to_eol();  s_mode = KV_MODE_INSERT; break;
         case T_D_BIG:  kv_emit_delete_to_eol();  break;
-        case T_Y_BIG:  kv_emit_yank_to_eol();    break;
+        case T_Y_BIG:  kv_emit_line_op(KV_Y, 1); break;  /* 真实 Vim 的 Y ≡ yy（行级） */
         case T_P:      kv_emit_paste(false);     break;
         case T_PUP:    kv_emit_paste(true);      break;
         case T_JOIN:   kv_emit_join();           break;
@@ -286,11 +286,11 @@ static kv_feed_t feed_normal(kv_keycode_t kc) {
                 case T_s:     for (i = 0; i < n; i++) kv_emit_substitute();     s_mode = KV_MODE_INSERT; reset_pending(); return R_CONSUMED;
                 case T_P:     for (i = 0; i < n; i++) kv_emit_paste(false);     reset_pending(); return R_CONSUMED;
                 case T_PUP:   for (i = 0; i < n; i++) kv_emit_paste(true);      reset_pending(); return R_CONSUMED;
-                case T_JOIN:  for (i = 0; i < n; i++) kv_emit_join();           reset_pending(); return R_CONSUMED;
+                case T_JOIN:  for (i = 0; i < (n > 1 ? n - 1 : 1); i++) kv_emit_join(); reset_pending(); return R_CONSUMED; /* NJ 连 N-1 次 */
                 case T_UNDO:  for (i = 0; i < n; i++) kv_emit_undo();           reset_pending(); return R_CONSUMED;
                 case T_D_BIG: kv_emit_delete_to_eol_n(n);                       reset_pending(); return R_CONSUMED;
                 case T_C_BIG: kv_emit_change_to_eol_n(n); s_mode = KV_MODE_INSERT; reset_pending(); return R_CONSUMED;
-                case T_Y_BIG: kv_emit_yank_to_eol_n(n);                         reset_pending(); return R_CONSUMED;
+                case T_Y_BIG: kv_emit_line_op(KV_Y, n);                         reset_pending(); return R_CONSUMED; /* Y ≡ yy */
                 case T_S_BIG:  kv_emit_line_op(KV_C, n); s_mode = KV_MODE_INSERT; reset_pending(); return R_CONSUMED;
                 case T_INSERT: kv_emit_enter_insert(kc); s_mode = KV_MODE_INSERT; reset_pending(); return R_CONSUMED;
                 case T_VISUAL:
@@ -435,7 +435,7 @@ static kv_feed_t feed_visual(kv_keycode_t kc) {
     if (KV_BASIC(kc) == KV_ESC) {
         /* 真实 Vim：Esc 取消选区。宿主在 Shift 扩展后保留高亮选区，不取消则
          * 下一个按键会替换它（第 3 轮审核 D8）。 */
-        if (vline) kv_emit_tap(KV_ESC);
+        kv_emit_tap(KV_ESC);   /* 字符级也要取消宿主选区（D13）：否则下一个键会替换整个选区 */
         s_mode = KV_MODE_NORMAL;
         s_visual_digits = 0;
         s_visual_gp     = false;
