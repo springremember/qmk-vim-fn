@@ -1645,8 +1645,11 @@ static void test_yank_motion_count_restore(void) {
 static void test_visual_vertical_esc_cursor(void) {
     fresh(); key(KV_V); key(KV_J); key(KV_ESC);
     CHECK_SEQ(KV_LSFT_KC(KV_RGHT), KV_LSFT_KC(KV_DOWN), KV_ESC, KV_LEFT);
+    /* `k`：先把锚点翻到右端、光标落到 Vim 所在列（D24），再 Shift+Up；此后 +1 已消失，
+     * 所以 Esc **不再**补 `←`。 */
     fresh(); key(KV_V); key(KV_K); key(KV_ESC);
-    CHECK_SEQ(KV_LSFT_KC(KV_RGHT), KV_LSFT_KC(KV_UP), KV_ESC, KV_LEFT);
+    CHECK_SEQ(KV_LSFT_KC(KV_RGHT), KV_ESC, KV_LSFT_KC(KV_LEFT),
+              KV_LSFT_KC(KV_UP), KV_ESC);
     fresh(); key(KV_V); key(KV_W); key(KV_ESC);
     CHECK_SEQ(KV_LSFT_KC(KV_RGHT), KV_LSFT_KC(KV_LEFT), KV_CS(KV_RGHT),
               KV_LSFT_KC(KV_RGHT), KV_ESC, KV_LEFT);

@@ -564,7 +564,6 @@ XFAIL = {
     'vis-jy': 'VCUR',
     'v-dollar-y': 'VCUR',
     'v-j-y': 'VCUR',
-    'v-k-y': 'VBLOCK',
     'v-h0-p': 'VPASTE',
     'vl-s-x': 'D23',
     'cW': 'E-W',
@@ -576,7 +575,6 @@ XFAIL = {
     'ck': 'FAILMOT',
     'dj': 'FAILMOT',
     'dk': 'FAILMOT',
-    'vis-ky': 'VBLOCK',
     # ---- migrated from known_failures.txt (round 2) ----
     '3dd': 'PASTEC',
     'dw-b': 'D2',

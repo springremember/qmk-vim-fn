@@ -234,8 +234,26 @@ static void vchar_motion(kv_keycode_t kc, int n) {
             s_v_abs = true; s_v_word_ok = false;
             s_v_rt1 = true;    /* Shift+End 落在末字符**之后** = Vim $ 位置 +1 */
             return;
-        case KV_J: case KV_K:
-            /* 纵向动作：只作废 lo/hi 偏移，**保持** s_v_rt1（列方向没变）。 */
+        case KV_K:
+            /* D24：向上移动会保持宿主的 +1 列，于是选区左端（光标端）比 Vim
+"
+             * 右一列 ⇒ `vky`/`vkd` 的内容不符（VBLOCK，缓冲区/寄存器可见）。
+"
+             * 先 `Esc, Shift+Left` 把锚点翻到右端、宿主光标落到 **Vim 所在列**，
+"
+             * 再 Shift+Up×n 就与 Vim 完全一致。`j` 不需要：光标落在右端，宿主的
+"
+             * "末字符之后"约定正好等于 Vim 的闭区间。 */
+            if (!s_v_abs && s_v_end_r) {
+                kv_emit_tap(KV_ESC);
+                kv_emit_tap(KV_LSFT_KC(KV_LEFT));
+                s_v_rt1 = false;   /* 光标已在 Vim 所在列，+1 消失 */
+            }
+            for (int i = 0; i < n; i++) kv_emit_visual_motion(kc);
+            s_v_abs = true; s_v_word_ok = false;
+            return;
+        case KV_J:
+            /* 向下时光标落在右端：只作废 lo/hi 偏移，**保持** s_v_rt1。 */
             for (int i = 0; i < n; i++) kv_emit_visual_motion(kc);
             s_v_abs = true; s_v_word_ok = false;
             return;
