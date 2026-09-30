@@ -379,3 +379,15 @@ n=1 时 `Shift+Down×1` 的 1 行选区与"无选区"缩进同一行，结果一
 
 修：`kv_emit_op_motion()` 在 `op == KV_C` 且动作为行选（`j`/`k`/`G`/`gg`）时，
 `Ctrl+X` 之后补 `Shift+Enter`（等价于 `cc` 的"留一个空行"）。
+
+### 7.16 字符级 visual `$` 含换行（D10）+ 词动作吃换行的固有偏差声明（D2）
+
+**D10（已修）**：真实 Vim 的字符级 visual `$` 把**行尾换行**也纳入选区 ——
+`one two three` 第 3 列上 `v$d` ⇒ `onfour five six`（删掉 `e two three\n`）。
+旧发射 `Shift+End` 停在换行之前、选区不含换行 ⇒ `one\nfour five six`。
+修：`kv_emit_visual_motion()` 的 `$` 改为 `Shift+End → Shift+Right`。
+
+**D2（固有，声明）**：`d`/`c`/`y` + **词动作**在行尾会**吃掉换行**（宿主 `Ctrl+Shift+Right`
+跨行把 `\n` 选进去）：`dw`@L2 在 `L1|L2|L3|L4` 上 Vim 得 `L1||L3|L4`（留空行）、引擎得
+`L1|L3|L4`（整行被并掉）。引擎无文本知识、无法预知词边界，属**固有**；此前未声明，
+现写入 `design.md` §4.9。
