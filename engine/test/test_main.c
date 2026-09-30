@@ -1604,6 +1604,33 @@ static void test_count_queue_budget(void) {
     CHECK(kv_emit_pending() == 202);   /* 既有量级不受影响 */
 }
 
+/* D20：字符级 VISUAL 的 `y` / `Esc` 光标语义（真实 Vim 实测）。
+ *   `y`  —— 光标留在**选区起点**（最左端）；宿主动在活动端 ⇒ 补 `←`×w。
+ *   `Esc` —— 光标留在**活动端**（最后一个选中字符**上**）；宿主在其**后** ⇒ 只补 1 个 `←`。
+ * 都要用 `v` 进入（`fresh_visual()` 不初始化字符级偏移状态）。 */
+static void test_visual_y_esc_cursor(void) {
+    fresh(); key(KV_V); key(KV_L); key(KV_Y);
+    CHECK_SEQ(KV_LSFT_KC(KV_RGHT), KV_LSFT_KC(KV_RGHT),
+              KV_LCTL_KC(KV_C), KV_ESC, KV_LEFT, KV_LEFT);
+    fresh(); key(KV_V); key(KV_Y);
+    CHECK_SEQ(KV_LSFT_KC(KV_RGHT), KV_LCTL_KC(KV_C), KV_ESC, KV_LEFT);
+    fresh(); key(KV_V); key(KV_L); key(KV_L); key(KV_ESC);
+    CHECK_SEQ(KV_LSFT_KC(KV_RGHT), KV_LSFT_KC(KV_RGHT), KV_LSFT_KC(KV_RGHT),
+              KV_ESC, KV_LEFT);
+}
+
+/* D21：`y` + **带计数**的字符级动作，光标回位必须按动作格数缩放。
+ * `3yl` 的动作是 `3l`，宿主右移 3 格 ⇒ 必须左移 3 格；旧实现只左移 1 格，
+ * `3ylp` 会粘到错位置（缓冲区可见）。`y3h` 反之同理（宿主已落在被复制字符上，无需回位）。 */
+static void test_yank_motion_count_restore(void) {
+    fresh(); key(KV_Y); key(KV_3); key(KV_L);
+    CHECK_SEQ(KV_LSFT_KC(KV_RGHT), KV_LSFT_KC(KV_RGHT), KV_LSFT_KC(KV_RGHT),
+              KV_LCTL_KC(KV_C), KV_ESC, KV_LEFT, KV_LEFT, KV_LEFT);
+    fresh(); key(KV_Y); key(KV_3); key(KV_H);
+    CHECK_SEQ(KV_LSFT_KC(KV_LEFT), KV_LSFT_KC(KV_LEFT), KV_LSFT_KC(KV_LEFT),
+              KV_LCTL_KC(KV_C), KV_ESC);
+}
+
 int main(void) {
     test_single();
     test_count();
@@ -1651,6 +1678,8 @@ int main(void) {
     test_repeat_recorded_commands();/* R01-R09 */
     test_reg_kind_and_yank_restore();/* D7/D11 */
     test_count_queue_budget();      /* P0-1 */
+    test_visual_y_esc_cursor();     /* D20 */
+    test_yank_motion_count_restore();/* D21 */
     printf("pass=%d fail=%d\n", g_pass, g_fail);
     return g_fail ? 1 : 0;
 }

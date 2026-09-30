@@ -579,6 +579,11 @@ static kv_feed_t feed_visual(kv_keycode_t kc) {
         /* 真实 Vim：Esc 取消选区。宿主在 Shift 扩展后保留高亮选区，不取消则
          * 下一个按键会替换它（第 3 轮审核 D8）。 */
         kv_emit_tap(KV_ESC);   /* 字符级也要取消宿主选区（D13）：否则下一个键会替换整个选区 */
+        /* D20：真实 Vim 的可视 Esc 取消选区后把光标留在**活动端**（= 它原本所在
+         * 的那个字符上）；而宿主的光标在最后一个选中字符**之后**，
+         * 所以只差一格（cur_end=R 时补一个 `←`；cur_end=L 时两者已重合）。
+         * 不补的话 `vll<Esc>x` 会删到下一个字符（缓冲区可见）。 */
+        if (!vline && !s_v_abs && s_v_end_r) kv_emit_tap(KV_LEFT);
         s_mode = KV_MODE_NORMAL;
         s_visual_digits = 0;
         s_visual_gp     = false;
@@ -640,7 +645,13 @@ static kv_feed_t feed_visual(kv_keycode_t kc) {
         s_mode = KV_MODE_NORMAL; vline_reset(); reset_pending(); return R_CONSUMED;
     }
     if (kc == KV_Y) {
-        if (vline) kv_emit_vline_action(KV_Y, s_vl_up); else kv_emit_visual_yank();
+        if (vline) kv_emit_vline_action(KV_Y, s_vl_up);
+        else {
+            kv_emit_visual_yank();
+            /* D20：真实 Vim 的可视 `y` 把光标留在选区起点（最左端），
+             * 否则 `vlyp` 会粘到错位置（缓冲区可见）。 */
+            if (!s_v_abs && s_v_end_r) kv_emit_taps(KV_LEFT, s_v_hi - s_v_lo);
+        }
         s_mode = KV_MODE_NORMAL; vline_reset(); reset_pending(); return R_CONSUMED;
     }
     if (kc == KV_C) {

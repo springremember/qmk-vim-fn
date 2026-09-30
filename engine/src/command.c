@@ -122,7 +122,10 @@ void kv_emit_op_motion(kv_keycode_t op, kv_motion_t m, int n) {
          *   j/k ：Shift+Down×(n+1) → Up×(n+1) 回到区间首行（动作被夹取时会过冲，见 §4.4）。
          *   $ ：宿主在行尾、Vim 保持原列，列无法恢复 → 回到行首（已知偏差）。 */
         switch (m) {
-            case M_L:      kv_emit_tap(KV_LEFT);      break;
+            case M_L:      /* Vim 的 `yl` 不移动光标；`Nyl` 的动作是 `Nl`，宿主右移了 N
+                            * 格 ⇒ 必须左移 **N** 格才回到原列（旧实现只左移 1 格，
+                            * `3ylp` 会粘到错位置，缓冲区可见）。 */
+                           kv_emit_taps(KV_LEFT, n);   break;
             case M_W: case M_WBIG: case M_E: case M_EBIG:
                            kv_emit_tap(KV_LCTL_KC(KV_LEFT));  break;
             case M_DOLLAR: kv_emit_tap(KV_HOME);      break;
