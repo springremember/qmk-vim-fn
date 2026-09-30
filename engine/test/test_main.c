@@ -144,9 +144,11 @@ static void test_linewise_operator_motions(void) {
     /* yj 同样是行选（复制 2 行） */
     fresh(); key(KV_Y); key(KV_J);
     CHECK_SEQ(KV_HOME, KV_LSFT_KC(KV_DOWN), KV_LSFT_KC(KV_DOWN), KV_LCTL_KC(KV_C), KV_ESC, KV_UP, KV_UP);
-    /* cj 行选 + 留空行（Shift+Enter）+ 进 Insert */
+    /* cj 行选 + 留空行（Shift+Enter）+ 进 Insert；插完补 ← 把光标退回空行
+     * （否则宿主光标在接替行行首，`cjx` 会删错行 = 数据损坏） */
     fresh(); key(KV_C); key(KV_J);
-    CHECK_SEQ(KV_HOME, KV_LSFT_KC(KV_DOWN), KV_LSFT_KC(KV_DOWN), KV_LCTL_KC(KV_X), KV_LSFT_KC(KV_ENT));
+    CHECK_SEQ(KV_HOME, KV_LSFT_KC(KV_DOWN), KV_LSFT_KC(KV_DOWN), KV_LCTL_KC(KV_X),
+              KV_LSFT_KC(KV_ENT), KV_LEFT);
     CHECK(kv_get_mode() == KV_MODE_INSERT);
     /* 非行选动作不受影响（dh 仍是字符级） */
     fresh(); key(KV_D); key(KV_H);

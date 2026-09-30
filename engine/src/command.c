@@ -95,8 +95,14 @@ void kv_emit_op_motion(kv_keycode_t op, kv_motion_t m, int n) {
     emit_op_range(m, n);
     if (op == KV_C) {
         kv_emit_tap(KV_LCTL_KC(KV_X));
-        /* 行选动作 + c：真实 Vim 与 cc 一样**留一个空行**（cj => L1||L4），补 Shift+Enter */
-        if (m == M_J || m == M_K || m == M_G_BIG || m == M_GG) kv_emit_tap(KV_LSFT_KC(KV_ENT));
+        /* 行选动作 + c：真实 Vim 与 cc 一样**留一个空行**（cj => L1||L4），补 Shift+Enter。
+         * 但插入的换行会把宿主光标顶到**下一行行首**，而 Vim 把光标留在那个空行上——
+         * 差一行是**缓冲区可见的**（`cjx` 会删掉接替行的首字符 = 数据损坏；独立矩阵测试的
+         * "D5-residual" 组）。故插完补 `←` 把光标退回空行。 */
+        if (m == M_J || m == M_K || m == M_G_BIG || m == M_GG) {
+            kv_emit_tap(KV_LSFT_KC(KV_ENT));
+            kv_emit_tap(KV_LEFT);
+        }
         kv_emit_enter_insert(KV_I);
     } else if (op == KV_Y) {
         kv_emit_tap(KV_LCTL_KC(KV_C));
