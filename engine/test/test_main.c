@@ -1037,8 +1037,10 @@ static void test_visual_line_commands(void) {
     CHECK_SEQ(KV_LCTL_KC(KV_X));           /* UP 态动作不补 Shift+Right */
     fresh_vline(); key(KV_C_G); rec_start(); key(KV_K);
     CHECK_SEQ(KV_LSFT_KC(KV_UP), KV_LSFT_KC(KV_END));  /* G 之后活动端是下边界 → Shift+End */
-    /* 用户 Esc：取消宿主残留选区（真实 Vim 也取消） */
-    fresh_vline(); key(KV_ESC); CHECK_SEQ(KV_ESC);
+    /* 用户 Esc：取消宿主残留选区（真实 Vim 也取消），并把光标送到**选区起点行首**
+     * （D23：Vim 的行可视 Esc 落在最上行、列 0；宿主原本停在活动端行的行尾，
+     *  紧接 `x`/`s` 会删掉换行并行 —— `V<Esc>x`@L1 模型 `L1L2…`、Vim `1…`）。 */
+    fresh_vline(); key(KV_ESC); CHECK_SEQ(KV_ESC, KV_HOME);
     CHECK(kv_get_mode() == KV_MODE_NORMAL);
     /* 非法键：吞掉、留在 VISUAL_LINE、无 pending */
     fresh_vline(); key(KV_C_I);

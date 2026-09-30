@@ -603,7 +603,16 @@ static kv_feed_t feed_visual(kv_keycode_t kc) {
          * 的那个字符上）；而宿主的光标在最后一个选中字符**之后**，
          * 所以只差一格（cur_end=R 时补一个 `←`；cur_end=L 时两者已重合）。
          * 不补的话 `vll<Esc>x` 会删到下一个字符（缓冲区可见）。 */
-        if (!vline && (s_v_rt1 || (!s_v_abs && s_v_end_r))) kv_emit_tap(KV_LEFT);
+        if (vline) {
+            /* D23：Vim 的**行可视** Esc 把光标送到**选区起点的行首**（最上行、列 0）；
+             * 宿主停在活动端行的**行尾**，紧接 `x`/`s` 会删掉换行并**并行**
+             * （`V<Esc>x`@L1 模型 `L1L2\n…`、Vim `1\nL2…`，缓冲区可见）。
+             * DOWN 态（锚在 A 行）需 `Up×off`；UP 态光标本就在最上行。 */
+            if (!s_vl_abs) {
+                if (!s_vl_up && s_vl_off > 0) kv_emit_taps(KV_UP, s_vl_off);
+                kv_emit_tap(KV_HOME);
+            }
+        } else if (s_v_rt1 || (!s_v_abs && s_v_end_r)) kv_emit_tap(KV_LEFT);
         s_mode = KV_MODE_NORMAL;
         s_visual_digits = 0;
         s_visual_gp     = false;
