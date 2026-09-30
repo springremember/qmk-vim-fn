@@ -1041,6 +1041,12 @@ static void test_visual_line_commands(void) {
      * （D23：Vim 的行可视 Esc 落在最上行、列 0；宿主原本停在活动端行的行尾，
      *  紧接 `x`/`s` 会删掉换行并行 —— `V<Esc>x`@L1 模型 `L1L2…`、Vim `1…`）。 */
     fresh_vline(); key(KV_ESC); CHECK_SEQ(KV_ESC, KV_HOME);
+    /* DOWN 态且已向下扩了 k 行：光标要退回**锚点行**（最上行）再贴行首 —— 变异测试发现
+     * 只测 off=0 会漏掉 `Up×off`（去掉它没有测试变红）。 */
+    fresh_vline(); key(KV_J); key(KV_J); rec_start(); key(KV_ESC);
+    CHECK_SEQ(KV_ESC, KV_UP, KV_UP, KV_HOME);
+    fresh_vline(); key(KV_J); rec_start(); key(KV_ESC);
+    CHECK_SEQ(KV_ESC, KV_UP, KV_HOME);
     CHECK(kv_get_mode() == KV_MODE_NORMAL);
     /* 非法键：吞掉、留在 VISUAL_LINE、无 pending */
     fresh_vline(); key(KV_C_I);
