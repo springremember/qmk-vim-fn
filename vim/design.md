@@ -103,9 +103,19 @@ struct nv_cmd { int cmd_char; nv_func_T cmd_func; short_u cmd_flags; short cmd_a
 - 模式入口 `normal_mode`/`insert_mode`/`visual_mode`/`visual_line_mode` 切换全局 `process_func`。
 - `insert_mode()` **无条件 `clear_keyboard()`**。
 - 操作符：`start_*_action` 设 `action_key`/`action_func` 并切到 `process_vim_action`。
-- **行缩进 `N>>`/`N<<` = N 行**（2026-09 修正）：发射 `Home, Home, Shift+Down×n, Tab/Shift+Tab`。
-  真实 Vim 的 `>>` 缩进 1 行、`2>>` 2 行、`3>>` 3 行；旧实现用 `Shift+Down×(n-1)`，宿主侧
+- **行缩进 `N>>`/`N<<` = N 行**（2026-09 修正）：`n=1` 发 `Home, Tab/Shift+Tab`（**无选区**＝在行首
+  插入/删除一个 Tab）；`n>1` 发 `Home, Home, Shift+Down×n, Tab/Shift+Tab, Esc, Up×n, Home`（`>` 再补
+  `Right`）。真实 Vim 的 `>>` 缩进 1 行、`2>>` 2 行、`3>>` 3 行；旧实现用 `Shift+Down×(n-1)`，宿主侧
   半开选区只覆盖 **n-1** 行，故 `2>>`/`3>>` 都少缩进一行。
+  `Esc` 取消宿主**残留选区**——宿主在 `Tab` 缩进后保留高亮选区，不发 `Esc` 时紧随的 `x`/`p`/`.` 会
+  替换整段选区（**数据损坏**，独立审查 D6）；`Up×n`/`Home` 把光标拉回**范围内首行**（Vim 的 `>`/`<`
+  把光标留在范围内首行的**首个非空白**，`>>x` 删的是缩进后的首字符）。`n=1` 的 `Home, Tab` 不建选区，
+  插入的 Tab 正好把光标顶到"首个非空白"处，与 Vim 完全一致。
+- **缩进恒为整行操作**（2026-09 修正）：真实 Vim 的 `>`/`<` 与 `h`/`l`/`0`/`^`/`$` 组合也是**整行**
+  （`>h`/`>l`/`>0`/`>^`/`>$` 都只缩进**当前行**），且 `h` 在**列 0 不跨行**——旧实现按字符级发
+  `Shift+Left×n`，宿主 `Shift+Left` 在列 0 会**回绕到上一行行尾**、把上一行缩进（**数据损坏**，
+  独立审查 D4）。现改为按行处理。`N>$` 是例外：`$` 带计数会下移 N−1 行，故 `2>$` = 2 行（与 `2>>` 同）；
+  `N>0`/`N>^`/`N>h`/`N>l` 的计数不改变行范围（仍 1 行）。
 - **行选动作（`j`/`k`/`G`/`gg`）+ 操作符 = 整行操作**（2026-09 修正）：真实 Vim 的
   `dj`/`dk`/`dG`/`dgg`/`cj`/`yG`… 是**行选**（`dj` 删当前行+下一行 = 2 行，`2dj` = 3 行）。
   发射分方向（半开区间 `[anchor,cursor)` 决定，2026-09 修正）：
@@ -449,14 +459,26 @@ while (queue_has()) {
 | `u` | Ctrl+Z（单次） |
 | `ZZ` | Ctrl+S |
 | `i I a A o O` | 见下 |
-| `> <` | 缩进 / 反缩进（`>0`/`<0` = 缩进/反缩进到行首） |
+| `> <` | 缩进 / 反缩进，**恒为整行**：`n=1` → `Home, Tab/Shift+Tab`；`n>1` → `Home, Home, Shift+Down×n, Tab/Shift+Tab, Esc, Up×n, Home[, Right]` |
+| `>h` `>l` `>0` `>^` | 同 `>>`（**当前行**，计数不改变行范围；`h` 在列 0 不跨行） |
+| `>$` | `n=1` 同 `>>`；`n>1` 同 `N>>`（`2>$` = 2 行） |
+| `>j` `>k` | `n+1` 行；`>j` 同 `(n+1)>>`，`>k` 用向上选区 `Home, End, Right, Shift+Up×(n+1), Tab/Shift+Tab, Esc`（光标已在范围内首行） |
+| `>gg` | `End, Right, Ctrl+Shift+Home, Tab/Shift+Tab, Esc`（光标落在第 1 行首个非空白） |
+| `>G` | `Home, Ctrl+Shift+End, Tab/Shift+Tab, Esc`（**光标停在文末**，见下偏差） |
+| `>w` `>e` `>b` `>W` `>E` `>B` | 字符级扩选 → `Tab/Shift+Tab, Esc`（**行范围**由宿主半开选区决定，与 Vim 一致；**光标停在移动目标**，见下偏差） |
 
 - 插入：`i` 原地；`I`=Home 后；`a`=→ 后；`A`=End 后；`o`=End,**Shift+Enter**；`O`=Home,**Shift+Enter**,↑。
 - 粘贴定位：`p` 直接 `Ctrl+V`；`P` 先 `←` 再 `Ctrl+V`。
   **不实现 `yanked_line` 行选定位**（旧设计曾写"行选后 p 先 End+→、P 先 End+→+↑"）：引擎是纯键码层、
   读不到宿主的真实选区与列位置，用方向键"定位"在多数编辑器里会破坏选区/插入点，可靠性不足；
   与之配套的 `kv_emit_paste(before, yanked_line)` 形参因此不存在（现为 `kv_emit_paste(bool before)`）。
-- **多行（`N` 行）展开**：先 `Home×2`；`yy` 扩选 `Shift+Down×n`；`dd`/`cc` 扩选 `Shift+End` + `Shift+Down×(n-1)`（覆盖含换行的 `N` 行）；`>>`/`<<` 同理按行扩选，再执行对应动作。
+- **多行（`N` 行）展开**：先 `Home×2`；`yy` 扩选 `Shift+Down×n`；`dd`/`cc` 扩选 `Shift+End` + `Shift+Down×(n-1)`（覆盖含换行的 `N` 行）；`>>`/`<<` 见上（`n=1` 用无选区的 `Home, Tab`）。
+- **缩进/反缩进后的光标位置（已知偏差）**：宿主 `Tab`/`Shift+Tab` 把光标留在**编辑点**，而真实 Vim
+  把光标留在范围内**首行的首个非空白**。二者在「未缩进行 + `>`」上重合（`>>x` 删首字符），
+  以下情形仍有偏差（**缓冲区内容始终正确**，仅光标位置）：
+  ① `>G`：光标停在**文末**（宿主无法在选中「当前行→文末」的同时把光标留在当前行）；
+  ② `>w`/`>e`/`>W`/`>E`（含计数）：光标停在**移动目标**而非范围首行；
+  ③ `<`/`<<` 且该行缩进**未删净**（如 `\t\tL` → `\tL`）：光标停在列 0，Vim 停在列 1（剩余缩进之后）。
 - **独立移动 ×n**：`N` 个 `w`/`j`/… 即对应基础序列重复 `n` 次。
 - 未列出的 `op+移动` / `缩进+移动` / `op+gg` / `缩进+gg` / `dG`/`>G`/`>0` 等，复用对应基础序列（见 §4.4）。
 - **所有 emit 入非阻塞队列**，由 `kv_task()` 按计时发送；**不使用 `wait_ms`**（`pr_boot_combo` 等键盘层保命流程的 `wait_ms` 属键盘层特例，不在此列，详见 [`readme.md`](readme.md) §11 注）。
