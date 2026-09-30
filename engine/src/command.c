@@ -84,6 +84,8 @@ void kv_emit_op_motion(kv_keycode_t op, kv_motion_t m, int n) {
     emit_op_range(m, n);
     if (op == KV_C) {
         kv_emit_tap(KV_LCTL_KC(KV_X));
+        /* 行选动作 + c：真实 Vim 与 cc 一样**留一个空行**（cj => L1||L4），补 Shift+Enter */
+        if (m == M_J || m == M_K || m == M_G_BIG || m == M_GG) kv_emit_tap(KV_LSFT_KC(KV_ENT));
         kv_emit_enter_insert(KV_I);
     } else if (op == KV_Y) {
         kv_emit_tap(KV_LCTL_KC(KV_C));
