@@ -792,7 +792,7 @@ static void test_visual_commands(void) {
     fresh_visual(); key(KV_C_E);     CHECK_SEQ(KV_CS(KV_RGHT));
     fresh_visual(); key(KV_0);       CHECK_SEQ(KV_LSFT_KC(KV_HOME));
     fresh_visual(); key(KV_C_CARET); CHECK_SEQ(KV_LSFT_KC(KV_HOME));
-    fresh_visual(); key(KV_C_DLR);   CHECK_SEQ(KV_LSFT_KC(KV_END));
+    fresh_visual(); key(KV_C_DLR);   CHECK_SEQ(KV_LSFT_KC(KV_END), KV_LSFT_KC(KV_RGHT)); /* $ 含换行 */
     fresh_visual(); key(KV_C_G);     CHECK_SEQ(KV_CS(KV_END));
     /* 计数展开（design §4.8 独立移动 ×n）：VISUAL 与 VISUAL_LINE 都重复 n 次 */
     fresh_visual(); key(KV_3); key(KV_J);
@@ -1096,7 +1096,7 @@ static void test_visual_motion_map(void) {
     rec_start(); kv_emit_visual_motion(KV_C_B);     flush_emit(); CHECK_SEQ(KV_CS(KV_LEFT));
     rec_start(); kv_emit_visual_motion(KV_0);       flush_emit(); CHECK_SEQ(KV_LSFT_KC(KV_HOME));
     rec_start(); kv_emit_visual_motion(KV_C_CARET); flush_emit(); CHECK_SEQ(KV_LSFT_KC(KV_HOME));
-    rec_start(); kv_emit_visual_motion(KV_C_DLR);   flush_emit(); CHECK_SEQ(KV_LSFT_KC(KV_END));
+    rec_start(); kv_emit_visual_motion(KV_C_DLR);   flush_emit(); CHECK_SEQ(KV_LSFT_KC(KV_END), KV_LSFT_KC(KV_RGHT));
     rec_start(); kv_emit_visual_motion(KV_C_G);     flush_emit(); CHECK_SEQ(KV_CS(KV_END));
     /* default branch: unknown key emits nothing */
     rec_start(); kv_emit_visual_motion(KV_Q);       flush_emit(); CHECK(rec_count() == 0);

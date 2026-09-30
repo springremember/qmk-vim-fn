@@ -238,7 +238,12 @@ void kv_emit_visual_motion(kv_keycode_t kc) {
         case KV_B:                  kv_emit_tap(KV_CS(KV_LEFT)); break;
         case KV_C_B:                kv_emit_tap(KV_CS(KV_LEFT)); break;
         case KV_0: case KV_C_CARET: kv_emit_tap(KV_LSFT_KC(KV_HOME)); break;
-        case KV_C_DLR:              kv_emit_tap(KV_LSFT_KC(KV_END));  break;
+        case KV_C_DLR:
+            /* 真实 Vim 的 visual `$` 把行尾**换行**也纳入选区（v$d 会删掉换行），
+             * 故 Shift+End 之后要再 Shift+Right 越过换行。 */
+            kv_emit_tap(KV_LSFT_KC(KV_END));
+            kv_emit_tap(KV_LSFT_KC(KV_RGHT));
+            break;
         case KV_C_G:                kv_emit_tap(KV_CS(KV_END));  break;
         default: break;
     }
