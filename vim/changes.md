@@ -552,3 +552,24 @@ D15 `J` 在下一行为空时多插空格；D16 no-op 动作的空选区复制�
 **验证**：engine 621 断言（+9）、10 个 glue 套件全绿；`make matrix-test` 失败数由 219 降至
 （见下一次提交的基线）；审查列出的 P0 复现（`99X`@列 40、`86X`、`3x`、`5X`、`99P`、`3xp`、
 `yhp`、`ybp`、`ywp`、`vllP`、`Jx`、`xx`、`xp`）逐条与真实 Vim 对照。
+
+### 7.24 字符级 VISUAL 后向词动作重锚（D19，数据损坏）
+
+**缺陷**：字符级 VISUAL 里按 `b`/`B` 时，宿主光标在 `hi`、而 Vim 光标在 `hi−1`。当 Vim 光标恰好
+位于**词首**（最常见：刚按 `v` 就按 `b`）时，`Ctrl+Shift+Left` 从 `hi` 回到 `hi−1` = **锚点**，
+半开选区被塌成空 → 随后的 `Ctrl+X` 退化成"剪切整行"（`vbd`@列 4 模型删掉整行、Vim 只删
+`one t`）。同一根因也命中 `vby`/`vbbd`/`v2bd`/`vbBd`。
+
+**修法**：先 `Esc` 取消选区，再 `Shift+Left` 把**锚点挪到 `hi`**（右端）、宿主光标落到
+`hi−1` = Vim 光标，最后 `Ctrl+Shift+Left×n`。宿主光标已在左端时锚点本就在右端，直接
+`Ctrl+Shift+Left×n` 即可 —— 引擎按 `s_v_end_r` 选择这两条路径。
+
+**验证**：用干净的前一版探针 vs 修后探针跑 85 个 `vb*` 用例（8 个列 × 10 个按键序列 +
+跨行用例），结果 **44 FIXED / 0 REGRESSED**；`vbd`/`vby`/`vbbd`/`v2bd`/`vbBd` 在全部列的
+**缓冲区与无名寄存器**均与真实 `vim.tiny` 一致。残留：`vlbd`/`vllbd`/`vwbd`（先向右扩选
+再按 `b`）方向正确但边界不精确——Vim 会**缩小**选区，本实现以右端为锚重建，属固有
+（读不到词边界），已写入 `design.md` §4.9。
+
+**测试**：`test_visual_commands` 增 4 组断言（`vb`/`vB`/`v3b`/`vhb`），并改用 `v` 进入
+（`fresh_visual()` 直接设模式、不初始化字符级偏移状态，测不到这条路径）；
+变异"去掉 `Esc, Shift+Left`" → **CAUGHT**（pass 620/fail 3）。engine 623 断言全绿。

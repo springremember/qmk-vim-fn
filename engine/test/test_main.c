@@ -824,8 +824,22 @@ static void test_visual_commands(void) {
     fresh_visual(); key(KV_J);       CHECK_SEQ(KV_LSFT_KC(KV_DOWN));
     fresh_visual(); key(KV_K);       CHECK_SEQ(KV_LSFT_KC(KV_UP));
     fresh_visual(); key(KV_H);       CHECK_SEQ(KV_LSFT_KC(KV_LEFT));
-    fresh_visual(); key(KV_B);       CHECK_SEQ(KV_CS(KV_LEFT));
-    fresh_visual(); key(KV_C_B);     CHECK_SEQ(KV_CS(KV_LEFT));
+    /* D19：后向词动作。宿主光标在右端（刚 `v` 或刚向右扩选）时，直接 Ctrl+Shift+Left
+     * 在"Vim 光标位于词首"时会回到锚点 → 选区塌成空 → Ctrl+X 剪切整行。
+     * 必须先 `Esc, Shift+Left` 把锚点挪到右端、宿主光标落到 hi−1 = Vim 光标。
+     * 注意要用 `v` 进入（`fresh_visual()` 直接设模式、不初始化字符级偏移状态，
+     * 会走"偏移失效"回退路径，测不到这条）。 */
+    fresh(); key(KV_V); key(KV_B);
+    CHECK_SEQ(KV_LSFT_KC(KV_RGHT), KV_ESC, KV_LSFT_KC(KV_LEFT), KV_CS(KV_LEFT));
+    fresh(); key(KV_V); key(KV_C_B);
+    CHECK_SEQ(KV_LSFT_KC(KV_RGHT), KV_ESC, KV_LSFT_KC(KV_LEFT), KV_CS(KV_LEFT));
+    fresh(); key(KV_V); key(KV_3); key(KV_B);
+    CHECK_SEQ(KV_LSFT_KC(KV_RGHT), KV_ESC, KV_LSFT_KC(KV_LEFT),
+              KV_CS(KV_LEFT), KV_CS(KV_LEFT), KV_CS(KV_LEFT));
+    /* 宿主光标已在左端（上一动作向左越过锚点）时锚点本就在右端 → 直接扩选，不再重锚。 */
+    fresh(); key(KV_V); key(KV_H); key(KV_B);
+    CHECK_SEQ(KV_LSFT_KC(KV_RGHT), KV_ESC, KV_LSFT_KC(KV_LEFT), KV_LSFT_KC(KV_LEFT),
+              KV_CS(KV_LEFT));
     fresh_visual(); key(KV_W);       CHECK_SEQ(KV_CS(KV_RGHT));
     fresh_visual(); key(KV_E);       CHECK_SEQ(KV_CS(KV_RGHT));
     fresh_visual(); key(KV_C_W);     CHECK_SEQ(KV_CS(KV_RGHT));

@@ -381,6 +381,21 @@ void kv_emit_visual_word_fwd_anchor(void) {
     kv_emit_tap(KV_LSFT_KC(KV_RGHT));
 }
 
+/* 后向词动作的重锚（design §4.9，缺陷 D19）：`v` 的预选把宿主光标放在 c+1，而 Vim 光标在 c。
+ * 当 Vim 光标恰在**词首**时，直接 `Ctrl+Shift+Left` 会从 c+1 回到 c（即锚点）
+ * → 半开选区塔成空 → 随后 `Ctrl+X` 退化成"剪切整行"（**数据损坏**）。
+ * 修：`Esc` 取消选区后 `Shift+Left` 把**锚点放到 hi**（右端）、宿主光标落到 hi−1
+ * （= Vim 光标），再 `Ctrl+Shift+Left×n` 就与 Vim 的 `b` 逐字对齐（含"b 是 no-op"的情形）。
+ * 实测：`vbd`/`v2bd`在各列与真实 Vim 的**缓冲区与寄存器**逐字一致。
+ * 已知偏差：若 `b` 落在**已选区域内部**（宽选区且目标 > 左端），Vim 保持选区不变，
+ * 本实现会以 hi 为锚点重建——少选左端到目标之间那一段。 */
+void kv_emit_visual_word_back_anchor(int n) {
+    if (n < 1) n = 1;
+    kv_emit_tap(KV_ESC);
+    kv_emit_tap(KV_LSFT_KC(KV_LEFT));
+    kv_emit_taps(KV_CS(KV_LEFT), n);
+}
+
 /* `x`：真实 Vim 删光标下 1 字符**并写无名寄存器**（`xp` 交换字符）。旧实现只发 Delete，
  * 剪贴板不更新 ⇒ `xp` 变成"删一个字符"（独立审查 D7）。Shift+Right 选中的就是光标下 1 字符
  * （宿主 Shift+→ 按**字符**前进，行尾时选中的是末字符本身而非换行）。 */

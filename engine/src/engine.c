@@ -194,6 +194,21 @@ static void vchar_motion(kv_keycode_t kc, int n) {
             }
             s_v_abs = true;   /* 目标列未知：后续 h/l 回退 */
             return;
+        case KV_B: case KV_C_B:
+            /* D19：后向词动作。宿主光标在**右端**时（刚 `v` 或刚向右扩选），直接
+             * Ctrl+Shift+Left 会从 c+1 回到 c（= 锚点）→ 选区塌成空 → Ctrl+X 剪切整行。
+             * 此时先 `Esc, Shift+Left` 把锚点挪到右端、宿主光标落到 hi−1 = Vim 光标，
+             * 再 Ctrl+Shift+Left×n，与真实 Vim 逐字一致（实测 vbd/v2bd/vlbd 各列一致）。
+             * 宿主光标已在**左端**时（上一动作是向左/词动作已越锚），锚点本就在右端，
+             * 直接 Ctrl+Shift+Left×n 才是正确且不塌的。 */
+            if (!s_v_abs && s_v_end_r) {
+                kv_emit_visual_word_back_anchor(n);
+                s_v_end_r = false;    /* 锚点现在在右端：活动端变成左端 */
+            } else {
+                for (int i = 0; i < n; i++) kv_emit_visual_motion(kc);
+            }
+            s_v_abs = true; s_v_word_ok = false;
+            return;
         case KV_0: case KV_C_CARET:
             if (!s_v_abs && s_v_end_r) kv_emit_visual_zero_from_right(s_v_hi - s_v_lo);
             else                       kv_emit_visual_motion(kc);

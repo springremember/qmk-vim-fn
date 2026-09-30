@@ -39,6 +39,8 @@ void kv_emit_visual_reanchor_right(int w, int n);  /* Esc, Right×(w-1), Shift+R
 void kv_emit_visual_zero_from_right(int w);        /* Esc, Left×(w-1), Shift+Home */
 void kv_emit_visual_dollar_from_left(int w);       /* Esc, Right×(w-1)（随后 Shift+End,Shift+Right） */
 void kv_emit_visual_word_fwd_anchor(void);         /* Shift+Left, Ctrl+Shift+Right, Shift+Right */
+/* 后向词动作重锚（D19）：Esc, Shift+Left, Ctrl+Shift+Left×n */
+void kv_emit_visual_word_back_anchor(int n);
 
 /* VISUAL_LINE（design §4.9 v2）：方向无关的按行语义（对齐真实 Vim）。
  * off = 光标行 − 锚行 A（A = 按 V 时所在行）；DOWN 态锚在 A 行首、UP 态锚在 A+1 行首。 */
