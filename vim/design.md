@@ -437,6 +437,8 @@ while (queue_has()) {
 | `C D Y` | `c$` / `d$` / `y$` |
 | `S` / `NS` | 同 `cc` / `Ncc`（**×n 行**） |
 | `dd` / `Ndd` | Home, Home, Shift+End, Shift+Down×(n-1), Ctrl+X, Backspace（**×n 行**；n=1 时无 `Shift+Down`） |
+| `Y` | **≡ `yy`（行级）**：Home, Home, Shift+Down×1, Ctrl+C, Esc, Up×1（真实 Vim 的 `Y` 是行级，不是 `y$`） |
+| `NJ` | `End, Space, Delete` ×(N−1)（N=1 时 1 次；真实 Vim：`J`/`2J` 连 2 行、`3J` 连 3 行） |
 | `yy` / `Nyy` | Home, Home, Shift+Down×n, Ctrl+C, **Esc, Up×n**（**×n 行**；Esc 取消宿主残留选区，Up×n 把光标拉回原行——Vim 的 `y` 不移动光标） |
 | `cc` / `Ncc` | Home, Home, Shift+End, Shift+Down×(n-1), change (+Insert)（**×n 行**；n=1 时无 `Shift+Down`） |
 | `dw` / `d$` / `d0` | 选词/选到行首尾 → Ctrl+X |

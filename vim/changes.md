@@ -347,3 +347,16 @@ n=1 时 `Shift+Down×1` 的 1 行选区与"无选区"缩进同一行，结果一
 - `gg` → `End, Right, Ctrl+Shift+Home`
 真实 Vim 验证：`dk`@L2→`L3|L4`、`dk`@末行→`L1|L2`、`2dk`→`L4`、`dgg`@L2→`L3|L4`、
 `dgg`@首行→`L2|L3|L4`、`dgg`@末行→空。`ck/cgg/yk/ygg/>k/>gg/<k/<gg` 同时保持正确。
+
+### 7.14 字符级 VISUAL 的 Esc、`Y` 行级、`NJ` 连接次数（2026-09 独立审查）
+
+独立子代理审查（自建 harness + 真实 vim.tiny，599 用例）发现三条：
+
+| 编号 | 缺陷 | 真实 Vim | 旧行为 | 修法 |
+| :--- | :--- | :--- | :--- | :--- |
+| D13 | 字符级 VISUAL 的 `Esc` **不发 Esc** | `vll<Esc>x` → `on two three`（Esc 取消选区后再删） | 宿主选区未取消，`x` 删掉整个选区 | 字符级也发 `Esc`（原先只有行选分支发） |
+| D8 | `Y` 被实现成 `y$`（字符级） | `jYp` → `L1\|L2\|L2\|L3\|L4`（**行级**复制，`p` 复制出一行） | 字符级，`p` 得 `L1\|L2L2\|L3\|L4` | `Y` ≡ `yy`（`kv_emit_line_op(KV_Y, n)`） |
+| D9 | `NJ` 连了 N 行 | `J`/`2J` 连 **2** 行、`3J` 连 **3** 行 | `2J` 连 3 行 | `NJ` → `End,Space,Delete` ×(N−1)（N=1 仍 1 次） |
+
+字符级 VISUAL 的 `Esc` 原先只在 `VISUAL_LINE` 分支发，导致 `vll<Esc>` 后宿主仍保留高亮选区，
+下一个键（`x`/`p`）作用到整个选区而不是光标处。
