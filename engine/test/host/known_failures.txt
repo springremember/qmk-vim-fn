@@ -137,8 +137,6 @@ v-Esc-x-mid            buf+reg
 v-Esc-x0               buf+reg
 v-G-d                  buf+reg
 v-G-y                  cur+reg
-v-b0-d                 buf+reg
-v-b0-y                 reg
 v-dollar-y             cur
 v-e0-d                 buf+reg
 v-gg-d                 buf+reg
@@ -149,8 +147,6 @@ v-k-y                  reg
 v-w0-y                 cur
 vis-$y                 cur
 vis-99ld               buf+reg
-vis-Bd                 buf+reg
-vis-By                 reg
 vis-Ed                 buf+reg
 vis-Esc-x              buf+reg
 vis-Ey                 cur+reg
@@ -158,8 +154,6 @@ vis-Gd                 buf+reg
 vis-Gy                 cur+reg
 vis-Vy                 cur
 vis-Wy                 cur
-vis-bd                 buf+reg
-vis-by                 reg
 vis-ed                 buf+reg
 vis-ey                 cur+reg
 vis-ggd                buf+reg
