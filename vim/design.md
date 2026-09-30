@@ -114,6 +114,8 @@ struct nv_cmd { int cmd_char; nv_func_T cmd_func; short_u cmd_flags; short cmd_a
     的行尾换行**到下一行行首，锚点落在那里；半开区间才**包含当前行的换行**（否则 `dk` 只删掉
     行内容、留下一个空行）。末行（无换行）时 `Right` 无效、锚点落在缓冲末尾，同样正确。
   - **向上到顶** `gg`：`End → Right → Ctrl+Shift+Home → 动作`（同理，锚点越过当前行换行）。
+  - **`c` + 行选动作**（`cj`/`ck`/`cG`/`cgg`/`Ncj`）在 `Ctrl+X` 之后补 **`Shift+Enter`**：
+    真实 Vim 的 `c`+行选移动与 `cc` 一样**留一个空行**（`L1|L2|L3|L4` 上 `cj` ⇒ `L1||L4`）。
   旧实现从**当前列**开始扩选，会删掉"上一行尾部 + 下一行头部"（数据损坏）。
 - `dd`（定稿）：`Home×2 → Shift+End → Ctrl+X → Backspace → Down → Home`（两次主机编辑）。
   **末尾的 `Down, Home` 把宿主光标放到"接替行"的行首**（2026-09 修正）：真实 Vim 的 `dd`
