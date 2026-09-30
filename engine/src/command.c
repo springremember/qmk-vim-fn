@@ -128,22 +128,76 @@ void kv_emit_line_op(kv_keycode_t op, int n) {
 
 void kv_emit_indent_motion(kv_keycode_t ang, kv_motion_t m, int n) {
     if (n < 1) n = 1;
-    if (m == M_ZERO || m == M_CARET) {
-        kv_emit_tap(ang == KV_C_GT ? KV_TAB : KV_LSFT_KC(KV_TAB));
+    kv_keycode_t tab = (ang == KV_C_GT) ? KV_TAB : KV_LSFT_KC(KV_TAB);
+    /* `>`/`<` 恒为**整行**：单行动作（h/l/0/^/$）只缩进**当前行**，计数不改变行范围
+     * （`2>0`/`2>^`/`2>h`/`2>l` 均 1 行）；`h` 在列 0 **不跨行**——旧实现按字符级发
+     * Shift+Left×n，宿主会在列 0 回绕到上一行行尾、把上一行缩进（D4，数据损坏）。 */
+    if (m == M_H || m == M_L || m == M_ZERO || m == M_CARET) {
+        kv_emit_indent_line(ang, 1);
         return;
     }
+    if (m == M_DOLLAR) {          /* `N$` 下移 N−1 行 ⇒ 共 N 行（实测 `2>$` = 2 行） */
+        kv_emit_indent_line(ang, n);
+        return;
+    }
+    if (m == M_J) {               /* `>j` = 当前行 + 下 1 行 = 2 行（`N>j` = N+1 行） */
+        kv_emit_indent_line(ang, n + 1);
+        return;
+    }
+    if (m == M_K) {
+        /* 向上：锚点越过当前行行尾换行（同 op+动作），活动端落在范围内**首行**；
+         * 宿主 Tab 的插入点就在光标处 ⇒ 光标已在"首个非空白"，只需 Esc 取消残留选区。 */
+        kv_emit_tap(KV_HOME);
+        kv_emit_tap(KV_END);
+        kv_emit_tap(KV_RGHT);
+        kv_emit_taps(KV_LSFT_KC(KV_UP), n + 1);
+        kv_emit_tap(tab);
+        kv_emit_tap(KV_ESC);
+        return;
+    }
+    if (m == M_GG) {              /* 到文首：光标落在第 1 行 ⇒ 插入后即首个非空白 */
+        kv_emit_tap(KV_END);
+        kv_emit_tap(KV_RGHT);
+        kv_emit_tap(KV_CS(KV_HOME));
+        kv_emit_tap(tab);
+        kv_emit_tap(KV_ESC);
+        return;
+    }
+    if (m == M_G_BIG) {           /* 到文末：光标停在文末（design §4.4 已知偏差①） */
+        kv_emit_tap(KV_HOME);
+        kv_emit_tap(KV_CS(KV_END));
+        kv_emit_tap(tab);
+        kv_emit_tap(KV_ESC);
+        return;
+    }
+    /* 词动作（w/e/b/W/E/B）：**行范围**由宿主半开选区决定，与真实 Vim 的整行展开一致
+     * （`>w` 只缩进当前行、`>e` 跨行时缩进两行）；光标停在移动目标（已知偏差②）。 */
     emit_op_range(m, n);
-    kv_emit_tap(ang == KV_C_GT ? KV_TAB : KV_LSFT_KC(KV_TAB));
+    kv_emit_tap(tab);
+    kv_emit_tap(KV_ESC);          /* 取消宿主 Tab 后残留的高亮选区（否则下一个键替换整段） */
 }
 
 void kv_emit_indent_line(kv_keycode_t ang, int n) {
     if (n < 1) n = 1;
-    /* 选中 n 行（宿主选区是半开区间：n 行 = Shift+Down×n）再缩进/反缩进。
-     * 真实 Vim：`>>` 1 行、`2>>` 2 行、`3>>` 3 行；旧实现用 ×(n-1) 会少缩进一行。 */
+    kv_keycode_t tab = (ang == KV_C_GT) ? KV_TAB : KV_LSFT_KC(KV_TAB);
+    /* 真实 Vim：`>>` 1 行、`2>>` 2 行、`3>>` 3 行；旧实现用 ×(n-1) 会少缩进一行。
+     * 宿主选区是半开区间：n 行 = Shift+Down×n。 */
+    if (n == 1) {
+        /* 单行：`Home, Tab`（**无选区** = 在行首插入一个 Tab）。宿主插入后光标停在插入点
+         * 之后 = 未缩进行的"首个非空白"，与真实 Vim 的 `>>x` ⇒ `\t2` 完全一致；且不会
+         * 因 Shift+Down 在末行被夹取而多缩进。 */
+        kv_emit_tap(KV_HOME);
+        kv_emit_tap(tab);
+        return;
+    }
     kv_emit_tap(KV_HOME);
     kv_emit_tap(KV_HOME);
     kv_emit_taps(KV_LSFT_KC(KV_DOWN), n);
-    kv_emit_tap(ang == KV_C_GT ? KV_TAB : KV_LSFT_KC(KV_TAB));
+    kv_emit_tap(tab);
+    kv_emit_tap(KV_ESC);          /* 取消宿主残留选区（D6：否则 x/p/. 替换整段 = 数据损坏） */
+    kv_emit_taps(KV_UP, n);       /* 回到范围内首行 */
+    kv_emit_tap(KV_HOME);
+    if (ang == KV_C_GT) kv_emit_tap(KV_RGHT);  /* 首个非空白（刚插入的 Tab 之后） */
 }
 
 /* design §4.9 VISUAL_LINE（v2）—— 与真实 Vim 行选对齐，动作方向无关。
