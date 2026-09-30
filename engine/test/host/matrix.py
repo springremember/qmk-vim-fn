@@ -12,10 +12,14 @@ stream to the host-editor model in `kvhost.py`, and compares:
   * cursor position  (same line, column within 1)
 
 A case that matches on all three dimensions PASSes.  A mismatch is an XFAIL if
-the case is listed in `XFAIL` below with one of the declared deviation IDs from
-`vim/design.md` §4.9 (①–⑩); otherwise it is a FAIL and the process exits 1.
+the case is listed in `XFAIL` below with a declared-deviation ID (see
+`DEVIATIONS`: §4.9's VISUAL_LINE ①–⑩ plus the other deviations declared in
+`vim/design.md` §4.4/§4.9 and `readme.md`); otherwise it is a FAIL and the
+process exits 1.
 
-Exit status: 0 iff every case either matches or is a declared deviation.
+Exit status: 0 iff every case either matches or is a declared deviation **and no
+listed deviation has started matching** (strict xfail — an XPASS also exits 1,
+so the table cannot silently rot and mask a fixed defect).
 """
 import sys
 from collections import Counter
@@ -405,6 +409,22 @@ DEVIATIONS = {
     '⑧': 'visual p does not update the host clipboard (design §4.9 ⑧)',
     '⑨': 'V then v keeps the whole-line host selection instead of collapsing to one char (design §4.9 ⑨)',
     '⑩': 'V j motion selection lacks the trailing newline until the action adds it (design §4.9 ⑩)',
+    # ---- deviations declared OUTSIDE the §4.9 VISUAL_LINE ①–⑩ list ----
+    # (the ①–⑩ above are local to §4.9's VISUAL_LINE list; these IDs are
+    #  namespaced so the two numbering schemes cannot be confused)
+    'D2':     'd/c/y + word motion at EOL eats the newline (Ctrl+Shift+Right crosses lines) (design §4.9 D2)',
+    'E-W':    'e/E are approximated as w (Ctrl+Right is vim w) (readme §2, design §4.9)',
+    'VCUR':   'charwise VISUAL cursor sits after the last selected char; Vim sits on it (design §4.9)',
+    'YCOL':   'yank cannot restore the column ($ -> Home) or the line (G/gg -> doc end) (design §4.9)',
+    'D14':    '$x / Gx off-by-one at EOL / buffer end: host cannot express "on the char" (design §4.4)',
+    'D15':    'J inserts a space on an empty next line and does not strip leading whitespace (design §4.4)',
+    'D16':    'empty host selection (failed motion / motion at line start) makes Ctrl+X/C cut or copy the whole line (design §4.4)',
+    'D17':    'cgg at line 0 cuts the line instead of leaving a blank line (anchor direction) (design §4.4)',
+    'D18':    'insert-entry + Esc off-by-one: a host insert cursor does not move left on Esc (design §4.4, keymap layer)',
+    'IND':    'indent leaves the cursor at the edit point, not the first non-blank of the range first line (design §4.4 ①②③)',
+    'PASTEC': 'dd on the last line / linewise p,P leave the cursor at the pasted text end (design §4.4)',
+    'EOLDEL': 'after deleting at EOL the host cursor sits on the newline; Vim moves left (design §4.4)',
+    'GPFX':   'only the g->gg prefix is implemented; other g/Z continuations are swallowed (design §4.4)',
 }
 
 XFAIL = {
@@ -497,7 +517,10 @@ def main(argv):
         sum(1 for r in rows if not r['ok_buf']),
         sum(1 for r in rows if r['ok_reg'] is False),
         sum(1 for r in rows if r['ok_cur'] is False)))
-    return 1 if fails else 0
+    # Strict xfail semantics: a case that is listed as a declared deviation but
+    # now MATCHES real Vim is a failure too — otherwise the table silently rots
+    # and a fixed defect would be masked as "still broken".
+    return 1 if (fails or xpasses) else 0
 
 
 if __name__ == '__main__':
