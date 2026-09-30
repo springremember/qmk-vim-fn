@@ -45,7 +45,41 @@ static bool s_vl_abs;
  * 与 Normal/Visual 的"2 位计数 ≤99"语义也一致。 */
 #define KV_VLINE_MAX_OFF 100
 
-static void vline_reset(void) { s_vl_off = 0; s_vl_up = false; s_vl_abs = false; }
+/* 字符级 VISUAL 选区状态（design §4.9，缺陷 D1/D12）。宿主选区是半开区间
+ * [A+lo, A+hi)，A = 按 `v` 时所在列（引擎无需知道 A 的绝对值，全部用相对偏移）。
+ *   s_v_end_r   : true = 宿主光标在 hi 端（Vim 光标 = hi−1）；false = 在 lo 端（= lo）。
+ *   s_v_abs     : 偏移已失效（0/^/$/G/词/纵向等"目标列依赖文本"的动作之后）→
+ *                 回退到旧的"每个动作一个 Shift+方向"，绝不发出错误的重锚。
+ *   s_v_word_ok : 宿主光标恰在 Vim 光标右侧一格、且锚点即 Vim 锚点（D12 词动作
+ *                 重锚序列 `Shift+Left, Ctrl+Shift+Right, Shift+Right` 的前提）。
+ * 为什么必须有：`v` 的预选把宿主光标放到 A+1，向左越过锚点时宿主 Shift+Left
+ * 会把半开选区塌成空 → `Ctrl+X` 退化成"剪切整行"（数据损坏）。 */
+static int  s_v_lo;
+static int  s_v_hi;
+static bool s_v_end_r;
+static bool s_v_abs;
+static bool s_v_word_ok;
+
+/* 字符级偏移上限（同 KV_VLINE_MAX_OFF 的理由）：单条命令的键码数受发送队列
+ * EMIT_CAP=256 限制，溢出静默丢键。到上限后**拒绝继续扩展**（不发键），而不是
+ * 发出错乱的重锚。计数 ≤99、|lo|/|hi| ≤100 ⇒ 单条命令 ≤~105 键。 */
+#define KV_VCHAR_MAX_OFF 100
+
+static void vchar_reset(void) {
+    s_v_lo = 0; s_v_hi = 0; s_v_end_r = true; s_v_abs = true; s_v_word_ok = false;
+}
+
+/* 进入字符级 VISUAL（`v` 已发 Shift+Right）：宿主选区 = 光标下 1 字符。 */
+static void vchar_enter(void) {
+    s_v_lo = 0; s_v_hi = 1; s_v_end_r = true; s_v_abs = false; s_v_word_ok = true;
+}
+
+/* 重置两套可视状态。所有进入/离开可视、模式切换、kv_init、V/v 切换都经此
+ * （design §4.9）：字符级偏移若不同步清掉，会把上一次的选区状态泄漏给下一次。 */
+static void vline_reset(void) {
+    s_vl_off = 0; s_vl_up = false; s_vl_abs = false;
+    vchar_reset();
+}
 
 /* 行选移动：把 off 从 s_vl_off 变成 s_vl_off±n，并让宿主字符选区**始终覆盖整行**。
  * 重锚只在方向翻转时发生（键数受当前 |off| 限制），不做全量重建。 */
@@ -85,6 +119,97 @@ static void vline_motion(kv_keycode_t kc, int n) {
         case KV_J: case KV_W: case KV_E: case KV_C_W: case KV_C_E: vline_move(false, n); break;
         case KV_K: case KV_B: case KV_C_B:                          vline_move(true,  n); break;
         default: break;
+    }
+}
+
+/* ---- 字符级 VISUAL 移动（design §4.9，缺陷 D1）-------------------------------
+ * 宿主半开选区 [lo,hi)（相对 A），光标在 hi（end_r）或 lo（!end_r）。
+ * 向右/向左移动 n 时：
+ *   同向（光标所在端继续外扩）→ 直接 Shift+方向 ×n，偏移同步 ±n。
+ *   反向但**不越过锚点**   → 直接 Shift+方向 ×n（宿主会收缩选区）。
+ *   反向**越过锚点**       → 必须重锚：`Esc` 把选区塌到活动端（= 光标），
+ *      用不带 Shift 的方向键把光标移到"锚点外侧一格"，再 Shift+方向 扩到目标。
+ *      否则宿主 Shift+方向 会把半开选区塌成空 → Ctrl+X 退化成剪切整行（数据损坏）。
+ * 偏移超过 KV_VCHAR_MAX_OFF 时**拒绝扩展**（不发键、不改状态），与 vline_move 同。 */
+static void vchar_move(bool right, int n) {
+    if (n < 1) n = 1;
+    if (n > 99) n = 99;
+    if (s_v_abs) {                        /* 偏移已失效：旧的"每步一个 Shift+方向" */
+        for (int i = 0; i < n; i++) kv_emit_visual_motion(right ? KV_L : KV_H);
+        return;
+    }
+    const int lo = s_v_lo, hi = s_v_hi, w = hi - lo;
+    if (right) {
+        if (s_v_end_r) {                  /* 光标在右端：直接向右扩 */
+            if (hi + n > KV_VCHAR_MAX_OFF) return;   /* 到上限：拒绝扩展 */
+            for (int i = 0; i < n; i++) kv_emit_visual_motion(KV_L);
+            s_v_hi = hi + n;
+        } else if (lo + n < hi) {         /* 光标在左端、尚未越过锚点：直接收缩 */
+            for (int i = 0; i < n; i++) kv_emit_visual_motion(KV_L);
+            s_v_lo = lo + n;
+        } else {                          /* 越过锚点：重锚到"光标在右端" */
+            const int nhi = hi + n - w + 1;
+            if (nhi > KV_VCHAR_MAX_OFF) return;
+            kv_emit_visual_reanchor_right(w, n);
+            s_v_lo = hi - 1;
+            s_v_hi = nhi;
+            s_v_end_r = true;
+        }
+    } else {
+        if (!s_v_end_r) {                 /* 光标在左端：直接向左扩 */
+            if (lo - n < -KV_VCHAR_MAX_OFF) return;
+            for (int i = 0; i < n; i++) kv_emit_visual_motion(KV_H);
+            s_v_lo = lo - n;
+        } else if (hi - n > lo) {         /* 光标在右端、尚未越过锚点：直接收缩 */
+            for (int i = 0; i < n; i++) kv_emit_visual_motion(KV_H);
+            s_v_hi = hi - n;
+        } else {                          /* 越过锚点：重锚到"光标在左端" */
+            const int nlo = hi - 1 - n;
+            if (nlo < -KV_VCHAR_MAX_OFF) return;
+            kv_emit_visual_reanchor_left(w, n);
+            s_v_hi = lo + 1;
+            s_v_lo = nlo;
+            s_v_end_r = false;
+        }
+    }
+    /* 只有"光标在右端"时宿主光标才恰在 Vim 光标右侧一格（D12 词动作的前提）。 */
+    s_v_word_ok = s_v_end_r;
+}
+
+/* 字符级 VISUAL 移动分派。h/l 走偏移状态机；词/纵向/0/^/$/G 的目标列依赖文本，
+ * 无法用相对偏移建模 —— 按 design §4.9 回退到旧的"每步一个 Shift+方向"，并把偏移
+ * 标记为失效（绝不发错误的重锚）。词前向（w/e/W/E）与 0/^/$ 在状态仍可信时做一次
+ * 重锚，修正 D12 / 左端包含锚字符的差一。 */
+static void vchar_motion(kv_keycode_t kc, int n) {
+    switch (kc) {
+        case KV_H: vchar_move(false, n); return;
+        case KV_L: vchar_move(true,  n); return;
+        case KV_W: case KV_E: case KV_C_W: case KV_C_E:
+            if (s_v_word_ok) {
+                /* D12：先 Shift+Left 把宿主光标移到 Vim 光标列，再 Ctrl+Shift+Right
+                 * 从**正确列**起算词动作，最后 Shift+Right 把目标字符纳入半开选区。 */
+                for (int i = 0; i < n; i++) kv_emit_visual_word_fwd_anchor();
+            } else {
+                for (int i = 0; i < n; i++) kv_emit_visual_motion(kc);
+            }
+            s_v_abs = true;   /* 目标列未知：后续 h/l 回退 */
+            return;
+        case KV_0: case KV_C_CARET:
+            if (!s_v_abs && s_v_end_r) kv_emit_visual_zero_from_right(s_v_hi - s_v_lo);
+            else                       kv_emit_visual_motion(kc);
+            s_v_abs = true; s_v_word_ok = false;
+            return;
+        case KV_C_DLR:
+            /* 光标在左端时锚点在右端，直接 Shift+End 会漏掉锚字符 → 先重锚。 */
+            if (!s_v_abs && !s_v_end_r) kv_emit_visual_dollar_from_left(s_v_hi - s_v_lo);
+            kv_emit_visual_motion(KV_C_DLR);
+            s_v_abs = true; s_v_word_ok = false;
+            return;
+        case KV_J: case KV_K: case KV_C_G:
+        default:
+            for (int i = 0; i < n; i++) kv_emit_visual_motion(kc);
+            s_v_abs = true; s_v_word_ok = false;
+            return;
     }
 }
 
@@ -253,7 +378,7 @@ static kv_feed_t feed_normal(kv_keycode_t kc) {
                     s_mode = (kc == KV_C_V) ? KV_MODE_VISUAL_LINE : KV_MODE_VISUAL;
                     vline_reset();
                     if (s_mode == KV_MODE_VISUAL_LINE) kv_emit_visual_line_enter(); /* 选中整行 */
-                    else kv_emit_visual_enter();   /* Vim 的 v 立刻选中光标下 1 字符 */
+                    else { kv_emit_visual_enter(); vchar_enter(); } /* v：选中光标下 1 字符 + 偏移状态 */
                     return R_CONSUMED;
                 case T_X: case T_XUP: case T_s: case T_C_BIG: case T_D_BIG:
                 case T_Y_BIG: case T_P: case T_PUP: case T_JOIN: case T_UNDO:
@@ -297,7 +422,7 @@ static kv_feed_t feed_normal(kv_keycode_t kc) {
                     s_mode = (kc == KV_C_V) ? KV_MODE_VISUAL_LINE : KV_MODE_VISUAL;
                     vline_reset();
                     if (s_mode == KV_MODE_VISUAL_LINE) kv_emit_visual_line_enter(); /* 选中整行 */
-                    else kv_emit_visual_enter();   /* Vim 的 v 立刻选中光标下 1 字符 */
+                    else { kv_emit_visual_enter(); vchar_enter(); } /* v：选中光标下 1 字符 + 偏移状态 */
                     reset_pending();
                     return R_CONSUMED;
                 default: /* drop count, re-identify */
@@ -456,6 +581,7 @@ static kv_feed_t feed_visual(kv_keycode_t kc) {
                 s_vl_up = true; s_vl_abs = true;
             } else {
                 kv_emit_tap(KV_CS(KV_HOME));
+                s_v_abs = true; s_v_word_ok = false;   /* gg 是绝对位置：偏移失效 */
             }
             reset_pending();
             return R_CONSUMED;
@@ -516,7 +642,7 @@ static kv_feed_t feed_visual(kv_keycode_t kc) {
         /* 真实 Vim：VISUAL 内按 V 切到行选；VISUAL_LINE 内按 v 切回字符选（不发键）。 */
         if (vline) {
             /* Vim 的 `Vv` 切回字符选并立刻选中光标下 1 字符 */
-            if (kc == KV_V) { s_mode = KV_MODE_VISUAL; vline_reset(); kv_emit_visual_enter(); }
+            if (kc == KV_V) { s_mode = KV_MODE_VISUAL; vline_reset(); kv_emit_visual_enter(); vchar_enter(); }
         } else if (kc == KV_C_V) {
             s_mode = KV_MODE_VISUAL_LINE;
             vline_reset();
@@ -531,7 +657,7 @@ static kv_feed_t feed_visual(kv_keycode_t kc) {
             if (vline) {
                 vline_motion(kc, n);  /* 行选：整行推进 n 行（h/l/0/^/$ 不改行范围） */
             } else {
-                for (int i = 0; i < n; i++) kv_emit_visual_motion(kc); /* 字符/词级 */
+                vchar_motion(kc, n);  /* 字符级：偏移状态机 + 重锚（D1/D12） */
             }
             s_visual_digits = 0; /* 计数已消费 */
             reset_pending();
@@ -542,7 +668,7 @@ static kv_feed_t feed_visual(kv_keycode_t kc) {
                 kv_emit_vline_G(s_vl_abs ? false : s_vl_up, s_vl_off);
                 s_vl_up = false; s_vl_abs = true;
             } else {
-                kv_emit_visual_motion(kc);
+                vchar_motion(KV_C_G, 1);  /* G 是绝对位置：偏移失效（design §4.9） */
             }
             s_visual_digits = 0;
             reset_pending();

@@ -484,3 +484,35 @@ Shift+Down×(n-1), Ctrl+X`（`Shift+→` 纳入换行；`Ctrl+X` 后光标正好
   字符 ⇒ `2x`@末字符多吃一个换行；与 `$x`/`Gx`（D14）同属"无法区分在字符上/字符后"。
 
 以上均写入 `design.md` §4.4。
+
+### 7.22 字符级 VISUAL 偏移状态机（D1/D12 已修）+ D14–D18 声明
+
+**D1（已修，数据损坏）**：`v` 的预选是 `Shift+Right`，把宿主光标放到 `A+1`；向左越过锚点时
+宿主 `Shift+Left` 会把**半开**选区塌成空，随后 `Ctrl+X` 退化成"剪切整行"。
+`vhd`@列0：旧得整行被删（`''`），现得 `ne two three`（Vim 同）。
+修：新增字符级偏移状态 `s_v_lo/s_v_hi/s_v_end_r/s_v_abs/s_v_word_ok`（与行选 `s_vl_off` 同构，
+重置随 `vline_reset()`）。`h`/`l` 方向翻转越过锚点时重锚：
+- `end=R` 向左越过（`n ≥ w = hi−lo`）：`Esc, Left×(w−1), Shift+Left×(n−w+2)`；
+- `end=L` 向右越过：`Esc, Right×(w−1), Shift+Right×(n−w+2)`。
+全部相对运算，无需绝对列。
+
+**D12（已修）**：字符级 VISUAL 词动作从 `c+1` 起算（`vwd`@列3 旧得 `onethree`，Vim `onewo three`）。
+修：`Shift+Left, Ctrl+Shift+Right, Shift+Right`（重锚到 `c` 后再起算），可连续使用。
+
+**顺带修正（同属锚点包含性）**：`v0d`/`v^d` 少删 1 字符 —— `0`/`^` 从右端改为
+`Esc, Left×(w−1), Shift+Home`；`$` 在左端先 `Esc, Right×(w−1)` 再 `Shift+End, Shift+Right`。
+
+**回退与上限**：`j`/`k`、`b`/`B`、`G`/`gg` 的目标列依赖文本 → 回退旧的"每步一个 `Shift+方向`"
+并把偏移置失效（绝不发错误的重锚）；`|lo|`/`|hi| > 100` 时**拒绝扩展**（不发键），
+计数 ≤99 ⇒ 单条命令 ≤~105 键（发送队列 256 格）。
+
+**D14–D18（固有偏差，声明）**：见 `design.md` §4.9 ⑪–⑮ —— D14 `$x`/`Gx`（及末行 `v$d`）的行尾差一；
+D15 `J` 在下一行为空时多插空格；D16 no-op 动作的空选区复制整行；D17 `cgg`@行0 经实测已被
+`c`+行选动作的 `Shift+Enter` 修正、**已不构成偏差**（保留登记）；D18 `i<Esc>x` 属 keymap 层，
+引擎范围外。
+
+**验证**：真实 `vim.tiny` 9.1 + 独立宿主模型（`/tmp/indep`）逐条对照 ——
+`vhd`/`vhh`/`vll`/`vlll`/`vhhhll`/`vllllhh`/`vhx`/`vlld`/`vwd`/`vwy`/`v0d` 缓冲区全部一致；
+`v$d` 仅**末行**差一（D14，固有）。仓库矩阵 `make matrix-test`：PASS 347→359、FAIL 204→192，
+**零回归**（修好 `vis-hd`/`vis-hy`/`vis-wd`/`vis-Wd`/`vis-0d`/`vis-0y`/`vis-^d`/`vis-^y`/
+`v-h0-d`/`v-h0-y`/`v-h2-d`/`v-w0-d` 共 12 例）。engine 605 断言全绿，glue 10 套全绿。

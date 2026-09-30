@@ -329,6 +329,50 @@ void kv_emit_visual_motion(kv_keycode_t kc) {
     }
 }
 
+/* 字符级 VISUAL 的重锚（design §4.9，缺陷 D1）：宿主半开选区 [lo,hi)、w=hi−lo。
+ * 光标在 hi 端向左越过锚点（或光标在 lo 端向右越过锚点）时，直接 Shift+方向 会把
+ * 选区塌成空 → `Ctrl+X` 退化成"剪切整行"（数据损坏）。
+ *   Esc 把选区塌到活动端（= 宿主光标）；随后用**不带 Shift** 的方向键把光标移到
+ *   "锚点外侧一格"，再 Shift+方向 扩到目标。全部相对运算，无需知道绝对列。 */
+void kv_emit_visual_reanchor_left(int w, int n) {
+    /* 光标在 hi：Esc 后 Left×(w−1) 到 lo+1，再 Shift+Left×(n−w+2) 到目标。 */
+    kv_emit_tap(KV_ESC);
+    kv_emit_taps(KV_LEFT, w - 1);
+    kv_emit_taps(KV_LSFT_KC(KV_LEFT), n - w + 2);
+}
+
+void kv_emit_visual_reanchor_right(int w, int n) {
+    /* 光标在 lo：Esc 后 Right×(w−1) 到 hi−1（= Vim 锚点），再 Shift+Right×(n−w+2)。 */
+    kv_emit_tap(KV_ESC);
+    kv_emit_taps(KV_RGHT, w - 1);
+    kv_emit_taps(KV_LSFT_KC(KV_RGHT), n - w + 2);
+}
+
+/* 字符级 VISUAL 的 `0`/`^`（光标在右端）：目标列 0 一定 ≤ 锚列，故需重锚到
+ * [行首, 锚字符] 的半开表示：Esc, Left×(w−1), Shift+Home。 */
+void kv_emit_visual_zero_from_right(int w) {
+    kv_emit_tap(KV_ESC);
+    kv_emit_taps(KV_LEFT, w - 1);
+    kv_emit_tap(KV_LSFT_KC(KV_HOME));
+}
+
+/* 字符级 VISUAL 的 `$`（光标在左端）：锚点在右端（= Vim 锚字符 +1），先把光标移回
+ * 锚字符处，再由调用方发 Shift+End, Shift+Right（含行尾换行）。 */
+void kv_emit_visual_dollar_from_left(int w) {
+    kv_emit_tap(KV_ESC);
+    kv_emit_taps(KV_RGHT, w - 1);
+}
+
+/* 字符级 VISUAL 前向词动作的重锚（design §4.9，缺陷 D12）：`v` 的预选把宿主光标
+ * 放到了 Vim 光标右侧一格，直接 Ctrl+Shift+Right 会从 c+1 起算（差一列）。
+ * Shift+Left 把光标移回 c（锚点不变），Ctrl+Shift+Right 从 c 起算，
+ * Shift+Right 把目标字符纳入半开选区。可连续使用（锚点始终不变）。 */
+void kv_emit_visual_word_fwd_anchor(void) {
+    kv_emit_tap(KV_LSFT_KC(KV_LEFT));
+    kv_emit_tap(KV_CS(KV_RGHT));
+    kv_emit_tap(KV_LSFT_KC(KV_RGHT));
+}
+
 /* `x`：真实 Vim 删光标下 1 字符**并写无名寄存器**（`xp` 交换字符）。旧实现只发 Delete，
  * 剪贴板不更新 ⇒ `xp` 变成"删一个字符"（独立审查 D7）。Shift+Right 选中的就是光标下 1 字符
  * （宿主 Shift+→ 按**字符**前进，行尾时选中的是末字符本身而非换行）。 */

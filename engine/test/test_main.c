@@ -1441,6 +1441,124 @@ static void test_reg_kind_and_yank_restore(void) {
     CHECK_SEQ(KV_HOME, KV_LSFT_KC(KV_DOWN), KV_LSFT_KC(KV_DOWN), KV_LCTL_KC(KV_C), KV_ESC, KV_UP, KV_UP);
 }
 
+/* design §4.9 字符级 VISUAL 偏移状态机（缺陷 D1/D12）。
+ * 期望键码序列由真实 vim.tiny 9.1 + 宿主模型双向核对（changes.md §7.22）：
+ * 向左/向右越过锚点必须重锚，否则宿主半开选区会被 Shift+方向 塌成空，
+ * 后续 Ctrl+X 退化成"剪切整行"（数据损坏）。 */
+static void test_visual_char_offsets(void) {
+    /* D1 向左越过锚点：v(Shift+Right) + h(重锚 Esc,Shift+Left×2) + d(Ctrl+X)
+     * => 只删光标下 1 字符（旧实现塌成空选区 → Ctrl+X 剪切整行）。 */
+    fresh(); key(KV_V); key(KV_H); key(KV_D);
+    CHECK_SEQ(KV_LSFT_KC(KV_RGHT), KV_ESC,
+              KV_LSFT_KC(KV_LEFT), KV_LSFT_KC(KV_LEFT), KV_LCTL_KC(KV_X));
+
+    /* vhh：第二次 h 已在左端（end=L），直接 Shift+Left（不再重锚）。 */
+    fresh(); key(KV_V); key(KV_H); key(KV_H);
+    CHECK_SEQ(KV_LSFT_KC(KV_RGHT), KV_ESC,
+              KV_LSFT_KC(KV_LEFT), KV_LSFT_KC(KV_LEFT), KV_LSFT_KC(KV_LEFT));
+
+    /* vllllhh：先向右扩 4 格再向左收 2 格，未越过锚点 → 纯 Shift 方向。 */
+    fresh(); key(KV_V); key(KV_L); key(KV_L); key(KV_L); key(KV_L); key(KV_H); key(KV_H);
+    CHECK_SEQ(KV_LSFT_KC(KV_RGHT), KV_LSFT_KC(KV_RGHT), KV_LSFT_KC(KV_RGHT),
+              KV_LSFT_KC(KV_RGHT), KV_LSFT_KC(KV_RGHT),
+              KV_LSFT_KC(KV_LEFT), KV_LSFT_KC(KV_LEFT));
+
+    /* 向左重锚的 Left×(w−1) 腿：v ll 3h（w=3,n=3）=> Esc,Left×2,Shift+Left×2。 */
+    fresh(); key(KV_V); key(KV_L); key(KV_L); key(KV_3); key(KV_H);
+    CHECK_SEQ(KV_LSFT_KC(KV_RGHT), KV_LSFT_KC(KV_RGHT), KV_LSFT_KC(KV_RGHT),
+              KV_ESC, KV_LEFT, KV_LEFT, KV_LSFT_KC(KV_LEFT), KV_LSFT_KC(KV_LEFT));
+
+    /* 方向翻转后的向右重锚：接上一步再 3l（w=2,n=3）
+     * => Esc,Right,Shift+Right×3（Right×(w−1) 腿）。 */
+    fresh(); key(KV_V); key(KV_L); key(KV_L); key(KV_3); key(KV_H); key(KV_3); key(KV_L);
+    CHECK_SEQ(KV_LSFT_KC(KV_RGHT), KV_LSFT_KC(KV_RGHT), KV_LSFT_KC(KV_RGHT),
+              KV_ESC, KV_LEFT, KV_LEFT, KV_LSFT_KC(KV_LEFT), KV_LSFT_KC(KV_LEFT),
+              KV_ESC, KV_RGHT, KV_LSFT_KC(KV_RGHT), KV_LSFT_KC(KV_RGHT), KV_LSFT_KC(KV_RGHT));
+
+    /* D12 前向词动作从正确列起算：v + w(Shift+Left,Ctrl+Shift+Right,Shift+Right) + d/y。 */
+    fresh(); key(KV_V); key(KV_W); key(KV_D);
+    CHECK_SEQ(KV_LSFT_KC(KV_RGHT), KV_LSFT_KC(KV_LEFT), KV_CS(KV_RGHT),
+              KV_LSFT_KC(KV_RGHT), KV_LCTL_KC(KV_X));
+    fresh(); key(KV_V); key(KV_W); key(KV_Y);
+    CHECK_SEQ(KV_LSFT_KC(KV_RGHT), KV_LSFT_KC(KV_LEFT), KV_CS(KV_RGHT),
+              KV_LSFT_KC(KV_RGHT), KV_LCTL_KC(KV_C), KV_ESC);
+
+    /* `0` 从右端重锚：v + 0(Esc,Shift+Home) + d => 选区含锚字符（Vim 的闭区间）。 */
+    fresh(); key(KV_V); key(KV_0); key(KV_D);
+    CHECK_SEQ(KV_LSFT_KC(KV_RGHT), KV_ESC, KV_LSFT_KC(KV_HOME), KV_LCTL_KC(KV_X));
+
+    /* 词/纵向/绝对动作之后偏移失效 → h/l 回退到旧的"每步一个 Shift+方向"。 */
+    fresh(); key(KV_V); key(KV_L); key(KV_J); key(KV_H);
+    CHECK_SEQ(KV_LSFT_KC(KV_RGHT), KV_LSFT_KC(KV_RGHT), KV_LSFT_KC(KV_DOWN),
+              KV_LSFT_KC(KV_LEFT));
+
+    /* Esc 退出后状态复位：再次 v h 仍走重锚。 */
+    fresh(); key(KV_V); key(KV_H);
+    rec_start(); key(KV_ESC); key(KV_V); key(KV_H);
+    CHECK_SEQ(KV_ESC, KV_LSFT_KC(KV_RGHT), KV_ESC,
+              KV_LSFT_KC(KV_LEFT), KV_LSFT_KC(KV_LEFT));
+
+    /* `V`→`v` 切换也复位（Vv 后 h 从新锚点重锚）。 */
+    fresh(); key(KV_C_V); key(KV_V);
+    rec_start(); key(KV_H);
+    CHECK_SEQ(KV_ESC, KV_LSFT_KC(KV_LEFT), KV_LSFT_KC(KV_LEFT));
+
+    /* 向左重锚后的状态必须一致：vh l ⇒ l 未越锚，直接 Shift+Right。 */
+    fresh(); key(KV_V); key(KV_H); key(KV_L);
+    CHECK_SEQ(KV_LSFT_KC(KV_RGHT), KV_ESC, KV_LSFT_KC(KV_LEFT), KV_LSFT_KC(KV_LEFT),
+              KV_LSFT_KC(KV_RGHT));
+
+    /* vhll：l 恰好到达锚点（lo+n==hi）也必须重锚，直接 Shift+Right 会塌成空。 */
+    fresh(); key(KV_V); key(KV_H); key(KV_L); key(KV_L);
+    CHECK_SEQ(KV_LSFT_KC(KV_RGHT), KV_ESC, KV_LSFT_KC(KV_LEFT), KV_LSFT_KC(KV_LEFT),
+              KV_LSFT_KC(KV_RGHT), KV_ESC, KV_LSFT_KC(KV_RGHT), KV_LSFT_KC(KV_RGHT));
+
+    /* 越锚后偏移失效（end=L 时锚在右端）：前向词动作回退，不得再用 D12 重锚。 */
+    fresh(); key(KV_V); key(KV_H); key(KV_W);
+    CHECK_SEQ(KV_LSFT_KC(KV_RGHT), KV_ESC, KV_LSFT_KC(KV_LEFT), KV_LSFT_KC(KV_LEFT),
+              KV_CS(KV_RGHT));
+
+    /* 向右重锚后的状态必须正确：接 vll3h3l 再 2h（未越锚）⇒ 直接 Shift+Left×2。 */
+    fresh(); key(KV_V); key(KV_L); key(KV_L); key(KV_3); key(KV_H);
+    key(KV_3); key(KV_L); key(KV_2); key(KV_H);
+    CHECK_SEQ(KV_LSFT_KC(KV_RGHT), KV_LSFT_KC(KV_RGHT), KV_LSFT_KC(KV_RGHT),
+              KV_ESC, KV_LEFT, KV_LEFT, KV_LSFT_KC(KV_LEFT), KV_LSFT_KC(KV_LEFT),
+              KV_ESC, KV_RGHT, KV_LSFT_KC(KV_RGHT), KV_LSFT_KC(KV_RGHT), KV_LSFT_KC(KV_RGHT),
+              KV_LSFT_KC(KV_LEFT), KV_LSFT_KC(KV_LEFT));
+
+    /* 词动作之后偏移失效：v w h d ⇒ w 后 h 回退为直接 Shift+Left（不再重锚）。 */
+    fresh(); key(KV_V); key(KV_W); key(KV_H); key(KV_D);
+    CHECK_SEQ(KV_LSFT_KC(KV_RGHT), KV_LSFT_KC(KV_LEFT), KV_CS(KV_RGHT),
+              KV_LSFT_KC(KV_RGHT), KV_LSFT_KC(KV_LEFT), KV_LCTL_KC(KV_X));
+
+    /* `$` 在左端（end=L）先重锚回锚字符，再 Shift+End,Shift+Right。
+     * 末行缓冲区差一属 D14（固有），此处只锁定键码序列。 */
+    fresh(); key(KV_V); key(KV_H); key(KV_C_DLR);
+    CHECK_SEQ(KV_LSFT_KC(KV_RGHT), KV_ESC, KV_LSFT_KC(KV_LEFT), KV_LSFT_KC(KV_LEFT),
+              KV_ESC, KV_RGHT, KV_LSFT_KC(KV_END), KV_LSFT_KC(KV_RGHT));
+
+    /* kv_init / 模式切换必须清掉字符级偏移：否则上次会话的选区状态会泄漏
+     * （`v` 之后直接进 VISUAL 的 h 会走重锚，而不是 abs 回退）。 */
+    fresh(); key(KV_V);              /* 留下 lo=0,hi=1,end=R 的状态 */
+    fresh_visual();                  /* kv_init + kv_set_mode(VISUAL) 应清为 abs */
+    rec_start(); key(KV_H);
+    CHECK_SEQ(KV_LSFT_KC(KV_LEFT));  /* abs ⇒ 旧的"每步一个 Shift+方向" */
+
+    /* 偏移上限（KV_VCHAR_MAX_OFF=100）：到上限后**拒绝扩展**（不发键），
+     * 绝不发出错乱的重锚。v + 99l ⇒ hi=100；再来一个 l 应为 0 键。 */
+    fresh(); key(KV_V);
+    rec_start(); key(KV_9); key(KV_9); key(KV_L);
+    CHECK(rec_count() == 99);
+    rec_start(); key(KV_L);
+    CHECK(rec_count() == 0);
+    /* 左端同理：v h ⇒ lo=−1，99h 到 −100，再来一个 h 为 0 键。 */
+    fresh(); key(KV_V); key(KV_H);
+    rec_start(); key(KV_9); key(KV_9); key(KV_H);
+    CHECK(rec_count() == 99);
+    rec_start(); key(KV_H);
+    CHECK(rec_count() == 0);
+}
+
 int main(void) {
     test_single();
     test_count();
@@ -1474,6 +1592,7 @@ int main(void) {
     test_vline_emit_map();
     test_vline_queue_safety();
     test_visual_motion_map();
+    test_visual_char_offsets();     /* D1/D12 */
     test_command_guards();
     test_classify_coverage();
     test_emit_queue_timing();

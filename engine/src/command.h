@@ -32,6 +32,14 @@ void kv_emit_indent_line(kv_keycode_t ang, int n);
 /* Emit a visual-mode motion: extend the selection by one step. */
 void kv_emit_visual_motion(kv_keycode_t kc);
 
+/* 字符级 VISUAL 重锚（design §4.9，缺陷 D1/D12）：方向翻转越过锚点时重建半开选区，
+ * 避免 Shift+方向 把选区塌成空（否则 Ctrl+X 会剪切整行 = 数据损坏）。w = hi−lo。 */
+void kv_emit_visual_reanchor_left(int w, int n);   /* Esc, Left×(w-1), Shift+Left×(n-w+2) */
+void kv_emit_visual_reanchor_right(int w, int n);  /* Esc, Right×(w-1), Shift+Right×(n-w+2) */
+void kv_emit_visual_zero_from_right(int w);        /* Esc, Left×(w-1), Shift+Home */
+void kv_emit_visual_dollar_from_left(int w);       /* Esc, Right×(w-1)（随后 Shift+End,Shift+Right） */
+void kv_emit_visual_word_fwd_anchor(void);         /* Shift+Left, Ctrl+Shift+Right, Shift+Right */
+
 /* VISUAL_LINE（design §4.9 v2）：方向无关的按行语义（对齐真实 Vim）。
  * off = 光标行 − 锚行 A（A = 按 V 时所在行）；DOWN 态锚在 A 行首、UP 态锚在 A+1 行首。 */
 void kv_emit_visual_line_enter(void);              /* Home, Shift+End = 选中整行 */
