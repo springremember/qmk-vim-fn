@@ -26,11 +26,8 @@
 3dd                    cur
 dw-b                   buf+reg
 last-Gddx              buf+cur+reg
-pp-3ylp                buf+cur
 pp-Yp                  cur
 pp-dd-then-P           cur
-pp-vlyP                cur
-pp-vlyp                buf+cur
 pp-yG-x                buf+cur+reg
 pp-yeP                 buf+cur+reg
 pp-yep                 buf+cur+reg
@@ -43,9 +40,6 @@ vis-99ld               buf+reg
 vis-Wy                 cur
 vis-j-y-p              cur
 vis-jEsc-x             buf+reg
-vis-llEsc-p            cur
-vis-llEsc-x            buf+reg
-vis-lly                cur
 vis-wy                 cur
 vl-Gd                  cur
 yep                    buf+cur+reg
