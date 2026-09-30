@@ -296,7 +296,8 @@ static void test_pure_shift_folding(void) {
     const kv_keycode_t g_big[] = { KV_LCTL_KC(KV_END) };
     const kv_keycode_t dlr[]   = { KV_END };
     const kv_keycode_t caret[] = { KV_HOME };
-    const kv_keycode_t x_up[]  = { KV_BSPC };
+    /* D7：X = Shift+←, Ctrl+C, Backspace（写剪贴板且列 0 不误剪整行） */
+    const kv_keycode_t x_up[]  = { KV_LSFT_KC(KV_LEFT), KV_LCTL_KC(KV_C), KV_BSPC };
     const kv_keycode_t D[]     = { KV_LSFT_KC(KV_END), KV_LCTL_KC(KV_X) };
     const kv_keycode_t Y[]     = { KV_HOME, KV_HOME, KV_LSFT_KC(KV_DOWN), KV_LCTL_KC(KV_C), KV_ESC, KV_UP }; /* Y ≡ yy */
     /* cc / S contract (engine test_main.c): line select + delete, NO BSPC (leaves an empty
@@ -307,7 +308,7 @@ static void test_pure_shift_folding(void) {
     test_shift_fold(KC_G, g_big, 1, "G");
     test_shift_fold(KC_4, dlr,   1, "$");
     test_shift_fold(KC_6, caret, 1, "^");
-    test_shift_fold(KC_X, x_up,  1, "X");
+    test_shift_fold(KC_X, x_up,  3, "X");
     test_shift_fold(KC_D, D,     2, "D");
     test_shift_fold(KC_Y, Y,     6, "Y");
     test_shift_fold(KC_S, S,     4, "S");

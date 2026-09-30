@@ -268,12 +268,12 @@ static void test_half_repeat_isolation(void) {
     g_emit_n = 0;
     CHECK(pipeline(KC_X, true) == false);
     emit_flush();
-    CHECK(g_emit_n == 1 && g_emit[0] == KV_DEL);
+    CHECK(g_emit_n == 2 && g_emit[0] == KV_LSFT_KC(KV_RGHT) && g_emit[1] == KV_LCTL_KC(KV_X));
     CHECK(pipeline(KC_X, false) == false);
     g_emit_n = 0;
     CHECK(pipeline(KC_DOT, true) == false);
     emit_flush();
-    CHECK(g_emit_n == 1 && g_emit[0] == KV_DEL);
+    CHECK(g_emit_n == 2 && g_emit[0] == KV_LSFT_KC(KV_RGHT) && g_emit[1] == KV_LCTL_KC(KV_X));
     CHECK(pipeline(KC_DOT, false) == false);
 }
 

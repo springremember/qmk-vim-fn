@@ -656,23 +656,22 @@ static void test_emit_add_quadrant_dd(void) {
     CHECK(feed(KC_D, true) == false);
     kv_emit_flush_now();
 
-    CHECK(s_hits[KC_HOME] == 3);   /* Home×2（行首）+ Home（dd 后把光标放到接替行行首） */
+    CHECK(s_hits[KC_HOME] == 2);   /* Home×2（行首） */
     CHECK(s_hits[KC_END] == 1);
+    CHECK(s_hits[KC_RGHT] == 1);   /* Shift+→ 把行尾换行纳入选区（否则首行 dd 会留空行） */
     CHECK(s_hits[KC_X] == 1);
-    CHECK(s_hits[KC_BSPC] == 1);
-    CHECK(s_hits[KC_DOWN] == 1);   /* dd 后 Down,Home 把光标移到接替行行首 */
 
-    CHECK(s_add_n == 2);
+    CHECK(s_add_n == 3);   /* Shift+End, Shift+Right, Ctrl+X 各一次（逐 tap 计） */
     CHECK(log_has(s_add, s_add_n, MOD_BIT_LSHIFT));
     CHECK(log_has(s_add, s_add_n, MOD_BIT_LCTRL));
-    CHECK(s_del_n == 2);
+    CHECK(s_del_n == 3);
     CHECK(log_has(s_del, s_del_n, MOD_BIT_LSHIFT));
     CHECK(log_has(s_del, s_del_n, MOD_BIT_LCTRL));
 
     /* in-flight tap modifier state == the command's requested mods */
     CHECK(click_mods_of(KC_END) == MOD_BIT_LSHIFT);
+    CHECK(click_mods_of(KC_RGHT) == MOD_BIT_LSHIFT);
     CHECK(click_mods_of(KC_X) == MOD_BIT_LCTRL);
-    CHECK(click_mods_of(KC_BSPC) == 0);
     CHECK(get_mods() == 0); /* add fully unwound */
 
     CHECK(feed(KC_D, false) == false);
