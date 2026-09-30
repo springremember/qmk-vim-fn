@@ -391,3 +391,24 @@ n=1 时 `Shift+Down×1` 的 1 行选区与"无选区"缩进同一行，结果一
 跨行把 `\n` 选进去）：`dw`@L2 在 `L1|L2|L3|L4` 上 Vim 得 `L1||L3|L4`（留空行）、引擎得
 `L1|L3|L4`（整行被并掉）。引擎无文本知识、无法预知词边界，属**固有**；此前未声明，
 现写入 `design.md` §4.9。
+
+### 7.17 独立审查遗留缺陷清单（2026-09，含已验证的正确键码）
+
+以下由独立子代理审查（自建 harness + 真实 `vim.tiny` 9.1，599 用例）逐条给出**最小复现**
+与**经真实 Vim 验证的正确键码**，尚未实现。修完后应把该审查的 599 用例矩阵固化为仓库内
+常驻测试（注意旧 `/tmp/audA` harness 有 7 个自身缺陷，其中"H1 把两字符 `\e` 当字面量喂给
+Vim"会让所有 Esc 用例的基准出错）。
+
+| 编号 | 缺陷 | 最小复现 | 正确键码 |
+| :--- | :--- | :--- | :--- |
+| D1 | 字符级 VISUAL **向左**移动把宿主选区塌成空 → `Ctrl+X/C` 打到**整行** | `vhd`@列0：模型删整行，Vim `ne two three` | 方向翻转时重锚：向左 `Esc, Shift+Left×(n+1)`；向右（原在左侧）`Esc, Shift+Left, Shift+Right×(n+1)`。需新增字符级偏移状态（与行选 `s_vl_off`/`s_vl_up` 同构） |
+| D4 | `>h`/`<h` 在**列 0** 缩进错行（Vim 的 `h` 不跨行首） | `>h`@(1,0)：模型缩进 L1，Vim 缩进 L2 | 按行操作处理：`Home, Home, Shift+Down, Tab` |
+| D6 | `>>`/`>motion` 之后光标/选区停在**范围末尾**，下一个键（含 `.`）作用错行 | `>>x`@(1,0)：模型 `L1\|\tL3\|L4`，Vim `L1\|\t2\|L3\|L4` | Tab 后 `Esc, Up×(n−1), Home`（回到首个缩进行行首） |
+| D7 | `x`/`X`/`s` **不写宿主剪贴板** → `xp` 交换字符失效 | `xp`@(0,0)：模型 `ne two three`，Vim `noe two three` | `x`=`Shift+Right,Ctrl+X`；`X`=`Shift+Left,Ctrl+X`；`s`=`Shift+Right,Ctrl+X`+Insert。**必须与 `p`/`P` 定位一起改**：`p`=`Right,Ctrl+V`、`P`=`Ctrl+V`（Vim 的 `p` 插在光标字符**之后**），并与 D11 的光标回位配合，否则 `ylp` 会回退 |
+| D11 | `yw`/`ye`/`3yl` 的光标漂移**是缓冲区可见的**（§7.9 已勘误） | `ywp`：模型 `one one two three`，Vim `oone ne two three` | `Ctrl+C` 后回位：`yw`/`ye` 用 `Ctrl+Left`（同 `y$` 的 `Home`、`yj` 的 `Up` 已有做法） |
+| D12 | 字符级 VISUAL 词动作从 **c+1** 起算（`v` 的预选把光标移到了 c+1） | `vwd`@(0,3)：模型 `onethree`，Vim `onewo three` | 先重锚 `Shift+Left, Ctrl+Shift+Right, Shift+Right` |
+| D14 | `$x`/`Gx` 的行尾/末尾空行差一（`$`→`End` 落在末字符后；`G`→`Ctrl+End` 落在末换行后的空行） | `$x` 模型并了两行，Vim 删末字符；`Gx` 模型不删，Vim 删末行首字符 | 固有（宿主键码无法区分"字符后/行尾"），需声明 |
+| D15 | 末行/下一行为空时 `J` 多插一个尾空格 | `3J` | 固有 |
+| D16 | `yh`@列0 复制整行（Vim 放弃操作符）；`ygg`@行0 用空选区 `Ctrl+C` 复制整行且无 `\n` | `yh`/`ygg` | 固有/需声明 |
+| D17 | `cgg`@行0 把整行切掉而不是留空行 | `cgg`@(0,0)：模型 `L2\|L3\|L4`，Vim `\|L2\|L3\|L4` | 同 D1 的锚点方向问题 |
+| D18 | `i<Esc>x` 光标差一（Vim 的 Esc 左移一格，宿主插入光标不左移） | — | 属 keymap 层（INSERT→NORMAL 补 `Left`），在引擎范围外 |
