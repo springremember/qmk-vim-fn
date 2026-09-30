@@ -135,10 +135,15 @@ struct nv_cmd { int cmd_char; nv_func_T cmd_func; short_u cmd_flags; short cmd_a
   之前，删完在**首行**会留下一个空行（`dd`@L1 得 `|L2|L3`，Vim 得 `L2|L3`，数据损坏）。
   `Ctrl+X` 之后宿主光标正好停在**接替行行首**，与 Vim 一致，故旧版末尾的
   `Backspace, Down, Home` 全部删除（旧版靠 `Backspace` 并掉换行、再 `Down,Home` 挪光标）。
-- `cc` / `S` / `Ncc`（2026-09 修正）：`Home×2 → Shift+End [→ Shift+Down×(n−1)] → Ctrl+X`
-  （**不发 Backspace**）。真实 Vim 的 `cc`/`S` 会**留一个空行**（`L1|L2|L3` 上 `cc` ⇒ `L1||L3`，
-  `2cc` ⇒ `L1||L4`）；旧实现与 `dd` 完全相同、多发一个 Backspace 把整行并掉，实测与 Vim 不符。
-  去掉 Backspace 后三种位置（首行/中间/末行）都与 Vim 一致。
+- `cc` / `S` / `Ncc`（2026-09 修正）：`Home×2 → Shift+End → **Shift+→** [→ Shift+Down×(n−1)]
+  → Ctrl+X → **Shift+Enter → ←**（**不发 Backspace**）。真实 Vim 的 `cc`/`S` 会**留一个空行**
+  （`L1|L2|L3` 上 `cc` ⇒ `L1||L3`，`2cc` ⇒ `L1||L4`），同时无名寄存器里是**行级**内容
+  （含行尾换行）。旧实现**只删行内容、不含换行**，于是寄存器变成字符级，
+  随后的 `p` 会当成字符级往**行内**粘（`cc<Esc>p` 模型 `L1\n\nL2L3\nL4`、Vim `L1\n\nL2\nL3\nL4`）。
+  现先把换行纳入选区（寄存器行级），再补 `Shift+Enter` 造出那个空行、`←` 把
+  光标退回空行：`cc`/`2cc`/`S`/`2S`/`ccp`/`Sp`/`2ccp` 在首/中/末行的
+  **缓冲区与寄存器**均与 Vim 一致（前/后探针 24 用例：21 修好、0 回归）。
+  残留：`cc<Esc>p` 仅光标位置差异（行级粘贴的光标偏差，已在 §4.4 声明）。
 - `J`（2026-09 修正）：`End → Space → Delete`。真实 Vim 的连接会**插一个空格**
   （`three` + `four` ⇒ `three four`）；旧实现只发 `End → Delete`，得到 `threefour`。
   **已知偏差**：Vim 还会去掉下一行的**前导空白**，固件读不到空白长度，故保留。
@@ -450,7 +455,7 @@ while (queue_has()) {
 | `x` / `X` | Shift+→, Ctrl+X / Shift+←, Ctrl+C, Backspace（**写宿主剪贴板**，D7：`xp` 才能交换字符） |
 | `s` | Shift+→, Ctrl+X, Insert（真实 Vim：`s` ≡ `cl`） |
 | `C D Y` | `c$` / `d$` / `y$`（`Y` **≡ `yy` 行级**） |
-| `S` / `NS` | 同 `cc` / `Ncc`（**×n 行**） |
+| `S` / `NS` | 同 `cc` / `Ncc`（**×n 行**）；`cc`/`S` 的无名寄存器为**行级**（含行尾换行） |
 | `dd` / `Ndd` | Home, Home, Shift+End, **Shift+→**, Shift+Down×(n-1), Ctrl+X（**×n 行**；n=1 时无 `Shift+Down`。`Shift+→` 把**行尾换行**纳入选区，否则**首行**会留下空行 = 数据损坏） |
 | `Y` | **≡ `yy`（行级）**：Home, Home, Shift+Down×1, Ctrl+C, Esc, Up×1（真实 Vim 的 `Y` 是行级，不是 `y$`） |
 | `NJ` | `End, Space, Delete, ←` ×(N−1)（N=1 时 1 次；真实 Vim：`J`/`2J` 连 2 行、`3J` 连 3 行） |

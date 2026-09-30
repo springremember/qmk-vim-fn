@@ -103,8 +103,8 @@ static void test_count(void) {
     fresh(); key(KV_3); key(KV_C_G); CHECK_SEQ(KV_LCTL_KC(KV_END));
     fresh(); key(KV_3); key(KV_G); key(KV_G); CHECK_SEQ(KV_LCTL_KC(KV_HOME));
     fresh(); key(KV_3); key(KV_C_S);
-    CHECK_SEQ(KV_HOME, KV_HOME, KV_LSFT_KC(KV_END), KV_LSFT_KC(KV_DOWN), KV_LSFT_KC(KV_DOWN),
-              KV_LCTL_KC(KV_X));
+    CHECK_SEQ(KV_HOME, KV_HOME, KV_LSFT_KC(KV_END), KV_LSFT_KC(KV_RGHT), KV_LSFT_KC(KV_DOWN), KV_LSFT_KC(KV_DOWN),
+              KV_LCTL_KC(KV_X), KV_LSFT_KC(KV_ENT), KV_LEFT);
 }
 
 static void test_op(void) {
@@ -166,18 +166,18 @@ static void test_linewise_operator_motions(void) {
 static void test_line_change_and_join(void) {
     /* cc：Home,Home,Shift+End,Ctrl+X（**不发 BSPC**）+ 进 Insert */
     fresh(); key(KV_C); key(KV_C);
-    CHECK_SEQ(KV_HOME, KV_HOME, KV_LSFT_KC(KV_END), KV_LCTL_KC(KV_X));
+    CHECK_SEQ(KV_HOME, KV_HOME, KV_LSFT_KC(KV_END), KV_LSFT_KC(KV_RGHT), KV_LCTL_KC(KV_X), KV_LSFT_KC(KV_ENT), KV_LEFT);
     CHECK(kv_get_mode() == KV_MODE_INSERT);
     /* S ≡ cc */
     fresh(); key(KV_C_S);
-    CHECK_SEQ(KV_HOME, KV_HOME, KV_LSFT_KC(KV_END), KV_LCTL_KC(KV_X));
+    CHECK_SEQ(KV_HOME, KV_HOME, KV_LSFT_KC(KV_END), KV_LSFT_KC(KV_RGHT), KV_LCTL_KC(KV_X), KV_LSFT_KC(KV_ENT), KV_LEFT);
     CHECK(kv_get_mode() == KV_MODE_INSERT);
     /* 2cc / 3S：单次选区覆盖 N 行，同样不发 BSPC */
     fresh(); key(KV_2); key(KV_C); key(KV_C);
-    CHECK_SEQ(KV_HOME, KV_HOME, KV_LSFT_KC(KV_END), KV_LSFT_KC(KV_DOWN), KV_LCTL_KC(KV_X));
+    CHECK_SEQ(KV_HOME, KV_HOME, KV_LSFT_KC(KV_END), KV_LSFT_KC(KV_RGHT), KV_LSFT_KC(KV_DOWN), KV_LCTL_KC(KV_X), KV_LSFT_KC(KV_ENT), KV_LEFT);
     fresh(); key(KV_3); key(KV_C_S);
-    CHECK_SEQ(KV_HOME, KV_HOME, KV_LSFT_KC(KV_END), KV_LSFT_KC(KV_DOWN), KV_LSFT_KC(KV_DOWN),
-              KV_LCTL_KC(KV_X));
+    CHECK_SEQ(KV_HOME, KV_HOME, KV_LSFT_KC(KV_END), KV_LSFT_KC(KV_RGHT), KV_LSFT_KC(KV_DOWN), KV_LSFT_KC(KV_DOWN),
+              KV_LCTL_KC(KV_X), KV_LSFT_KC(KV_ENT), KV_LEFT);
     /* dd 仍保留 BSPC（删整行）——两者必须可区分 */
     fresh(); key(KV_D); key(KV_D);
     CHECK_SEQ(KV_HOME, KV_HOME, KV_LSFT_KC(KV_END), KV_LSFT_KC(KV_RGHT), KV_LCTL_KC(KV_X));
@@ -376,9 +376,9 @@ static void test_repeat_change_only(void) {
     fresh(); key(KV_C_C); kv_set_mode(KV_MODE_NORMAL); rec_start(); key(KV_DOT);
     CHECK_SEQ(KV_LSFT_KC(KV_END), KV_LCTL_KC(KV_X));
     fresh(); key(KV_C_S); kv_set_mode(KV_MODE_NORMAL); rec_start(); key(KV_DOT);
-    CHECK_SEQ(KV_HOME, KV_HOME, KV_LSFT_KC(KV_END), KV_LCTL_KC(KV_X));
+    CHECK_SEQ(KV_HOME, KV_HOME, KV_LSFT_KC(KV_END), KV_LSFT_KC(KV_RGHT), KV_LCTL_KC(KV_X), KV_LSFT_KC(KV_ENT), KV_LEFT);
     fresh(); key(KV_C); key(KV_C); kv_set_mode(KV_MODE_NORMAL); rec_start(); key(KV_DOT);
-    CHECK_SEQ(KV_HOME, KV_HOME, KV_LSFT_KC(KV_END), KV_LCTL_KC(KV_X));
+    CHECK_SEQ(KV_HOME, KV_HOME, KV_LSFT_KC(KV_END), KV_LSFT_KC(KV_RGHT), KV_LCTL_KC(KV_X), KV_LSFT_KC(KV_ENT), KV_LEFT);
     /* Insert 里的 `.` 是字面量（透传），不是回放 */
     fresh(); key(KV_S); rec_start(); key(KV_DOT); CHECK_SEQ(KV_DOT);
     /* 复制之后再修改，目标换成新修改 */
@@ -801,8 +801,8 @@ static void test_count_drop(void) {
 
     /* 3S accepts the count (== 3cc), 3gg drops it */
     fresh(); key(KV_3); key(KV_C_S);
-    CHECK_SEQ(KV_HOME, KV_HOME, KV_LSFT_KC(KV_END), KV_LSFT_KC(KV_DOWN),
-              KV_LSFT_KC(KV_DOWN), KV_LCTL_KC(KV_X));
+    CHECK_SEQ(KV_HOME, KV_HOME, KV_LSFT_KC(KV_END), KV_LSFT_KC(KV_RGHT), KV_LSFT_KC(KV_DOWN),
+              KV_LSFT_KC(KV_DOWN), KV_LCTL_KC(KV_X), KV_LSFT_KC(KV_ENT), KV_LEFT);
     CHECK(kv_get_mode() == KV_MODE_INSERT); CHECK(kv_pending() == false);
     fresh(); key(KV_3); key(KV_G); key(KV_G); CHECK_SEQ(KV_LCTL_KC(KV_HOME));
     /* 42G drops the count */
@@ -1176,7 +1176,7 @@ static void test_command_guards(void) {
     CHECK_SEQ(KV_HOME, KV_HOME, KV_LSFT_KC(KV_DOWN), KV_LCTL_KC(KV_C), KV_ESC, KV_UP);
     /* cc via the emitter enters Insert；**不发 BSPC**（留一个空行，同 Vim） */
     rec_start(); kv_emit_line_op(KV_C, 1); flush_emit();
-    CHECK_SEQ(KV_HOME, KV_HOME, KV_LSFT_KC(KV_END), KV_LCTL_KC(KV_X));
+    CHECK_SEQ(KV_HOME, KV_HOME, KV_LSFT_KC(KV_END), KV_LSFT_KC(KV_RGHT), KV_LCTL_KC(KV_X), KV_LSFT_KC(KV_ENT), KV_LEFT);
 
     rec_start(); kv_emit_indent_line(KV_C_GT, 0); flush_emit();
     CHECK_SEQ(KV_HOME, KV_TAB);                       /* n=1：无选区，行首插 Tab */
@@ -1411,7 +1411,7 @@ static void test_repeat_recorded_commands(void) {
     CHECK_SEQ(KV_HOME, KV_TAB);
     /* S / C / s enter Insert: back to Normal, then replay */
     fresh(); key(KV_C_S); kv_set_mode(KV_MODE_NORMAL); rec_start(); key(KV_DOT);
-    CHECK_SEQ(KV_HOME, KV_HOME, KV_LSFT_KC(KV_END), KV_LCTL_KC(KV_X)); /* cc 留空行，不发 BSPC */
+    CHECK_SEQ(KV_HOME, KV_HOME, KV_LSFT_KC(KV_END), KV_LSFT_KC(KV_RGHT), KV_LCTL_KC(KV_X), KV_LSFT_KC(KV_ENT), KV_LEFT); /* cc 留空行，不发 BSPC */
     fresh(); key(KV_C_C); kv_set_mode(KV_MODE_NORMAL); rec_start(); key(KV_DOT);
     CHECK_SEQ(KV_LSFT_KC(KV_END), KV_LCTL_KC(KV_X));
     fresh(); key(KV_S);   kv_set_mode(KV_MODE_NORMAL); rec_start(); key(KV_DOT);

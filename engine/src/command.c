@@ -149,14 +149,20 @@ void kv_emit_line_op(kv_keycode_t op, int n) {
     kv_emit_tap(KV_HOME);
     kv_emit_tap(KV_HOME);
     kv_emit_tap(KV_LSFT_KC(KV_END));
-    /* `dd` 必须把**行尾换行**也纳入选区（`Shift+End` 只到末字符之前）：否则删不掉换行，
-     * 在**首行**会留下一个空行（数据损坏，独立审查未列出的新发现）；`Ctrl+X` 后光标正好
-     * 停在接替行行首。`cc`/`S` 相反：只删行内容、**留一个空行**（Vim 语义），故不加
-     * `Shift+Right`。 */
-    if (op != KV_C) kv_emit_tap(KV_LSFT_KC(KV_RGHT));
+    /* 两者都必须把**行尾换行**纳入选区（`Shift+End` 只到末字符之前）：
+     *   `dd`：否则删不掉换行，在**首行**会留下一个空行（数据损坏）；
+     *   `cc`/`S`：否则无名寄存器里只有**行内容而无换行**（Vim 是行级），
+     *     随后的 `p` 会当成字符级往行内粘 —— `cc<Esc>p` 模型 `L1\n\nL2L3\nL4`、Vim `L1\n\nL2\nL3\nL4`。
+     *     选区含换行后再补 `Shift+Enter` 造出 Vim 要求的那个空行（寄存器同时是行级），
+     *     并补 `←` 把光标退回空行。 */
+    kv_emit_tap(KV_LSFT_KC(KV_RGHT));
     if (n > 1) kv_emit_taps(KV_LSFT_KC(KV_DOWN), n - 1);
     kv_emit_tap(KV_LCTL_KC(KV_X));
-    if (op == KV_C) kv_emit_enter_insert(KV_I);
+    if (op == KV_C) {
+        kv_emit_tap(KV_LSFT_KC(KV_ENT));
+        kv_emit_tap(KV_LEFT);
+        kv_emit_enter_insert(KV_I);
+    }
 }
 
 void kv_emit_indent_motion(kv_keycode_t ang, kv_motion_t m, int n) {
