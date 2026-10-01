@@ -446,7 +446,7 @@ static void test_insert_flash_color(void) {
 }
 
 /* ======================================================================
- * Caps 长按模块（规格：caps/design.md、caps/readme.md；用例：caps/testcase.md）
+ * Caps 模块（按下即进入，无 hold_ms 阈值；规格：caps/design.md、caps/readme.md；用例：caps/testcase.md）
  * ====================================================================== */
 static void caps_enter(void) {
     CHECK(pipeline(KC_CAPS, true) == false);   /* press 被吞（配对表） */
@@ -503,7 +503,7 @@ static void test_caps_trigger(void) {
 }
 
 static void test_caps_mode(void) {
-    /* §1 进入：长按进入，vim 开关与模式不变 */
+    /* §1 进入：**按下即进入**（无 hold_ms 阈值），vim 开关与模式不变 */
     reset_engine();
     bool     was_on   = kv_vim_enabled();
     kv_mode_t was_mode = kv_get_mode();

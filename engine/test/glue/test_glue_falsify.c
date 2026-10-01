@@ -370,8 +370,11 @@ static void test_falsify_hook_pairing(void) {
 }
 
 /* ======================================================================
- * F. Caps tap = existing short-press semantics; Caps hold = Caps mode
- *    (caps/readme.md; never changes the vim mode)
+ * F. Caps CONTRACT (2026-09, caps/design.md §3): pressing Caps enters the Caps
+ *    mode IMMEDIATELY (no hold_ms threshold); a bare Caps click therefore has NO
+ *    effect on the vim mode; Fn+Caps toggles vim on release.  The mode is left on
+ *    release.  (The old "tap toggles vim / hold = temporary Normal" semantics was
+ *    removed in caps 1.1.0.)
  * ====================================================================== */
 static void test_falsify_caps(void) {
     /* 裸 Caps 单击（vim on, INSERT）：无任何效果 */
@@ -392,7 +395,7 @@ static void test_falsify_caps(void) {
 
     reset_engine(); /* leave the suite in a clean INSERT state */
 
-    /* Long press from Visual -> Caps mode; vim keeps VISUAL and the release
+    /* Caps press while in Visual -> Caps mode; vim keeps VISUAL and the release
      * exits the Caps mode without touching the vim mode. */
     reset_engine();
     kv_set_mode(KV_MODE_VISUAL);
@@ -456,8 +459,9 @@ static void test_falsify_shift_esc_vim_off(void) {
 }
 
 /* ======================================================================
- * H. Fn+Caps behaves exactly like a bare Caps (no special case): press
- *    swallowed and paired, release toggles vim, even if Fn is released first
+ * H. Fn+Caps: the press is swallowed and paired like a bare Caps, but the
+ *    RELEASE toggles vim (that is the special case).  A bare Caps release does
+ *    nothing.  Toggling also works if Fn is released first.
  * ====================================================================== */
 static void test_falsify_fn_caps(void) {
     reset_engine();

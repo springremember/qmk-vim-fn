@@ -838,3 +838,25 @@ Vim 也**不**改写，所以 `vhP`/`vlP`/`vllP` 全对。
 
 **结论**：193 条 XFAIL 的引用**全部经维度复审且名副其实**（唯一在上轮查出的真错 `yj` 已改引
 `FAILMOT`）。判据与教训见 `qmk/engineering-spec.md` §1.4 与 `changes.md §7.37`。
+
+### 7.39 caps/fn 深度核验收尾：修掉测试侧与现行契约**相反**的注释
+
+`caps/`+`fn/` 六份文档对代码做了逐条核验（结论：Caps 契约与代码一致 —— 由 `cfg->fn_layer` 驱动、
+`hold_ms` **仅鼠标**用、裸 Caps 单击**无效果**、Fn+Caps 释放时**开关 vim**），并修了 9 处文档过期描述。
+核验还发现 `engine/**` 里若干**测试名/注释与现行契约相反**（断言本身是对的、套件也绿，但注释会把
+后人带偏），已在本提交修正：
+
+- `test_glue_falsify.c`：`Caps tap = existing short-press semantics; Caps hold = Caps mode` →
+  写明**按下即进入（无 `hold_ms` 阈值）**、裸单击**无效果**、Fn+Caps 释放才开关 vim（旧语义在
+  caps 1.1.0 已移除）；`Fn+Caps behaves exactly like a bare Caps (no special case)` 是**反的**，
+  改为"按下与裸 Caps 同（被吞并入配对表），但**释放会开关 vim** —— 这正是特例"。
+- `test_glue.c`：`tap: toggles vim ...` 与"`g_now += 200 /* exactly hold_ms */` + task() 判定进入"
+  的叙述已过时，改为"按下即进入、释放才开关"。
+- `test_rgb.c`：`§1 进入：长按进入` → `按下即进入（无 hold_ms 阈值）`；区块标题"长按模块"同步更正。
+
+engine 778 断言、10 个 glue 套件全绿。
+
+**核验发现但未处理的覆盖缺口**（需新增测试，另议）：`caps/testcase.md:71`「模式内按 myfn 已声明键
+由 Caps 模块接管、不进入 myfn 分发」在 glue 套件中**完全无断言**（`test_rgb.c` 的 cfg `myfn_declared=NULL`；
+`test_glue.c` 的 Caps 用例在模式激活期间从不 `fn_on()`）。另有 5 条不变量只被**部分**断言
+（如 `:70` 只查模式不变、**从不查 `kv_pending()`**；`:51` 从不按后续字母组组合）。

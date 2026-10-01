@@ -1062,7 +1062,8 @@ static bool sim_held(uint16_t kc) {
 }
 
 static void test_caps_mode(void) {
-    /* tap: toggles vim, no Ctrl, vim mode untouched by the press */
+    /* Fn+Caps: the PRESS enters Caps mode (vim unchanged, no Ctrl); the RELEASE
+     * toggles vim.  A bare Caps would do nothing at all. */
     reset_engine();
     kv_set_mode(KV_MODE_NORMAL);
     g_now = 3000;
