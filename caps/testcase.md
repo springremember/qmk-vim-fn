@@ -10,11 +10,21 @@
 
 **主机侧已可覆盖** Caps×Ctrl 交错（自 2a0c839 起）：`engine/test/glue/test_rgb.c` 的
 `pipeline()` 已建模"放行即注册/反注册"，`s_mods` 是真实 mods 位图。
-该提交补齐的 10 条（FIX-1..10）判别用例**分布在各套件中，并非集中在 `test_caps_ctrl_bitmodel`**：
-`test_caps_ctrl_bitmodel` 含 FIX-1..4（退出/release 守卫、合成条件、F 键引用计数）；
-溢出容量与配对（FIX-5/6）在 `test_caps_overflow_clean`；非基础键码豁免（FIX-7）在 `test_caps_cleanup`；
-hook 吞键作废可视输入（FIX-8）在 `test_glue.c::test_visual_cancel_hook_swallow`；
-FIX-9/10 是引擎用例（`engine/test/test_main.c`），与 Caps 无关。
+该提交补齐的 10 条（FIX-1..10）判别用例**分布在各套件中**（`test_caps_ctrl_bitmodel` 只含 FIX-1..4）：
+`test_rgb.c::test_caps_ctrl_bitmodel` = FIX-1..4（退出/release 守卫、合成条件、F 键引用计数）；
+`test_rgb.c::test_caps_overflow_clean` = FIX-5/6（溢出容量与配对）；
+`test_rgb.c::test_caps_cleanup` = FIX-7（非基础键码豁免）；
+`test_glue.c::test_visual_cancel_hook_swallow` = FIX-8（hook 吞键作废可视输入）；
+`engine/test/test_main.c` 的引擎用例 = FIX-9/10，与 Caps 无关。
+
+2026-10 覆盖补齐（本轮新增，逐条变异验证）：
+`test_glue.c::test_caps_mode_myfn_priority` ——「拦截优先」：Caps 模式**激活中** + Fn 层**已激活**，
+按 myfn 已声明键由 Caps 模块接管（发 `Ctrl+<key>`）且**不进 myfn**；
+`test_rgb.c::test_caps_mode_operator_no_pending` ——「模式内键不进引擎」：Normal 下模式内按 `d`
+发出的流**恰好**是 `Ctrl+D`，且 `kv_pending() == false`；
+`test_rgb.c::test_caps_mode` 内补 Space/Tab/Backspace 的 `Ctrl+<功能键>` 与 `Shift -> Ctrl+Shift+A`
+组合；`test_rgb.c::test_caps_ctrl_bitmodel` 内补两个顺序用例：「物理 Ctrl 按+抬后按 `d` 重新
+自注册 Ctrl」（design §3.1-3）与「进入前已按物理 Ctrl、退出时仍按住 -> 不重复注册、不反注册」。
 
 **仍只能实机验证**的是**宿主语义**（非本层能决定）：
 1. `Shift+Home`/`Shift+End`/`Shift+↓` 在各编辑器是否按"扩展选区/保持列"解释（行选近似的前提）；

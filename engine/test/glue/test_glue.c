@@ -1097,6 +1097,32 @@ static void test_caps_mode(void) {
     CHECK(kv_get_mode() == KV_MODE_NORMAL);
 }
 
+/* caps/testcase.md「拦截优先」：Caps 模式**激活中**，按下一个 **myfn 已声明**的键，
+ * 必须由 Caps 模块接管（发成 `Ctrl+<key>`），且**绝不进入 myfn 分发**。
+ *
+ * 组合的构造：`Fn` 已按住时按 `Caps` 是"开关 vim"而不是进入模式
+ * （caps/design.md §3：`caps_armed = !fn_layer_active()`），所以"myfn 层激活 + Caps 模式激活"
+ * 只能**先按 Caps 进模式、再按住 Fn**；此时 `myfn_process()` 的条件（层激活 + 已声明）已满足，
+ * 若 Caps 拦截不是"优先"，该键就会落到 myfn。 */
+static void test_caps_mode_myfn_priority(void) {
+    reset_engine();
+    CHECK(pipeline(KC_CAPS, true) == false);   /* 先进入 Caps 模式（此时 Fn 未按住） */
+    fn_on();                                   /* 再按住 Fn：myfn 层已激活 */
+    CHECK(s_myfn_calls == 0);
+
+    CHECK(pipeline(KC_SPC, true) == false);            /* KC_SPC 已声明，且 myfn 回调会消费它 */
+    CHECK(sim_held(KC_LCTL) && sim_held(KC_SPC));      /* 由 Caps 模块映射为 Ctrl+Space */
+    CHECK(s_myfn_calls == 0);                          /* 未进入 myfn 分发 */
+
+    CHECK(pipeline(KC_SPC, false) == false);
+    CHECK(!sim_held(KC_SPC) && !sim_held(KC_LCTL));
+    CHECK(s_myfn_calls == 0);
+
+    fn_off();
+    CHECK(pipeline(KC_CAPS, false) == false);  /* 退出模式 */
+    CHECK(!sim_held(KC_LCTL));
+}
+
 /* design §4.12: vim_keymap_common_task() long-press timing for the mouse
  * trigger — below the threshold no modifier, at/above it one registration, and
  * an already-held trigger is never re-registered. */
@@ -1724,6 +1750,7 @@ int main(void) {
     test_visual_cancel_myfn_swallow();
     test_visual_cancel_hook_swallow();
     test_caps_mode();
+    test_caps_mode_myfn_priority();      /* caps/testcase.md「拦截优先」 */
     test_mouse_task_threshold();
     test_mouse_h_release();              /* G5 */
     test_mouse_lbtn_threshold();         /* G7 */

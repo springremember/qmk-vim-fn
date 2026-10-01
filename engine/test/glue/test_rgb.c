@@ -535,16 +535,26 @@ static void test_caps_mode(void) {
     CHECK(pipeline(KC_V, false) == false);
     CHECK(!sim_ctrl_held());                     /* 最后一个松开 -> Ctrl 释放 */
 
-    /* §2 功能键同样 Ctrl+；修饰键 -> Ctrl+修饰 */
-    CHECK(pipeline(KC_ENT, true) == false);
-    CHECK(sim_held(KC_LCTL) && sim_held(KC_ENT));
-    CHECK(pipeline(KC_ENT, false) == false);
+    /* §2 功能键同样 Ctrl+：Enter/Space/Tab/Backspace（原用例只有 ENT） */
+    const uint16_t fnkeys[4] = {KC_ENT, KC_SPC, KC_TAB, KC_BSPC};
+    for (int i = 0; i < 4; i++) {
+        CHECK(pipeline(fnkeys[i], true) == false);
+        CHECK(sim_held(KC_LCTL) && sim_held(fnkeys[i]));
+        CHECK(pipeline(fnkeys[i], false) == false);
+    }
+    CHECK(!sim_held(KC_LCTL));
+
+    /* §2 修饰键 -> Ctrl+修饰；组合 = Ctrl+Shift+A（原用例只按/抬 LSFT，从未按 A） */
     CHECK(pipeline(KC_LSFT, true) == false);
     CHECK(sim_held(KC_LCTL) && sim_held(KC_LSFT));
+    CHECK((s_mods & 0x03) == 0x03);                     /* Ctrl + Shift 均在位 */
+    CHECK(pipeline(KC_A, true) == false);
+    CHECK(sim_held(KC_A) && (s_mods & 0x03) == 0x03);   /* Ctrl+Shift+A */
+    CHECK(pipeline(KC_A, false) == false);
     CHECK(pipeline(KC_LSFT, false) == false);
     /* 桩把 register/unregister 当多重集，修饰键的"位图"语义由 /tmp 的位图桩另行覆盖；
      * 这里只断言引用计数收尾：最后一个非 F 键松开后合成 Ctrl 必须释放 */
-    CHECK(!sim_held(KC_LCTL));
+    CHECK(!sim_held(KC_LCTL) && (s_mods & 0x03) == 0x00);
 
     /* §4 模式内 Esc = Ctrl+Esc，且不触发 vim 的 Esc 切换（模式不变） */
     CHECK(kv_get_mode() == was_mode);
@@ -591,6 +601,30 @@ static void test_caps_mode(void) {
     caps_exit();
     CHECK(!sim_ctrl_held());
 
+    reset_engine();
+}
+
+/* caps/testcase.md「模式内键不进引擎」：模式内按 `d`（Normal 下的操作符）**只发 `Ctrl+D`**，
+ * 且**不产生**引擎 pending（原用例只查"模式未变"，未查发出流与 `kv_pending()`）。 */
+static void test_caps_mode_operator_no_pending(void) {
+    reset_engine();
+    kv_set_mode(KV_MODE_NORMAL);
+    CHECK(kv_pending() == false);
+    caps_enter();                          /* 进模式不改变 vim/pending */
+    CHECK(kv_pending() == false);
+
+    CHECK(pipeline(KC_D, true) == false);
+    /* 发出的流**恰好**是 Ctrl+D：只登记了 Ctrl 与 D，没有别的键 */
+    CHECK(s_reg_n == 2 && s_reg[0] == KC_LCTL && s_reg[1] == KC_D);
+    CHECK(s_mods == 0x01);                 /* 只带 Ctrl，没有其它修饰位 */
+    CHECK(kv_pending() == false);          /* 引擎没有看到 d -> 无 pending */
+    CHECK(kv_get_mode() == KV_MODE_NORMAL);
+
+    CHECK(pipeline(KC_D, false) == false);
+    CHECK(s_reg_n == 0);
+    CHECK(kv_pending() == false);
+    caps_exit();
+    CHECK(kv_get_mode() == KV_MODE_NORMAL);
     reset_engine();
 }
 
@@ -695,6 +729,25 @@ static void test_caps_ctrl_bitmodel(void) {
     (void)pipeline(KC_LCTL, true);       /* 物理 Ctrl 也按下 */
     (void)pipeline(KC_LSFT, false);
     CHECK(s_mods & 0x01);
+    /* P1-2 补（caps/testcase.md「物理 Ctrl 按+抬（合成位保持）」的"然后按 d"）：
+     * 进模式 -> 按 c（合成 Ctrl+C）-> 按/抬物理 Ctrl -> 按 d。
+     * 注意 design §3.1-3：物理 Ctrl 抬起时 QMK 会在同一事件内清掉共享位，已按住的 c 会暂时
+     * 失去 Ctrl（testcase 该行"合成位不被卸掉"的措辞与 design 不符）；本层能保证的是
+     * **下一个**非 F 键重新自注册 Ctrl，即 d 仍以 Ctrl+D 发出。 */
+    reset_engine();
+    (void)pipeline(KC_CAPS, true);
+    (void)pipeline(KC_C, true);       /* 合成 Ctrl，c 持续按住 */
+    CHECK(sim_held(KC_LCTL) && sim_held(KC_C));
+    (void)pipeline(KC_LCTL, true);    /* 物理 Ctrl 按下（两沿透传 QMK） */
+    (void)pipeline(KC_LCTL, false);   /* 物理 Ctrl 抬起：QMK 清共享位 */
+    CHECK(sim_held(KC_C));            /* c 仍未松 */
+    CHECK((s_mods & 0x01) == 0x00);   /* design §3.1-3：已按住的键暂时失去 Ctrl（共享位被清） */
+    (void)pipeline(KC_D, true);       /* 下一个非 F 键必须重新自注册 Ctrl */
+    CHECK((s_mods & 0x01) && sim_held(KC_D));   /* 用位图判定：owned 闩锁被清 -> 重新注册 */
+    (void)pipeline(KC_D, false);
+    (void)pipeline(KC_C, false);
+    (void)pipeline(KC_CAPS, false);
+    CHECK(s_mods == 0x00);
     /* P0-S：模式内点按物理 RCTL -> 退出后不得残留 RCTL 位 */
     reset_engine();
     (void)pipeline(KC_CAPS, true);
@@ -712,6 +765,21 @@ static void test_caps_ctrl_bitmodel(void) {
     (void)pipeline(KC_CAPS, false);  /* 退出 */
     CHECK(s_mods & 0x01);            /* 物理位必须保留 */
     (void)pipeline(KC_LCTL, false);
+    /* FIX-1 反序补（caps/testcase.md「物理 Ctrl 已在按住」）：**先物理 Ctrl、再进模式**，
+     * 退出时物理仍按住 -> 不得反注册，且模式内不得再合成第二个 Ctrl。
+     * 现有 FIX-1 是反序（先合成、后物理）；test_adapter_regress 的同序用例在模式内就松开了。 */
+    reset_engine();
+    (void)pipeline(KC_LCTL, true);    /* 物理 Ctrl 已在按住（放行即注册） */
+    CHECK(s_mods & 0x01);
+    (void)pipeline(KC_CAPS, true);    /* 进模式：记录"物理 Ctrl 已在位" */
+    (void)pipeline(KC_D, true);       /* 模式内非 F 键：不得重复合成第二个 Ctrl */
+    CHECK(s_reg_n == 2 && s_reg[0] == KC_LCTL && s_reg[1] == KC_D);
+    CHECK(sim_held(KC_D));
+    (void)pipeline(KC_D, false);
+    (void)pipeline(KC_CAPS, false);   /* 退出：物理 Ctrl 仍按住 -> 不得反注册 */
+    CHECK(s_mods & 0x01);
+    (void)pipeline(KC_LCTL, false);
+    CHECK(s_mods == 0x00);
     /* FIX-2 release 路：双侧物理 Ctrl（RCTL 先松）后 ctrl_n 归零 -> 物理 LCTL 不得被误清。杀 A6。 */
     reset_engine();
     (void)pipeline(KC_CAPS, true);
@@ -906,6 +974,7 @@ int main(void) {
     test_visual_cancel_all_paths();
     test_visual_count_passthrough();
     test_caps_mode();
+    test_caps_mode_operator_no_pending();   /* caps/testcase.md「模式内键不进引擎」 */
     test_caps_trigger();
     test_caps_ctrl_bitmodel();
     test_caps_overflow_clean();
