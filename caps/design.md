@@ -18,9 +18,9 @@
 | 状态 | 含义 |
 | :--- | :--- |
 | `s_caps_armed` | `Caps` 按下时未按 `Fn`（→ 走 Caps 模式语义）；`false` 表示这是 `Fn+Caps`（release 时开关 vim） |
-| `s_caps_touched` | 本次 `Caps` 按下期间是否已按过其它键（决定快速抬起时是否撤销） |
+| `s_caps_touched` | 本次 `Caps` 按下期间是否已按过其它键（仅记录）。**现行实现不读取该值**：撤销与正常退出都调用同一条 `caps_mode_exit()`——未夹键时 held 表为空，两者效果等价 |
 | `s_caps_mode` | 模式是否激活 |
-| `s_caps_held[]` / `s_caps_held_n` | 本模式**实际注册过**的键码有界表（用于退出时全部反注册；容量固定，溢出时该键仍会发出，只是退出时不保证被强制释放） |
+| `s_caps_held[]` / `s_caps_held_n` | 本模式**实际注册过**的键码有界表（用于退出时全部反注册；容量固定，表满时新键**既不注册也不发出**，见 §3.1-5） |
 | `s_caps_ctrl_n` | 非 F 键按下计数（Ctrl 的引用计数） |
 | `s_caps_was_pressed` | `Caps` 是否确实按下过（孤立 release 守卫，§3.1-6） |
 | `s_caps_ctrl_owned` | 本模式**确实注册过哪些** Ctrl 键码（LCTL/RCTL 位掩码；只有对应位才反注册） |
@@ -40,10 +40,11 @@ Caps press  -> 若 Fn 层在按下这一刻已激活：
                  s_caps_armed = true；s_caps_touched = false
                  立即进入 Caps 模式（记录物理 Ctrl 状态、清空 held 表与计数）
                消费该 press（配对表）
-模式内按键  -> 每按一个键置 s_caps_touched = true（见 §4），并正常注册/反注册
-Caps release-> 若 !s_caps_armed（Fn+Caps）：set_vim_enabled(!vim_enabled())  // 单击开关 vim
+模式内按键  -> 每按一个键（层键/非基础键码等豁免键除外，见 §3.1-4）置 s_caps_touched = true（见 §4），并正常注册/反注册
+Caps release-> 若 !s_caps_armed（Fn+Caps，且本次确有 press，见 §3.1-6）：set_vim_enabled(!vim_enabled())
                否则若 !s_caps_touched：撤销本次进入（反注册 held 表 + Ctrl）
                否则：正常退出（反注册 held 表 + Ctrl）
+               // 现行实现把"撤销"与"正常退出"合并为同一次 caps_mode_exit()：未夹键时 held 表为空，结果等价
 ```
 
 - **不等 `hold_ms`**：进入发生在按下瞬间，因此"按下 Caps 后立刻按 1"必然是 `F1`（而不是 Normal 的计数）。
@@ -68,6 +69,9 @@ Caps release-> 若 !s_caps_armed（Fn+Caps）：set_vim_enabled(!vim_enabled()) 
    （两沿都由本模式吞掉，宿主收不到任何键）。**不能透传给 QMK** —— 否则该键会被 §2.1 快捷键表或
    vim 引擎劫持（第 3 轮 K/O2：第 13 键按 `Space` 会发成裸 `→`、按 `d` 会执行 `dd` 删行）。
    绝不出现"注册了但没记表"的键——那是退出时无法反注册的卡键来源。
+   **物理 Ctrl 例外**：表满时按下的 `LCTL`/`RCTL`，其 press 被吞（入配对表），但 release 仍按 §4
+   的 Ctrl 特例交回 QMK，并 `pair_drop` 掉该配对——否则宿主 Ctrl 位会永久卡住。
+   即"两沿都由本模式吞掉"只对非 Ctrl 键成立。
 6. **release 守卫**：`Caps` release 只在**本次按下被本层接管过**时才处理（无 press 的孤立 release 无效果）。
 
 ## 4. 模式内按键翻译
@@ -83,24 +87,29 @@ press   base = keycode & 0xFF（QMK 基础键码）
 Ctrl 键（LCTL/RCTL）特例：**press 与 release 两沿都交回 QMK**（本层不消费、不入配对表），
         只更新 phys_ctrl / phys_ctrl_held 基线。理由：真机修饰键是位图，若本层吞掉它的 release，
         QMK 永远收不到释放 -> 位永久卡住（第 4 轮 P0-1）。
+        （唯一例外：held 表已满时其 press 先被 §3.1-5 溢出规则吞掉并入配对表，release 再 `pair_drop`。）
 否则 sent = fkey != KC_NO ? fkey : base
         若该键不在 held 表（press 早于进入 / 属上一实例）: 交配对表消费，结束
         unregister(sent)
         若为 F 键：无 Ctrl 动作
         否则      : ctrl_n--
-                     若 ctrl_n == 0 且 ctrl_owned -> unregister(Ctrl); ctrl_owned = false
+                     若 ctrl_n == 0 且 ctrl_owned 的对应位为真 且该位未被物理 Ctrl 占用
+                       -> unregister(该位 Ctrl); 清除 ctrl_owned 对应位
 ```
 
 > **注意**：Ctrl 的注册条件是 `(!phys_ctrl && !ctrl_owned)` 而**不是** `ctrl_n == 1`——这样"物理 Ctrl
-> 中途松开、但仍有非 F 键按住"时，下一个非 F 键会重新注册 Ctrl（第 2 轮 P0-2）。反注册则只依据
-> `ctrl_n == 0 && ctrl_owned`，保证不误卸物理按住的 Ctrl（第 2 轮 P0-3）。
+> 中途松开、但仍有非 F 键按住"时，下一个非 F 键会重新注册 Ctrl（第 2 轮 P0-2）。反注册的条件是
+> `ctrl_n == 0 && ctrl_owned` 的对应位为真 **且该位当前未被物理 Ctrl 占用**（`s_caps_phys_ctrl_held`，
+> **逐位**判断）——只按 `ctrl_n == 0 && ctrl_owned` 会在"先合成 Ctrl、再物理按住同侧 Ctrl"时把物理位
+> 一起清掉（第 4 轮 P1-2、第 7 轮 P2-1；与 §2 `s_caps_phys_ctrl_held`、§4.3 不变量 3 一致）。
 
 **不变量**
 
 1. **F 区不带 Ctrl**：F 键路径完全不碰 Ctrl（既不注册也不因它改变引用计数）。
 2. **修饰键对称**：模式内注册过的修饰键，在它自己的 release 上原样反注册（不会把物理按住卸掉）。
 3. **退出必清**：退出模式时，`s_caps_held[]` 中记录的所有键一律反注册（即使其 release 尚未到达）；
-   Ctrl 仅当 `s_caps_ctrl_owned` 为真（本模式确实注册过）才反注册——否则会卸掉物理按住的 Ctrl。
+   Ctrl 仅当 `s_caps_ctrl_owned` 的对应位为真（本模式确实注册过）**且该位未被物理 Ctrl 占用**
+   （`s_caps_phys_ctrl_held`，逐位判断，见 §2）才反注册——否则会卸掉物理按住的 Ctrl。
 4. **不碰 vim**：模式期间不调用引擎、不改变 vim 开关/模式、不重置 pending（模式内的键根本没进引擎）。
 5. **边沿配对**：模式内被本层消费的 press，其 release 由共享配对表无条件消费（不会漏出孤立 release）。
 

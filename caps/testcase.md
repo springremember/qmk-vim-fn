@@ -9,9 +9,12 @@
 ## 0. 覆盖范围与限制（重要）
 
 **主机侧已可覆盖** Caps×Ctrl 交错（自 2a0c839 起）：`engine/test/glue/test_rgb.c` 的
-`pipeline()` 已建模"放行即注册/反注册"，`s_mods` 是真实 mods 位图；
-`test_caps_ctrl_bitmodel` 含 10 条由**变异验证**过的判别用例（退出/release 守卫、合成条件、
-F 键引用计数、溢出容量与配对、非基础键码豁免、hook 可视作废等）。
+`pipeline()` 已建模"放行即注册/反注册"，`s_mods` 是真实 mods 位图。
+该提交补齐的 10 条（FIX-1..10）判别用例**分布在各套件中，并非集中在 `test_caps_ctrl_bitmodel`**：
+`test_caps_ctrl_bitmodel` 含 FIX-1..4（退出/release 守卫、合成条件、F 键引用计数）；
+溢出容量与配对（FIX-5/6）在 `test_caps_overflow_clean`；非基础键码豁免（FIX-7）在 `test_caps_cleanup`；
+hook 吞键作废可视输入（FIX-8）在 `test_glue.c::test_visual_cancel_hook_swallow`；
+FIX-9/10 是引擎用例（`engine/test/test_main.c`），与 Caps 无关。
 
 **仍只能实机验证**的是**宿主语义**（非本层能决定）：
 1. `Shift+Home`/`Shift+End`/`Shift+↓` 在各编辑器是否按"扩展选区/保持列"解释（行选近似的前提）；
