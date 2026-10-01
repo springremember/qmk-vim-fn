@@ -423,14 +423,21 @@ DEVIATIONS = {
     'D14':    '$x / Gx off-by-one at EOL / buffer end: host cannot express "on the char" (design §4.4)',
     'D15':    'J inserts a space on an empty next line and does not strip leading whitespace (design §4.4)',
     'D16':    'empty host selection (failed motion / motion at line start) makes Ctrl+X/C cut or copy the whole line (design §4.4)',
-    'D17':    'cgg at line 0 cuts the line instead of leaving a blank line (anchor direction) (design §4.4)',
+    # RESOLVED (2026-09, historical): `cgg` on line 1/2/3 now matches real Vim exactly (verified).
+    # No case cites it any more; kept so the numbering stays stable.
+    'D17':    'RESOLVED/historical: cgg at line 0 used to cut the line instead of leaving a blank line (design §4.4)',
     'D18':    'insert-entry + Esc off-by-one: a host insert cursor does not move left on Esc (design §4.4, keymap layer)',
     'IND':    'indent leaves the cursor at the edit point, not the first non-blank of the range first line (design §4.4 ①②③)',
     'PASTEC': 'dd on the last line / linewise p,P leave the cursor at the pasted text end (design §4.4)',
     'EOLDEL': 'after deleting at EOL the host cursor sits on the newline; Vim moves left (design §4.4)',
     'VCAP': 'charwise VISUAL offset cap (KV_VCHAR_MAX_OFF 100): past the cap the engine refuses to extend, so a counted motion can select less than Vim (design §4.9)',
-    'VBLOCK': 'OPEN (real defect, not yet fixed): after j/k the host cursor keeps the +1 column offset, so a vertical (blockwise) charwise-VISUAL selection is one column wider than Vim -> yank/delete covers an extra column',
-    'VPASTE': 'OPEN (deviation, not yet documented/fixed): Vim visual p/P writes the REPLACED text into the unnamed register; the host Ctrl+V does not, so the register differs',
+    # FIXED by D24 (2026-09): the +1 column offset after `k` made a vertical charwise-VISUAL selection
+    # cover the wrong column.  Verified: vky/vkd/vkx match real Vim (44 FIXED / 0 REGRESSED).
+    'VBLOCK': 'FIXED by D24: after k the +1 column offset made a vertical charwise-VISUAL selection one column off (design §4.9)',
+    # INHERENT, documented in design §4.9: the register must hold the text that occupied the selection
+    # BEFORE the paste, but the host has a single clipboard slot which the paste consumes first.
+    # Measured: vhp/vlp/vwp/vjp buffer is always correct, only the register differs; `P` matches Vim.
+    'VPASTE': 'INHERENT (design §4.9): Vim visual p writes the REPLACED text into the register; single host clipboard cannot (buffer stays correct, only the register differs)',
     'D23': 'linewise VISUAL Esc lands on the first line/column 0 of the selection; the host used to stay at the active line end (fixed 2026-09, design §4.9)',
     'FAILMOT': 'a motion that FAILS in Vim (k on line 1, j on the last line) aborts the operator; the host arrow keys only clamp, so d/c/> still act (design §4.4)',
     'GPFX':   'only the g->gg prefix is implemented; other g/Z continuations are swallowed (design §4.4)',

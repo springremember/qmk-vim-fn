@@ -790,3 +790,19 @@ Vim 也**不**改写，所以 `vhP`/`vlP`/`vllP` 全对。
 
 **教训（已写入 engineering-spec §1.4）**：子代理的「无收益」结论**未被父级复验就转述**了一次，
 而它恰恰是错的 —— 复验不能省。
+
+### 7.36 清理测试侧陈旧文案 + 订正 spec「无法复现」的一条
+
+- `engine/test/host/matrix.py`：`DEVIATIONS['D17']`（`cgg`@行 0）—— 实测 L1/L2/L3 上 `cgg`/`cggx`
+  与真实 Vim **完全一致**，该偏差**已不复存在**，标为 RESOLVED/historical（编号保留以免引用悬空）；
+  `['VBLOCK']` 文案由「OPEN (real defect, not yet fixed)」改为「**FIXED by D24**」并附验证；
+  `['VPASTE']` 由「OPEN (not yet documented)」改为「**INHERENT（design §4.9 已记录）**」并附证明要点
+  与实测（`vhp`/`vlp`/`vwp`/`vjp` 缓冲区均正确、仅寄存器不符；大写 `P` 与 Vim 一致）。
+- `engine/test/host/kvhost.py:29-30`：注释仍写「`dd` = Ctrl+X + Backspace needs two undos」——
+  现行 `dd` 是**单次宿主编辑**（`Home,Home,Shift+End,Shift+Right,Ctrl+X`），一次 `u` 完整恢复
+  （`ddu`/`3ddu` 已对 vim.tiny 验证），注释已更正。
+- `qmk/engineering-spec.md` §5.2：「NUT65 删死代码 −20 B **无法复现**」是**错的** —— 归档标签本身就是
+  证据：`v2.39` 的 bin = 82860 B、`v2.40` = 82840 B，差值 −20 B。已改为「已复验为真、可直接引用」，
+  并记下教训：**标"无法复现"之前先查归档/标签里是否已有证据**。
+
+以上均为测试/文档改动，`engine/src` 未变 ⇒ V2.42 / V2.35 归档仍逐字节有效，只同步指针。

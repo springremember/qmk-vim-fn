@@ -26,8 +26,9 @@ the independent audit's `ih.py`):
     Shift+Tab -> outdent.
   * Shift+Enter inserts '\n'.
   * any other printable key inserts its char (for passthrough/insert tests).
-  * undo stack: one snapshot per host edit (so `dd` = Ctrl+X + Backspace needs
-    two undos).
+  * undo stack: one snapshot per host edit.  NB: `dd` is now a SINGLE host edit
+    (`Home,Home,Shift+End,Shift+Right,Ctrl+X`, see command.c), so one `u` fully
+    restores it -- verified against vim.tiny (`ddu`/`3ddu` match).
 
 The vim ground truth uses the exact known-correct recipe:
     /usr/bin/vim.tiny -Nu NONE -N -es -c 'set nofixendofline' \
