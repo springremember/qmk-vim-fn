@@ -457,16 +457,6 @@ void kv_emit_delete_to_eol(void) {
     kv_emit_tap(KV_LCTL_KC(KV_X));
 }
 
-/* 复制后补 Esc：宿主在 Ctrl+C 后保留高亮选区，不取消则下一个键会替换刚复制的内容
- * （实测 `yy` 后按 `x` 会删掉整行 = 数据损坏）。 */
-void kv_emit_yank_to_eol(void) {
-    s_reg_linewise = true;  /* 真实 Vim 的 `Y` ≡ `yy`（行级） */
-    kv_emit_tap(KV_LSFT_KC(KV_END));
-    kv_emit_tap(KV_LCTL_KC(KV_C));
-    kv_emit_tap(KV_ESC);
-    kv_emit_tap(KV_HOME);   /* Vim 的 y$ 不移动光标（列无法恢复，回到列 0） */
-}
-
 /* C/D/Y 带计数：选区 = [光标, 下面第 n-1 行的行尾]（真实 Vim 的 `dN$`）。 */
 static void emit_eol_range(int n) {
     kv_emit_tap(KV_LSFT_KC(KV_END));
@@ -478,7 +468,6 @@ static void emit_eol_range(int n) {
 
 void kv_emit_delete_to_eol_n(int n) { if (n < 1) n = 1; s_reg_linewise = false; emit_eol_range(n); kv_emit_tap(KV_LCTL_KC(KV_X)); }
 void kv_emit_change_to_eol_n(int n) { if (n < 1) n = 1; s_reg_linewise = false; emit_eol_range(n); kv_emit_tap(KV_LCTL_KC(KV_X)); kv_emit_enter_insert(KV_I); }
-void kv_emit_yank_to_eol_n(int n)   { if (n < 1) n = 1; s_reg_linewise = true;  emit_eol_range(n); kv_emit_tap(KV_LCTL_KC(KV_C)); kv_emit_tap(KV_ESC); kv_emit_tap(KV_HOME); }
 
 void kv_emit_visual_enter(void) { kv_emit_tap(KV_LSFT_KC(KV_RGHT)); }
 
