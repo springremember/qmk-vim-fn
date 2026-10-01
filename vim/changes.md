@@ -860,3 +860,19 @@ engine 778 断言、10 个 glue 套件全绿。
 由 Caps 模块接管、不进入 myfn 分发」在 glue 套件中**完全无断言**（`test_rgb.c` 的 cfg `myfn_declared=NULL`；
 `test_glue.c` 的 Caps 用例在模式激活期间从不 `fn_on()`）。另有 5 条不变量只被**部分**断言
 （如 `:70` 只查模式不变、**从不查 `kv_pending()`**；`:51` 从不按后续字母组组合）。
+
+### 7.40 Caps 覆盖补齐 + 修正一条**为假**的文档不变量
+
+**补测**（`43bcf99`，只加测试/改文档）：独立核验发现 6 处"文档说有、实际没测"的 Caps 行为，现全部补上
+并逐条变异验证（7 条 CAUGHT，1 条 SURVIVED 经论证为等价变异 —— 进入时的物理 Ctrl 快照在可达状态
+空间内是防御性冗余）。其中**最重要的一条**是 `caps/testcase.md:84`「**拦截优先**」：Caps 模式激活时
+myfn 已声明键必须被 Caps 模块接管、不得进入 `myfn_process`；此前在 glue 套件中**完全无断言**
+（`test_rgb.c` 的 cfg `myfn_declared=NULL`，`test_glue.c` 的 Caps 用例在模式内从不 `fn_on()`）。
+新测试采用"**先 Caps 进模式、再 `fn_on()`**"——因为 Fn 已按住时 Caps 是开关 vim 而非进模式。
+**父级独立复核**：我自己在 `caps_mode_process` 顶部插入 `if (fn_layer_active()) return false;`，
+新断言 `test_glue.c:1114/1115/1119` **确实变红**（glue 678/3）⇒ 该测试有真实区分力，不是摆设。
+
+**修正一条为假的文档不变量**：`caps/testcase.md` 原「物理 Ctrl 按+抬（合成位保持）」行声称
+「`c` 未松期间合成 Ctrl 不被卸掉」——**与实测和 `caps/design.md` §3.1-3 都矛盾**：实际是
+按/抬物理 Ctrl 会把**已按住键**的合成 Ctrl 卸掉（QMK 共享位在同一事件内清位，本层无法追补），
+重新注册只对**之后**按下的键生效 ⇒ `d` 带 Ctrl、`c` 不带。已按实测改写该行（引用仍为 §3.1-3）。
