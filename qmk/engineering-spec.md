@@ -180,6 +180,10 @@ python3 test/mutants/run.py --quiet           # 只留汇总
 | `test_pending_clear_probe`（pending-clear） | 24 | `test_adapter_regress`（adapter-regress） | 48 |
 | `test_strict_clear_falsify`（strict-clear-falsify） | 153 | `test_adapter_regress2`（adapter-regress2） | 67 |
 
+> **复测（2026-10-01，HEAD `05c3ad5`，`make verify-all` 全绿）**：表内是 HEAD `927ecb1` 的时点值；
+> 中间提交增补断言后已有两个套件变化 —— `test_glue` 671 → **681**、`test_rgb` 377 → **414**，
+> 十套件合计 2592 → **2639**（其余套件不变）。判据不变：**10 个套件全部 `fail=0`**。
+
 > ⚠️ **`make glue-test` 会改写两个已跟踪的二进制**：`engine/test/glue/test_adapter_regress`
 > 与 `engine/test/glue/test_adapter_regress2`（`engine/Makefile:21-27` 对 `GLUE_TESTS`
 > 逐个 `-o test/glue/$$t` 覆盖）。
@@ -219,12 +223,15 @@ make -C engine verify-all VERIFY_GATES="test glue-test"    # 只跑子集（自�
     `engine/.swp`/`.swpx`）**只提示、不判失败**；
   - 运行前**已存在**的其它跟踪改动**一律不碰**，只在汇总后提示 —— 因此 `verify-all` 可以安全地
     在脏工作区上运行，不会吞掉用户未提交的工作。
-- **实测（2026-10-01，HEAD `35b24d2` + 引入本目标的提交，工作区另有两处未提交文档改动）**：
-  四道门禁 **4/4 OK** —— `test` 1.7 s、`glue-test` 12.3 s、`matrix-test` 205.3 s、
-  `mutation-test` 43.8 s，**总墙钟 263.0 s**（matrix-test 占大头）。判定数字与 §2①②③④ 完全一致：
-  `pass=784 fail=0`、10/10 `fail=0`、`KNOWN-FAIL 0 NEW-FAIL 0`、`CAUGHT 15 / EQUIVALENT 1 /
-  SURVIVED 0`。该次运行期间我在并行编辑跟踪文档，收尾自证**按设计拒绝报绿**（这正说明自证项生效）；
-  提交后在工作区干净时重跑，汇总同样 4/4 OK 且退出码 0。
+- **实测（2026-10-01）**：四道门禁 **4/4 OK**，判定数字与 §2①②③④ 完全一致 ——
+  `pass=784 fail=0`、10/10 `fail=0`、`KNOWN-FAIL 0 NEW-FAIL 0`、
+  `CAUGHT 15 / EQUIVALENT 1 / SURVIVED 0`。
+  - **工作区干净（HEAD `05c3ad5` = 引入本目标的提交）**：退出码 **0**；`test` 1.7 s /
+    `glue-test` 12.5 s / `matrix-test` 209.3 s / `mutation-test` 45.3 s，
+    **总墙钟 268.8 s**（matrix-test 占大头）；无任何提示行，收尾 `git status` 干净。
+  - **脏工作区（HEAD `35b24d2` + 未提交的跟踪文档改动）**：四道门禁同样 4/4 OK（总墙钟 263.0 s），
+    但该次运行期间我在并行编辑跟踪文档，收尾自证检测到"新增的跟踪改动" ⇒ **拒绝报绿**；
+    运行前已存在的改动未被触碰。即"门禁结果"与"收尾自证"是两件事，自证项确实生效。
 
 ---
 
