@@ -1,0 +1,32 @@
+# GitHub Actions：push / PR 时跑完整门禁（qmk/engineering-spec.md §2.1）。
+#
+# ⚠️ 本文件**未经验证**：作者无法在本机执行 GitHub Actions，从未运行过这个 workflow。
+# 它只做一件事 —— 在干净的 ubuntu runner 上执行 `make -C engine verify-all`（顺序固定、
+# 首个失败即停）。依赖只有 python3、真实 /usr/bin/vim.tiny（Ubuntu 包 `vim-tiny`）与宿主
+# C 编译器（build-essential）；**不需要** ARM 工具链 —— 这里只跑主机门禁，不编译固件。
+#
+# 判绿标准见 engineering-spec.md §2：test 784/0、glue-test 10/10、matrix-test 退出码 0
+# （KNOWN-FAIL 0 NEW-FAIL 0）、mutation-test CAUGHT 15 / EQUIVALENT 1 / SURVIVED 0。
+
+name: verify-all
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  verify-all:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: 安装宿主依赖（python3 已预装）
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends vim-tiny build-essential
+      - name: 报告 vim.tiny 版本（matrix-test 的 ground truth）
+        run: /usr/bin/vim.tiny --version | head -3
+      - name: 跑全部门禁
+        run: make -C engine verify-all
