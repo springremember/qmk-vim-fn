@@ -707,3 +707,25 @@ Vim 也**不**改写，所以 `vhP`/`vlP`/`vllP` 全对。
 与 Vim 的差异与 `NJ` 同类（截断类已知偏差），但结果**确定**而非随机半截。
 
 本提交为**文档先行**，实现与测试在下一次提交。
+
+### 7.33 带计数命令的键码预算：实现（规范见 §7.32）
+
+实现（`d66ddef`）：新增 `kv_emit_room()`（= `KV_CMD_KEY_BUDGET(250) − kv_emit_pending()`，下限 0）、
+`kv_emit_clamp_n(n, fixed, per)`（截断到 `fixed + per×n ≤ room`，下限 1）、`emit_taps_room()`
+（几何方向键组，预扣后续固定键）；`kv_emit_join_n` 改用同一机制。覆盖 `motion`/`emit_op_range`
+（含 `j`/`k`/`G`/`gg` 与调用方尾键）/`op_motion`/`line_op`/`indent_motion`/`indent_line`/
+`vline_move`/`vline_reanchor`/`visual_reanchor_*`/`visual_word_back_anchor`/`delete_char_n`/
+`backspace_char_n`/`substitute_n`/`emit_eol_range`/`paste_n`，以及 engine 层的 `vchar_move`/
+`vchar_motion` 各分支/`vline_move`/`Nu`/`N.` 回放/行选 Esc。
+
+**测试**（`test_main.c:1597 test_count_queue_accumulation`，用不 flush 的 `kv_kbd()`）：
+红 = `pass=715 fail=63`（仅回退 src、保留测试），绿 = **`pass=778 fail=0`**，既有 633 条断言原样通过。
+**变异 31 处：CAUGHT 29**，2 处 SURVIVED 经论证为等价变异（`b` 重锚的重复截断恒等；`C_G/default`
+分支只会以 n=1 到达）。
+
+**独立复核（父代理）**：把 `760b83a` 与实现后分别编译成探针，在 **446 条命令**（矩阵全部用例 +
+计数命令）上逐键比对发射流 ⇒ **445 条逐字节相同**，唯一差异 `v99w`（257 → 250 键，本来就在丢键）。
+故设计文档里的"最坏单命令"应以 `v99w` 为准，`99J`(248) 不是上界 —— 已同步修正 `design.md` §4.4。
+
+**残余**：预填 `pending ≥ 248` 时最小命令仍可能顶到 256，丢掉尾部纯装饰键（改文档键不丢）；
+真实 1 键/ms 排空下不可达，已如实写入 `design.md` §4.4。
