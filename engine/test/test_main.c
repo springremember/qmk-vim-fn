@@ -1683,6 +1683,22 @@ static void test_count_queue_accumulation(void) {
     budget_check(KV_CS(KV_LEFT), 0);
     budget_prep(240); kv_emit_vline_move(false, 99);
     budget_check(KV_LSFT_KC(KV_DOWN), 0);
+
+    /* (4b) 预算**下限**：room 连 `fixed+per` 都放不下时 `kv_emit_clamp_n` 必须取 **1** 而不是 0
+     * （design §4.4「宁可少做，绝不做半截」）。预填 249（room=1）后 `99X` / `99X`(前删) 的骨架
+     * 仍须发 1 次、尾部改文档键必须在；总长 251/252 仍 ≤ EMIT_CAP(256)，不会静默丢键。
+     * 这两条断言由变异门禁的 `budget-clamp-n-floor-zero` 记录钉住
+     * （此前只预填到 240，从未到达 room < fixed+per，是测试空洞）。 */
+    budget_prep(249); kv_emit_delete_char_n(99);
+    int p_del = kv_emit_pending();
+    CHECK(p_del == 251);                              /* 1×Shift+Right + Ctrl+X */
+    flush_emit();
+    CHECK(rec_at(p_del - 1) == KV_LCTL_KC(KV_X));     /* 改文档键一个不少 */
+    budget_prep(249); kv_emit_backspace_char_n(99);
+    int p_bsp = kv_emit_pending();
+    CHECK(p_bsp == 252);                              /* 1×Shift+Left + Ctrl+C + Backspace */
+    flush_emit();
+    CHECK(rec_at(p_bsp - 1) == KV_BSPC);
     /* 几何重锚序列：只要求整段发完且不到顶（选区大小随预算确定性截断）。 */
     budget_prep(240); kv_emit_vline_reanchor(true, 100, -100);   CHECK(kv_emit_pending() <= 250);
     budget_prep(240); kv_emit_visual_reanchor_left(50, 99);      CHECK(kv_emit_pending() <= 250);

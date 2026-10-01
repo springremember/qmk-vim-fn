@@ -876,3 +876,45 @@ myfn 已声明键必须被 Caps 模块接管、不得进入 `myfn_process`；此
 「`c` 未松期间合成 Ctrl 不被卸掉」——**与实测和 `caps/design.md` §3.1-3 都矛盾**：实际是
 按/抬物理 Ctrl 会把**已按住键**的合成 Ctrl 卸掉（QMK 共享位在同一事件内清位，本层无法追补），
 重新注册只对**之后**按下的键生效 ⇒ `d` 带 Ctrl、`c` 不带。已按实测改写该行（引用仍为 §3.1-3）。
+
+### 7.41 变异门禁：手工注入 → `make mutation-test`（声明式、可复现、自带还原）
+
+**动机**：§1.1 的变异验证此前靠手工「注入 → 跑套件 → 还原 → 记数」，不可复现、易漏还原
+（§7.33 的 31 处、§7.40 的 8 处都是一次性手工活）。本轮把它变成声明式的一条命令。
+
+**新增**（`engine/test/mutants/`）：
+
+- `mutants.txt`：**16** 条记录，每条 = `id` / `file` / `suite`（`engine`|`glue`）/ `equiv` /
+  `why` + `old`/`new` **整行文本**块。选自定义块格式而非 JSON：`old`/`new` 是整段 C 代码，
+  转义成 `\n` 会毁掉可读性与评审价值。`old` 必须与当前源码**逐字节唯一匹配**，
+  源码漂移即 drift 报错（退出码 2，不跑任何变异）。
+- `run.py`：施加替换 → 跑 `engine`（`make test`）或 `glue`（`make glue-test`）→ 分类
+  CAUGHT / SURVIVED / EQUIVALENT → **`finally` + SIGINT/SIGTERM 双保险还原**（信号时先终止
+  套件进程组，避免 `make` 在还原之后才写完文件）；收尾自证「被碰文件与运行前逐字节一致 +
+  `git status --porcelain` 无**新增**脏文件」，否则拒绝报绿；自动 `git checkout --` 还原
+  `make glue-test` 覆盖的两个已跟踪二进制（§2②）。选项 `--list` / `--only id[,id…]` /
+  `--suite` / `--quiet` / `--timeout SEC`；退出码 `0` 全绿 / `1` 有 SURVIVED / `2` 门禁自身错误 /
+  `130` 被中断。
+- `engine/Makefile`：`make mutation-test`（= `python3 test/mutants/run.py`）、`make mutation-list`。
+
+**实测**（HEAD `927ecb1` + 本提交，整轮 **≈50 s**）：16 条 ⇒
+**CAUGHT 15 / EQUIVALENT 1 / SURVIVED 0**，退出码 0。覆盖：键码预算
+（`kv_emit_room` 恒大、`kv_emit_clamp_n` 不截断、下限改 0 共 3 处）、D13/D19/D20（`y` 与 `Esc`
+各一）/D22/D23/D24 的关键键码与落点、`emit.c` 环形下标（入队/出队各一）、Caps 拦截优先级 +
+物理 Ctrl 退出/释放逐位守卫（后三条走 glue 套件，因为只有 glue 覆盖这些行为）。
+
+**门禁第一轮就查出一个真实测试空洞（已按 §1.1「补齐覆盖后重测」修掉）**：
+`budget-clamp-n-floor-zero`（把 `kv_emit_clamp_n` 的 `maxn < 1 → 1` 下限改成 `0`）首轮
+**SURVIVED** —— 既有预算测试只预填到 240（room=10），**从未**走到 `room < fixed+per`，
+于是 design §4.4「宁可少做，绝不做半截」的下限无人钉住。已在 `test_main.c:1686`
+（`test_count_queue_accumulation` 的 4b 段）补 6 条断言（预填 249/room=1 时 `99X` 与
+`99X`（前删）应发 251/252 键、尾部改文档键仍在），该变异随即 **CAUGHT**；
+`make test` 由 `pass=778` → **`pass=784 fail=0`**（`engineering-spec.md` §2① 同步更新）。
+
+**等价记录**（`equiv = yes`，SURVIVED 单列、不判失败）：`d19-outer-clamp-idempotent` ——
+引擎层外层 `kv_emit_clamp_n(n,2,1)` 与其后 `kv_emit_visual_word_back_anchor` 内部的同名夹取之间
+不发射任何键 ⇒ room 不变、夹取幂等，且 `n` 在该分支之后不再被使用；与 §7.33 已登记的
+「`b` 重锚重复截断恒等」是同一处。
+
+**不变更出货行为**：`engine/src/**` 与 `qmk/**` 与 HEAD `927ecb1` **逐字节相同**
+（变异只在 runner 内瞬时施加并还原；`git status --porcelain` 只剩本提交新增/修改的文件）。

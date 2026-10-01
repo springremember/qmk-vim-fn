@@ -43,6 +43,66 @@
   已登记的等价变异示例：`vim/changes.md` §7.33（31 处变异，29 CAUGHT，2 处论证等价）。
 - **容量型/结构性缺陷**（如键码撑爆队列）逻辑变异可能覆盖不到，必须另做**前后探针对照**（§1.5）。
 
+#### 1.1.1 自动化门禁 `make mutation-test`
+
+上面的手工流程（改坏 → 跑套件 → 还原 → 记数）已固化为**一条命令**，不再手工注入：
+
+```sh
+cd engine
+make mutation-test              # = python3 test/mutants/run.py（仅标准库、无交互）
+make mutation-list              # 只列记录
+python3 test/mutants/run.py --only d24-drop-up-flip,budget-room-unbounded
+python3 test/mutants/run.py --suite glue      # 只跑 glue 记录
+python3 test/mutants/run.py --quiet           # 只留汇总
+```
+
+- **记录表** = `engine/test/mutants/mutants.txt`（人类可编辑、diff 友好）。每条记录是一次
+  **整行文本替换**：
+
+  ```
+  mutant <id>                     # 稳定、全局唯一的 id
+  file = engine/src/command.c     # 仓库相对路径
+  suite = engine | glue           # engine = make test；glue = make glue-test
+  equiv = no | yes                # yes = 已论证的等价变异（SURVIVED 不判失败）
+  why = <改坏什么行为；equiv=yes 时写等价性论证>
+  old
+  <逐行原文：必须与当前源码逐字节一致且唯一匹配，否则门禁 drift 报错、退出码 2>
+  new
+  <替换文本（可为空 = 整段删除）>
+  end
+  ```
+
+  选自定义块格式而不是 JSON：`old`/`new` 是整段 C 代码，转义成 `\n` 会同时毁掉
+  **可读性**与**评审价值**（评审者要能直接看到补丁本身）。块内每行自带结尾换行，
+  所以补丁永远是整行替换，不会吃掉/留下半行。
+- **分类**（每条独立施加、独立还原）：
+  - **CAUGHT**：套件非 0 退出（断言红**或编译失败**）⇒ 该行为被测试钉住；
+  - **SURVIVED**：套件全绿且未标 `equiv` ⇒ **门禁退出码 1**（要么改法无意义、要么测试太弱）；
+  - **EQUIVALENT**：标了 `equiv = yes` 的记录 SURVIVED ⇒ 汇总里单列，**不**判失败；
+    若标了 `equiv` 却被 CAUGHT，照常记 CAUGHT（说明等价性声明已过期，需重审 `why`）。
+- **还原是硬保证**：替换前先存原字节；`finally`、SIGINT/SIGTERM 处理器都还原，并会终止
+  正在跑的套件进程组（避免 `make` 在我们还原之后才写完文件）。收尾自证
+  「每个被碰文件与运行前**逐字节一致** + `git status --porcelain` 无**新增**脏文件」，
+  不满足则**拒绝报绿**（退出码 2）。`make glue-test` 覆盖的两个已跟踪二进制
+  （§2②）由 runner 自己 `git checkout --` 还原，绝不留给人工。
+- **CI 语义**：无提示、无交互；执行顺序 = 记录顺序（确定性）；退出码
+  `0` 全绿 / `1` 有 SURVIVED / `2` 门禁自身错误（漂移、脏工作区、无法解析、超时）/
+  `130` 被 SIGINT 中断；`--timeout SEC` 防止变异把套件改成死循环时挂住 CI。
+- **加一条变异**：在 `mutants.txt` 末尾复制一组 `mutant … end`，把 `old` 从当前源码
+  **逐字**粘进去即可 —— 一行代码都不用改（见本节末的实测清单）。
+- **实测（2026-10-01，HEAD `927ecb1` + 本提交）**：16 条记录 ⇒
+  **CAUGHT 15 / EQUIVALENT 1 / SURVIVED 0**，整轮 **≈50 s**（engine 13 条 × ~1.7 s，
+  glue 3 条 × ~9 s；`make matrix-test` 的 ~2 min 不参与）。覆盖：键码预算
+  （`kv_emit_room`/`kv_emit_clamp_n`）、D13/D19/D20/D22/D23/D24 的关键键码与落点、
+  环形下标、Caps 拦截优先级与物理 Ctrl 守卫。
+- **门禁第一次运行就查出一个真实测试空洞（已按本节"补齐覆盖后重测"处理）**：
+  `budget-clamp-n-floor-zero`（`kv_emit_clamp_n` 的 `maxn < 1 → 1` 下限改成 `0`）首轮
+  **SURVIVED** —— 既有预算测试只预填到 240（room=10），**从未**走到 `room < fixed+per`，
+  于是"预算不够时至少做 1 次、绝不半截"这条 design §4.4 契约无人钉住。已在
+  `test_main.c:1686` 补 6 条断言（预填 249/room=1 时 `99X`/`99X`（前删）应发 251/252
+  键且尾部改文档键仍在），该变异随即 **CAUGHT**（`pass=784 fail=0`，§2①同步更新）。
+  等价记录 `d19-outer-clamp-idempotent`（外层夹取与内层同名调用幂等）的论证见记录表 `why`。
+
 ### 1.2 与真实 Vim 对照（ground truth）
 
 - 唯一基准：**`/usr/bin/vim.tiny`**（本机 VIM 9.1、无 `+eval`；`vim.tiny --version` 实测
@@ -100,9 +160,9 @@
 
 全部在 **`engine/`** 目录下执行。任一条不满足 = 未完成。
 
-| # | 命令 | 判据 | 实测（2026-10-01，HEAD `7be99d1`，工作区干净） |
+| # | 命令 | 判据 | 实测（2026-10-01，HEAD `927ecb1`，工作区干净） |
 |---|:---|:---|:---|
-| ① | `make test` | `fail=0`，退出码 0 | `pass=778 fail=0` |
+| ① | `make test` | `fail=0`，退出码 0 | `pass=784 fail=0`（补齐 §1.1.1 发现的预算下限空洞后：原 778 + 6 条断言） |
 | ② | `make glue-test` | **10** 个套件全部 `fail=0` | 见下表，合计 2592 断言 |
 | ③ | `make matrix-test` | 退出码 0；`KNOWN-FAIL 0`、`NEW-FAIL 0`，且无 XFAIL 条目沦为 XPASS | `TOTAL 598 PASS 405 XFAIL 193 KNOWN-FAIL 0 NEW-FAIL 0`，退出码 0 |
 
@@ -122,11 +182,16 @@
 > 收尾必须 `git checkout -- engine/test/glue/test_adapter_regress engine/test/glue/test_adapter_regress2`
 > 还原，且**不得暂存**（`git status --porcelain` 必须干净）。
 > 其余套件二进制在仓库根 `.gitignore:1-12` 里，不会被跟踪。
+> 经 `make mutation-test` 驱动时由 runner 自己还原（§1.1.1），手工跑 `make glue-test` 才需要人工还原。
 
 **③ 的输出细节**：`matrix.py` 只在**非空**时打印 `XPASS ...` / `NEW FAILURES ...` / `FIXED ...`
 行（`engine/test/host/matrix.py:688-711`），所以"绿"的输出里**没有** `XPASS 0` 这个字样；
 判绿看**退出码 0** 与 `KNOWN-FAIL 0 NEW-FAIL 0`，以及没有 `XPASS (in the xfail table ...)` 行。
 退出码公式：`return 1 if (unknown or xpasses or fixed) else 0`（`matrix.py:724`）。
+
+**④ 变异验证**（`make mutation-test`，§1.1.1）：**16** 条记录全绿 ——
+`CAUGHT 15 / EQUIVALENT 1 / SURVIVED 0`，退出码 0，整轮 **≈50 s**；
+判据、记录格式与"如何加一条"见 §1.1.1（记录表 `engine/test/mutants/mutants.txt`）。
 
 ---
 

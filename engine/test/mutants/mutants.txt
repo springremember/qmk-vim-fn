@@ -1,0 +1,257 @@
+# engine/test/mutants/mutants.txt —— 声明式变异记录表（mutation gate）
+#
+# 每条记录 = 一次「把实现改坏」的整行文本替换；runner（run.py）施加替换、跑套件、
+# 分类 CAUGHT / SURVIVED，然后**无条件还原**。
+#
+# 格式（人类可编辑、diff 友好；不用 JSON 是因为 old/new 里全是多行 C 代码，
+# 转义成 \n 会毁掉可读性与评审价值）：
+#
+#   mutant <id>          记录开始；id 稳定、全局唯一
+#     file  = <仓库相对路径>
+#     suite = engine | glue        （engine = make test；glue = make glue-test）
+#     equiv = no | yes             （yes 表示已知等价变异，SURVIVED 不算失败）
+#     why   = <一句话>              （必填：破坏什么行为；equiv=yes 时是等价性论证）
+#     old
+#       <逐行原文，必须与当前源码逐字节一致且唯一匹配，否则 drift 报错>
+#     new
+#       <替换后的逐行文本；允许为空（删除整段）>
+#     end
+#
+# 语义：每个块里的一行都自带结尾换行，因此补丁**永远是整行替换**，不会吃掉/留下半行。
+# 加一条变异 = 复制一组 `mutant … end` 填进去（见 qmk/engineering-spec.md §1.1）。
+
+mutant budget-room-unbounded
+file = engine/src/command.c
+suite = engine
+equiv = no
+why = 键码预算失效：room 恒为 1<<20 ⇒ 所有带计数发射器都不再截断，队列被撑到 EMIT_CAP=256 后静默丢键（命令半截执行 = 数据损坏）。
+old
+int kv_emit_room(void) {
+    int room = KV_CMD_KEY_BUDGET - kv_emit_pending();
+    return (room > 0) ? room : 0;
+}
+new
+int kv_emit_room(void) {
+    return 1 << 20;   /* 变异：假装预算永远够 */
+}
+end
+
+mutant budget-clamp-n-neutered
+file = engine/src/command.c
+suite = engine
+equiv = no
+why = kv_emit_clamp_n 不再按剩余预算截断计数 ⇒ 预填队列后连发大计数命令会到顶丢键（不变式 b 破）。
+old
+int kv_emit_clamp_n(int n, int fixed, int per) {
+    if (n < 1) n = 1;
+    if (per < 1) per = 1;
+    int maxn = (kv_emit_room() - fixed) / per;
+    if (maxn < 1) maxn = 1;
+    return (n > maxn) ? maxn : n;
+}
+new
+int kv_emit_clamp_n(int n, int fixed, int per) {
+    if (n < 1) n = 1;
+    if (per < 1) per = 1;
+    (void)fixed;
+    return n;   /* 变异：不截断 */
+}
+end
+
+mutant budget-clamp-n-floor-zero
+file = engine/src/command.c
+suite = engine
+equiv = no
+why = 预算不足时把重复数截断到 0 而不是 1 ⇒ 带计数命令的骨架/尾部改文档键被跳过（半截执行）。
+old
+    if (maxn < 1) maxn = 1;
+new
+    if (maxn < 1) maxn = 0;   /* 变异：预算不足就一次都不做 */
+end
+
+mutant d19-drop-back-anchor
+file = engine/src/command.c
+suite = engine
+equiv = no
+why = D19 后向词动作丢掉 `Esc, Shift+Left` 重锚 ⇒ 锚点在词首时选区塌空，Ctrl+X 退化成剪切整行。
+old
+    kv_emit_tap(KV_ESC);
+    kv_emit_tap(KV_LSFT_KC(KV_LEFT));
+    kv_emit_taps(KV_CS(KV_LEFT), n);
+new
+    /* 变异：去掉 D19 的 Esc/Shift+Left 重锚 */
+    kv_emit_taps(KV_CS(KV_LEFT), n);
+end
+
+mutant d19-outer-clamp-idempotent
+file = engine/src/engine.c
+suite = engine
+equiv = yes
+why = 等价（§7.33 已登记）：外层 kv_emit_clamp_n(n,2,1) 与其后 kv_emit_visual_word_back_anchor 内部的同名调用之间不发射任何键 ⇒ room 不变、夹取幂等；且 n 在该分支之后不再被使用。
+old
+                n = kv_emit_clamp_n(n, 2, 1);   /* Esc, Shift+Left + 1×n */
+new
+                /* 变异（等价）：删掉外层夹取，内层同名调用幂等 */
+end
+
+mutant d24-drop-up-flip
+file = engine/src/engine.c
+suite = engine
+equiv = no
+why = D24 向上移动去掉 `Esc, Shift+Left` 翻转 ⇒ 选区左端（光标端）比 Vim 右一列，`vky`/`vkd` 内容不符。
+old
+            if (!s_v_abs && s_v_end_r) {
+                kv_emit_tap(KV_ESC);
+                kv_emit_tap(KV_LSFT_KC(KV_LEFT));
+                s_v_rt1 = false;   /* 光标已在 Vim 所在列，+1 消失 */
+            }
+            n = kv_emit_clamp_n(n, 2, 1);   /* 至多 2 键骨架 + Shift+Up×n */
+new
+            /* 变异：去掉 D24 的 Esc/Shift+Left 翻转（骨架键数同时归零） */
+            n = kv_emit_clamp_n(n, 0, 1);
+end
+
+mutant d22-vchar-rt1-lost
+file = engine/src/engine.c
+suite = engine
+equiv = no
+why = D22 不再记录“宿主光标比 Vim 右一列”（s_v_rt1 进入可视即 false）⇒ 纵向/词动作后的 Esc 少补一个左移。
+old
+    s_v_lo = 0; s_v_hi = 1; s_v_end_r = true; s_v_abs = false; s_v_word_ok = true;
+    s_v_rt1 = true;
+new
+    s_v_lo = 0; s_v_hi = 1; s_v_end_r = true; s_v_abs = false; s_v_word_ok = true;
+    s_v_rt1 = false;   /* 变异：D22 的 +1 比特不再置位 */
+end
+
+mutant d20-visual-y-cursor
+file = engine/src/engine.c
+suite = engine
+equiv = no
+why = D20 可视 `y` 后不回位到选区起点 ⇒ `vlyp` 粘到错位置（缓冲区可见）。
+old
+            kv_emit_visual_yank();
+            /* D20：真实 Vim 的可视 `y` 把光标留在选区起点（最左端），
+             * 否则 `vlyp` 会粘到错位置（缓冲区可见）。 */
+            if (!s_v_abs && s_v_end_r) kv_emit_taps(KV_LEFT, s_v_hi - s_v_lo);
+new
+            kv_emit_visual_yank();
+            /* 变异：D20 可视 y 后不回位到选区起点 */
+end
+
+mutant d20-visual-esc-cursor
+file = engine/src/engine.c
+suite = engine
+equiv = no
+why = D20 可视 Esc 后不补 `←` ⇒ 光标停在最后一个选中字符之后，`vll<Esc>x` 删到下一个字符。
+old
+        } else if (s_v_rt1 || (!s_v_abs && s_v_end_r)) kv_emit_tap(KV_LEFT);
+new
+        }   /* 变异：D20 可视 Esc 后不补左移 */
+end
+
+mutant d23-vline-esc-cursor
+file = engine/src/engine.c
+suite = engine
+equiv = no
+why = D23 行可视 Esc 不回到选区起点行首（去掉 Up×off + Home）⇒ 紧随 `x`/`s` 删掉换行并并行。
+old
+            if (!s_vl_abs) {
+                /* 预算（design §4.4）：Up×off 至多 100 键；这里可以**少发到 0**（不是带计数
+                 * 命令的"至少 1 次"），预算里预扣随后的 Home 与 Esc 两个固定键。 */
+                if (!s_vl_up && s_vl_off > 0) {
+                    int up = s_vl_off, room = kv_emit_room() - 2;   /* 预留 Home, Esc */
+                    if (room < 0) room = 0;
+                    if (up > room) up = room;
+                    if (up > 0) kv_emit_taps(KV_UP, up);
+                }
+                kv_emit_tap(KV_HOME);
+            }
+new
+            /* 变异：D23 行可视 Esc 不回选区起点行首 */
+end
+
+mutant d13-visual-esc-keeps-selection
+file = engine/src/engine.c
+suite = engine
+equiv = no
+why = D13 可视 Esc 不再取消宿主选区 ⇒ 下一个按键替换整个选区（数据损坏）。
+old
+        kv_emit_tap(KV_ESC);   /* 字符级也要取消宿主选区（D13）：否则下一个键会替换整个选区 */
+new
+        /* 变异：D13 不再取消宿主选区 */
+end
+
+mutant emit-push-ring-index
+file = engine/src/emit.c
+suite = engine
+equiv = no
+why = 入队环形下标步进错误（& EMIT_MASK → & (EMIT_MASK-1)）⇒ 每隔一格覆盖前一键，发射流错乱（试金石：`% EMIT_CAP`→`& EMIT_MASK` 本身是等价改写，不能当变异）。
+old
+    s_buf[(s_head + s_count) & EMIT_MASK] = kc;
+new
+    s_buf[(s_head + s_count) & (EMIT_MASK - 1)] = kc;   /* 变异：环形下标步进错 */
+end
+
+mutant emit-send-ring-index
+file = engine/src/emit.c
+suite = engine
+equiv = no
+why = 出队环形下标步进错误 ⇒ 读取顺序跳格，发射流错乱。
+old
+    s_head = (s_head + 1) & EMIT_MASK;
+new
+    s_head = (s_head + 1) & (EMIT_MASK - 1);   /* 变异：出队步进错 */
+end
+
+mutant caps-declared-passthrough
+file = qmk/vim_keymap_common.c
+suite = glue
+equiv = no
+why = Caps 拦截不再优先：myfn 已声明的键被放行，Caps 模式内该键落到 myfn 而不是映射成 Ctrl+<key>（caps/testcase.md §「拦截优先」）。
+old
+    if ((keycode & 0xFF00) != 0) return false;
+
+    const bool     pressed = record->event.pressed;
+new
+    if ((keycode & 0xFF00) != 0) return false;
+    /* 变异：把 myfn 已声明的键放行，破坏 Caps 拦截优先级 */
+    if (s_cfg->myfn_declared && s_cfg->myfn_declared(keycode)) return false;
+
+    const bool     pressed = record->event.pressed;
+end
+
+mutant caps-exit-phys-ctrl-guard
+file = qmk/vim_keymap_common.c
+suite = glue
+equiv = no
+why = 退出模式时去掉“物理 Ctrl 占位则不反注册”的守卫 ⇒ 卸掉物理按住的 Ctrl（caps/design.md §4 不变量 2）。
+old
+    if ((s_caps_ctrl_owned & CAPS_OWN_LCTL) && !(s_caps_phys_ctrl_held & CAPS_OWN_LCTL))
+        unregister_code(KC_LCTL);
+    if ((s_caps_ctrl_owned & CAPS_OWN_RCTL) && !(s_caps_phys_ctrl_held & CAPS_OWN_RCTL))
+        unregister_code(KC_RCTL);
+new
+    if ((s_caps_ctrl_owned & CAPS_OWN_LCTL))
+        unregister_code(KC_LCTL);
+    if ((s_caps_ctrl_owned & CAPS_OWN_RCTL))
+        unregister_code(KC_RCTL);
+end
+
+mutant caps-release-phys-ctrl-guard
+file = qmk/vim_keymap_common.c
+suite = glue
+equiv = no
+why = 释放路径去掉物理 Ctrl 逐位守卫 ⇒ 物理按住某一侧 Ctrl 时把合成位一起清掉，仍按住的键变裸键。
+old
+        if (s_caps_ctrl_n == 0 && (s_caps_ctrl_owned & CAPS_OWN_LCTL) &&
+            !(s_caps_phys_ctrl_held & CAPS_OWN_LCTL)) {
+            unregister_code(KC_LCTL);
+            s_caps_ctrl_owned &= (uint8_t)~CAPS_OWN_LCTL;
+        }
+new
+        if (s_caps_ctrl_n == 0 && (s_caps_ctrl_owned & CAPS_OWN_LCTL)) {
+            unregister_code(KC_LCTL);
+            s_caps_ctrl_owned &= (uint8_t)~CAPS_OWN_LCTL;
+        }
+end

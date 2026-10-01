@@ -10,7 +10,7 @@ TEST_SRC = $(wildcard test/*.c)
 GLUE_ROOT  = $(abspath $(CURDIR)/../..)
 GLUE_TESTS = test_glue test_glue_falsify test_visual_passthrough test_pending_clear_probe test_strict_clear_falsify test_modifiers test_rgb test_modifier_falsify test_adapter_regress test_adapter_regress2
 
-.PHONY: all test glue-test matrix-test clean
+.PHONY: all test glue-test matrix-test mutation-test mutation-list clean
 
 all: test
 
@@ -33,6 +33,16 @@ glue-test: $(SRC) ../qmk/vim_glue.c ../qmk/vim_keymap_common.c
 matrix-test: $(SRC)
 	$(CC) $(CFLAGS) -o test/host/probe test/host/probe.c $(SRC)
 	python3 test/host/matrix.py
+
+# 变异验证门禁（qmk/engineering-spec.md §1.1）：把 test/mutants/mutants.txt 里的每条
+# 记录暂时施加到源码上、跑对应套件、分类 CAUGHT/SURVIVED，然后**无条件还原**。
+# 默认跑全部；退出码 0 = 全绿（含已论证的等价变异），1 = 有未论证的 SURVIVED，
+# 2 = 门禁自身错误（记录漂移 / 工作区脏 / 超时）。不交互、确定性顺序。
+mutation-test:
+	python3 test/mutants/run.py
+
+mutation-list:
+	python3 test/mutants/run.py --list
 
 clean:
 	rm -f test/kv_tests test/host/probe test/glue/test_adapter_regress test/glue/test_adapter_regress2 test/glue/test_glue test/glue/test_glue_falsify test/glue/test_visual_passthrough test/glue/test_pending_clear_probe test/glue/test_strict_clear_falsify test/glue/test_modifiers test/glue/test_rgb test/glue/test_modifier_falsify
