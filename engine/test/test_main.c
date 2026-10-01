@@ -1612,6 +1612,135 @@ static void test_count_queue_budget(void) {
     CHECK(kv_emit_pending() == 202);   /* 既有量级不受影响 */
 }
 
+/* P0-1（累积）：单条命令都在 250 预算内，但队列**没排空**时连发大计数命令会到顶
+ * 256 并静默丢键 —— 丢的正是命令尾部那个改文档的键（`Ctrl+X`/`Ctrl+C`/`Ctrl+V`/`Tab`），
+ * 命令半截执行。新规范（design §4.4）：每个带计数发射器按 `kv_emit_room()` 与自己的
+ * 每次重复成本截断计数，保证 (a) 整条命令一定发完、(b) 发完 pending ≤ 250。
+ * 用 `kv_kbd()` 而非 `key()`：后者会 `flush_emit()` 把队列排空，正好掩盖这个缺陷。 */
+
+/* 预填发送队列到 pre 键（直接用 emit API 入队，绕开引擎的截断），并装好 recorder。 */
+static void budget_prep(int pre) {
+    kv_init();
+    kv_enable();
+    rec_start();
+    kv_emit_taps(KV_W, pre);          /* 占位键：只用来占预算，不是命令的一部分 */
+    CHECK(kv_emit_pending() == pre);
+}
+
+/* 断言：pending ≤ 250、排空后一键不少、最后一键是 want_last、且改文档键 mut 在队列里。 */
+static void budget_check(kv_keycode_t want_last, kv_keycode_t mut) {
+    int p = kv_emit_pending();
+    CHECK(p <= 250);                          /* 不变式 (b)：绝不到顶 */
+    flush_emit();
+    CHECK(rec_count() == p);                  /* 不变式 (a)：队列里的键一个不少 */
+    CHECK(rec_at(p - 1) == want_last);
+    if (mut) {
+        int found = 0;
+        for (int i = 0; i < p; i++) if (rec_at(i) == mut) found = 1;
+        CHECK(found);
+    }
+}
+
+static void test_count_queue_accumulation(void) {
+    /* (1) 3×`99dd`（每条 103 键）：修前 309 键撞 256 上限，第 3 条的 `Ctrl+X` 被丢。 */
+    fresh();
+    for (int r = 0; r < 3; r++) {
+        kv_kbd(KV_9); kv_kbd(KV_9); kv_kbd(KV_D); kv_kbd(KV_D);
+    }
+    budget_check(KV_LCTL_KC(KV_X), 0);
+
+    /* (2) VISUAL 词动作重锚每次 3 键：`v99w` 单条就 297 键 > 256，修前尾部被丢。 */
+    fresh();
+    kv_kbd(KV_V); kv_kbd(KV_9); kv_kbd(KV_9); kv_kbd(KV_W);
+    budget_check(KV_LSFT_KC(KV_RGHT), 0);
+
+    /* (3) 非空队列上再压一条大计数命令（缩进：`99>j` 单条 206 键，两条即爆）。 */
+    fresh();
+    kv_kbd(KV_9); kv_kbd(KV_9); kv_kbd(KV_C_GT); kv_kbd(KV_J);
+    CHECK(kv_emit_pending() == 206);          /* 100 行缩进 */
+    kv_kbd(KV_9); kv_kbd(KV_9); kv_kbd(KV_C_GT); kv_kbd(KV_J);
+    budget_check(KV_RGHT, KV_TAB);
+
+    /* (4) 逐个发射器直测：预填 240 键（room=10），截断后整条命令仍完整。 */
+    budget_prep(240); kv_emit_delete_char_n(99);        budget_check(KV_LCTL_KC(KV_X), 0);
+    budget_prep(240); kv_emit_backspace_char_n(99);     budget_check(KV_BSPC, 0);
+    budget_prep(240); kv_emit_substitute_n(99);         budget_check(KV_LCTL_KC(KV_X), 0);
+    budget_prep(240); kv_emit_delete_to_eol_n(99);      budget_check(KV_LCTL_KC(KV_X), 0);
+    budget_prep(240); kv_emit_change_to_eol_n(99);      budget_check(KV_LCTL_KC(KV_X), 0);
+    budget_prep(240); kv_emit_paste_n(false, 99);       budget_check(KV_LCTL_KC(KV_V), 0);
+    budget_prep(240); kv_emit_paste_n(true, 99);        budget_check(KV_LCTL_KC(KV_V), 0);
+    budget_prep(240); kv_emit_line_op(KV_D, 99);        budget_check(KV_LCTL_KC(KV_X), 0);
+    budget_prep(240); kv_emit_line_op(KV_C, 99);        budget_check(KV_LEFT, KV_LCTL_KC(KV_X));
+    budget_prep(240); kv_emit_line_op(KV_Y, 99);        budget_check(KV_UP, KV_LCTL_KC(KV_C));
+    budget_prep(240); kv_emit_op_motion(KV_D, M_J, 99); budget_check(KV_LCTL_KC(KV_X), 0);
+    budget_prep(240); kv_emit_op_motion(KV_C, M_K, 99); budget_check(KV_LEFT, KV_LCTL_KC(KV_X));
+    budget_prep(240); kv_emit_op_motion(KV_Y, M_L, 99); budget_check(KV_LEFT, KV_LCTL_KC(KV_C));
+    budget_prep(240); kv_emit_op_motion(KV_Y, M_K, 99); budget_check(KV_UP, KV_LCTL_KC(KV_C));
+    budget_prep(240); kv_emit_indent_line(KV_C_GT, 99); budget_check(KV_RGHT, KV_TAB);
+    budget_prep(240); kv_emit_indent_motion(KV_C_GT, M_K, 99); budget_check(KV_ESC, KV_TAB);
+    budget_prep(240); kv_emit_indent_motion(KV_C_GT, M_W, 99); budget_check(KV_ESC, KV_TAB);
+    budget_prep(240); kv_emit_visual_word_back_anchor(99);
+    budget_check(KV_CS(KV_LEFT), 0);
+    budget_prep(240); kv_emit_vline_move(false, 99);
+    budget_check(KV_LSFT_KC(KV_DOWN), 0);
+    /* 几何重锚序列：只要求整段发完且不到顶（选区大小随预算确定性截断）。 */
+    budget_prep(240); kv_emit_vline_reanchor(true, 100, -100);   CHECK(kv_emit_pending() <= 250);
+    budget_prep(240); kv_emit_visual_reanchor_left(50, 99);      CHECK(kv_emit_pending() <= 250);
+    budget_prep(240); kv_emit_visual_reanchor_right(50, 99);     CHECK(kv_emit_pending() <= 250);
+    budget_prep(240); kv_emit_join_n(99);
+    CHECK(kv_emit_pending() <= 250);
+    CHECK(kv_emit_pending() % 4 == 0);            /* 每次连接 4 键，绝不发半次 */
+
+    /* (5) 引擎层计数循环：预填后喂 VISUAL / VISUAL_LINE 命令。 */
+    budget_prep(240); kv_set_mode(KV_MODE_NORMAL);
+    kv_kbd(KV_V); kv_kbd(KV_9); kv_kbd(KV_9); kv_kbd(KV_L);
+    budget_check(KV_LSFT_KC(KV_RGHT), 0);
+
+    budget_prep(240); kv_set_mode(KV_MODE_NORMAL);
+    kv_kbd(KV_V); kv_kbd(KV_9); kv_kbd(KV_9); kv_kbd(KV_J);
+    budget_check(KV_LSFT_KC(KV_DOWN), 0);
+
+    budget_prep(240); kv_set_mode(KV_MODE_NORMAL);
+    kv_kbd(KV_V); kv_kbd(KV_9); kv_kbd(KV_9); kv_kbd(KV_B);
+    budget_check(KV_CS(KV_LEFT), 0);
+
+    budget_prep(240); kv_set_mode(KV_MODE_NORMAL);
+    kv_kbd(KV_V); kv_kbd(KV_9); kv_kbd(KV_9); kv_kbd(KV_K);
+    budget_check(KV_LSFT_KC(KV_UP), 0);
+
+    /* 独立移动（NORMAL `99j`、VISUAL 词动作回退与后向词动作的**非重锚**分支）。 */
+    budget_prep(240); kv_set_mode(KV_MODE_NORMAL);
+    kv_kbd(KV_9); kv_kbd(KV_9); kv_kbd(KV_J);
+    budget_check(KV_DOWN, 0);
+
+    budget_prep(240); kv_set_mode(KV_MODE_NORMAL);
+    kv_kbd(KV_V); kv_kbd(KV_0); kv_kbd(KV_9); kv_kbd(KV_9); kv_kbd(KV_W);
+    budget_check(KV_CS(KV_RGHT), 0);              /* `v0` 后 s_v_word_ok=false → 逐键回退 */
+
+    budget_prep(240); kv_set_mode(KV_MODE_NORMAL);
+    kv_kbd(KV_V); kv_kbd(KV_0); kv_kbd(KV_9); kv_kbd(KV_9); kv_kbd(KV_B);
+    budget_check(KV_CS(KV_LEFT), 0);              /* `v0` 后 s_v_abs=true → `b` 不重锚 */
+
+    budget_prep(240); kv_set_mode(KV_MODE_NORMAL);
+    kv_kbd(KV_C_V); kv_kbd(KV_9); kv_kbd(KV_9); kv_kbd(KV_J);
+    budget_check(KV_LSFT_KC(KV_END), 0);          /* V99j：扩展 + 贴行尾 */
+
+    budget_prep(240); kv_set_mode(KV_MODE_NORMAL);
+    kv_kbd(KV_C_V); kv_kbd(KV_9); kv_kbd(KV_9); kv_kbd(KV_J); kv_kbd(KV_ESC);
+    CHECK(kv_emit_pending() <= 250);
+
+    /* (6) `N.` 回放与 `Nu`：同样受预算约束。 */
+    budget_prep(240); kv_set_mode(KV_MODE_NORMAL);
+    kv_kbd(KV_D); kv_kbd(KV_D);                   /* 建立 `.` 目标，队列 +5 */
+    kv_kbd(KV_9); kv_kbd(KV_9); kv_kbd(KV_DOT);
+    CHECK(kv_emit_pending() <= 250);
+
+    budget_prep(240); kv_set_mode(KV_MODE_NORMAL);
+    kv_kbd(KV_9); kv_kbd(KV_9); kv_kbd(KV_U);
+    CHECK(kv_emit_pending() <= 250);
+    budget_check(KV_LCTL_KC(KV_Z), 0);
+}
+
 /* D20：字符级 VISUAL 的 `y` / `Esc` 光标语义（真实 Vim 实测）。
  *   `y`  —— 光标留在**选区起点**（最左端）；宿主动在活动端 ⇒ 补 `←`×w。
  *   `Esc` —— 光标留在**活动端**（最后一个选中字符**上**）；宿主在其**后** ⇒ 只补 1 个 `←`。
@@ -1702,6 +1831,7 @@ int main(void) {
     test_repeat_recorded_commands();/* R01-R09 */
     test_reg_kind_and_yank_restore();/* D7/D11 */
     test_count_queue_budget();      /* P0-1 */
+    test_count_queue_accumulation();/* P0-1（累积/半截执行） */
     test_visual_y_esc_cursor();     /* D20 */
     test_visual_vertical_esc_cursor();/* D22 */
     test_yank_motion_count_restore();/* D21 */

@@ -11,6 +11,37 @@ static bool s_reg_linewise;
  * 故带计数的命令按实测每键成本自行截断，绝不让队列到顶。留 6 格余量。 */
 #define KV_CMD_KEY_BUDGET 250
 
+/* 剩余预算（design §4.4）：KV_CMD_KEY_BUDGET − 尚在队列里的键数，下限 0。 */
+int kv_emit_room(void) {
+    int room = KV_CMD_KEY_BUDGET - kv_emit_pending();
+    return (room > 0) ? room : 0;
+}
+
+/* 按「本次发射的键码数 = fixed + per×n」把重复数 n 截断到剩余预算之内（下限 1）。
+ * fixed = 与 n 无关的固定骨架，per = 每次重复的成本，二者都由各发射器按**自己实测的**
+ * 每次重复成本给出（含尾部那个真正改文档的键，如 Ctrl+X/Ctrl+V/Tab）。
+ * 剩余预算连 fixed+per 都放不下时取 1：宁可少做，绝不做半截（design §4.4）。 */
+int kv_emit_clamp_n(int n, int fixed, int per) {
+    if (n < 1) n = 1;
+    if (per < 1) per = 1;
+    int maxn = (kv_emit_room() - fixed) / per;
+    if (maxn < 1) maxn = 1;
+    return (n > maxn) ? maxn : n;
+}
+
+/* 在剩余预算内发 n 次 kc；返回实际发次数（可 0）。
+ * `reserve` 是本组之后**必然还会发**的固定键数（Home / Shift+End 等）——预算里预扣，
+ * 保证整段几何序列一定发完且不到顶。用于**可能为 0** 的方向键组（如 `Right×(w−1)`）：
+ * 确定性截断，宁可少发，绝不丢键。 */
+static int emit_taps_room(kv_keycode_t kc, int n, int reserve) {
+    if (n < 1) return 0;
+    int room = kv_emit_room() - reserve;
+    if (room < 0) room = 0;
+    if (n > room) n = room;
+    if (n > 0) kv_emit_taps(kc, n);
+    return n;
+}
+
 void kv_emit_reset_reg(void) { s_reg_linewise = false; }
 bool kv_emit_reg_linewise(void) { return s_reg_linewise; }
 
@@ -37,16 +68,28 @@ static void emit_motion_once(kv_motion_t m) {
 
 void kv_emit_motion(kv_motion_t m, int n) {
     if (n < 1) n = 1;
+    n = kv_emit_clamp_n(n, 0, 1);      /* 每次重复 1 键（`99j`/`99w`…） */
     for (int i = 0; i < n; i++) emit_motion_once(m);
 }
 
-/* Emit the shifted selection keys for an operator range. */
-static void emit_op_range(kv_motion_t m, int n) {
-    kv_keycode_t sel;
+/* Emit the shifted selection keys for an operator range.
+ *
+ * 键码预算（design §4.4）：`tail_fixed`/`tail_per` 是调用方在本函数返回后**还会发的**
+ * 键数（固定骨架 + 每次重复），预算里预扣；返回实际使用的 n（可能被确定性截断，下限 1）——
+ * 调用方若还有按 n 缩放的尾键（`y` 的光标回位），必须用返回的 n 而不是入参。
+ * 成本模型（实测）：
+ *   普通动作（h/l/0/^/$ 与词动作）：0 + 1×n
+ *   `j`：Home + Shift+Down×(n+1)   ⇒ 2 + 1×n
+ *   `k`：Home,End,Right + Shift+Up×(n+1) ⇒ 4 + 1×n
+ *   `G`：Home + Ctrl+Shift+End      ⇒ 2（不用 n）
+ *   `gg`：End,Right + Ctrl+Shift+Home ⇒ 3（不用 n） */
+static int emit_op_range(kv_motion_t m, int n, int tail_fixed, int tail_per) {
+    kv_keycode_t sel = 0;
+    int rfix = 0, rper = 1;
     switch (m) {
         case M_H:      sel = KV_LSFT_KC(KV_LEFT);  break;
-        case M_J:      sel = KV_LSFT_KC(KV_DOWN);  break;
-        case M_K:      sel = KV_LSFT_KC(KV_UP);    break;
+        case M_J:      rfix = 2;                   break;
+        case M_K:      rfix = 4;                   break;
         case M_L:      sel = KV_LSFT_KC(KV_RGHT);  break;
         case M_W:
         case M_WBIG:
@@ -57,17 +100,18 @@ static void emit_op_range(kv_motion_t m, int n) {
         case M_ZERO:
         case M_CARET:  sel = KV_LSFT_KC(KV_HOME);  break;
         case M_DOLLAR: sel = KV_LSFT_KC(KV_END);   break;
-        case M_G_BIG:  sel = KV_CS(KV_END);        break;
-        case M_GG:     sel = KV_CS(KV_HOME);       break;
-        default:       return;
+        case M_G_BIG:  rfix = 2; rper = 0;         break;
+        case M_GG:     rfix = 3; rper = 0;         break;
+        default:       return n;                   /* 无输出 */
     }
+    n = kv_emit_clamp_n(n, rfix + tail_fixed, rper + tail_per);
     /* 行选动作（j/k/G/gg）在 Vim 里是**整行**操作：先把光标移到行首再扩选。
      * `dj` = 当前行 + 下一行 = 2 行（即 n+1 行），`2dj` = 3 行；`dG`/`dgg` 到文档端。
      * 旧实现从**当前列**开始 Shift+Down，实际切掉"上一行尾部 + 下一行头部"（数据损坏）。 */
     if (m == M_J) {                       /* 向下：Home + Shift+Down×(n+1) = n+1 行 */
         kv_emit_tap(KV_HOME);
         kv_emit_taps(KV_LSFT_KC(KV_DOWN), n + 1);
-        return;
+        return n;
     }
     if (m == M_K) {
         /* 向上：锚点必须**越过当前行的行尾换行**（End, Right）到下一行行首，半开区间
@@ -76,34 +120,55 @@ static void emit_op_range(kv_motion_t m, int n) {
         kv_emit_tap(KV_END);
         kv_emit_tap(KV_RGHT);
         kv_emit_taps(KV_LSFT_KC(KV_UP), n + 1);
-        return;
+        return n;
     }
     if (m == M_G_BIG) {                   /* 到末行：Home + Ctrl+Shift+End */
         kv_emit_tap(KV_HOME);
         kv_emit_tap(KV_CS(KV_END));
-        return;
+        return n;
     }
     if (m == M_GG) {                      /* 到首行：End,Right + Ctrl+Shift+Home（锚点同 k） */
         kv_emit_tap(KV_END);
         kv_emit_tap(KV_RGHT);
         kv_emit_tap(KV_CS(KV_HOME));
-        return;
+        return n;
     }
     kv_emit_taps(sel, n);
+    return n;
 }
 
 void kv_emit_op_motion(kv_keycode_t op, kv_motion_t m, int n) {
     if (n < 1) n = 1;
     /* 行级动作（j/k/G/gg）在 Vim 里写进行级寄存器；其余为字符级。 */
-    s_reg_linewise = (m == M_J || m == M_K || m == M_G_BIG || m == M_GG);
-    emit_op_range(m, n);
+    const bool linewise = (m == M_J || m == M_K || m == M_G_BIG || m == M_GG);
+    s_reg_linewise = linewise;
+    /* 尾键成本（emit_op_range 返回后要发的键）—— 预算里预扣，保证整条命令一定发完：
+     *   c：Ctrl+X [+ Shift+Enter,Left 造空行]（随后 enter_insert 不发键）
+     *   y：Ctrl+C, Esc + 光标回位（l→Left×n、j/k→Up×(n+1)、w/e→Ctrl+Left、$→Home）
+     *   d：Ctrl+X */
+    int tf = 0, tp = 0;
+    if (op == KV_C) {
+        tf = 1 + (linewise ? 2 : 0);
+    } else if (op == KV_Y) {
+        tf = 2;                                     /* Ctrl+C, Esc */
+        switch (m) {
+            case M_L:                    tp = 1; break;   /* Left×n */
+            case M_J: case M_K:  tf += 1; tp = 1; break;  /* Up×n + 1 */
+            case M_W: case M_WBIG: case M_E: case M_EBIG:
+            case M_DOLLAR:       tf += 1; break;          /* Ctrl+Left / Home */
+            default: break;
+        }
+    } else {
+        tf = 1;                                     /* Ctrl+X */
+    }
+    n = emit_op_range(m, n, tf, tp);
     if (op == KV_C) {
         kv_emit_tap(KV_LCTL_KC(KV_X));
         /* 行选动作 + c：真实 Vim 与 cc 一样**留一个空行**（cj => L1||L4），补 Shift+Enter。
          * 但插入的换行会把宿主光标顶到**下一行行首**，而 Vim 把光标留在那个空行上——
          * 差一行是**缓冲区可见的**（`cjx` 会删掉接替行的首字符 = 数据损坏；独立矩阵测试的
          * "D5-residual" 组）。故插完补 `←` 把光标退回空行。 */
-        if (m == M_J || m == M_K || m == M_G_BIG || m == M_GG) {
+        if (linewise) {
             kv_emit_tap(KV_LSFT_KC(KV_ENT));
             kv_emit_tap(KV_LEFT);
         }
@@ -141,6 +206,8 @@ void kv_emit_line_op(kv_keycode_t op, int n) {
     if (n < 1) n = 1;
     s_reg_linewise = true;      /* dd/yy/cc/Y/S 都是行级 */
     if (op == KV_Y) {
+        /* 2(Home,Home) + n(Shift+Down) + 2(Ctrl+C,Esc) + n(Up) = 4 + 2×n */
+        n = kv_emit_clamp_n(n, 4, 2);
         kv_emit_tap(KV_HOME);
         kv_emit_tap(KV_HOME);
         kv_emit_taps(KV_LSFT_KC(KV_DOWN), n);
@@ -149,6 +216,9 @@ void kv_emit_line_op(kv_keycode_t op, int n) {
         kv_emit_taps(KV_UP, n); /* Vim 的 y 不移动光标：把宿主光标拉回原行 */
         return;
     }
+    /* 骨架 4 键（Home,Home,Shift+End,Shift+Right）+ (n−1) 次 Shift+Down + Ctrl+X；
+     * `cc`/`S` 再多 Shift+Enter,Left 造空行（enter_insert 不发键）。 */
+    n = kv_emit_clamp_n(n, (op == KV_C) ? 6 : 4, 1);
     kv_emit_tap(KV_HOME);
     kv_emit_tap(KV_HOME);
     kv_emit_tap(KV_LSFT_KC(KV_END));
@@ -188,7 +258,9 @@ void kv_emit_indent_motion(kv_keycode_t ang, kv_motion_t m, int n) {
     }
     if (m == M_K) {
         /* 向上：锚点越过当前行行尾换行（同 op+动作），活动端落在范围内**首行**；
-         * 宿主 Tab 的插入点就在光标处 ⇒ 光标已在"首个非空白"，只需 Esc 取消残留选区。 */
+         * 宿主 Tab 的插入点就在光标处 ⇒ 光标已在"首个非空白"，只需 Esc 取消残留选区。
+         * 成本：3(Home,End,Right) + (n+1)(Shift+Up) + 2(tab,Esc) = 6 + 1×n。 */
+        n = kv_emit_clamp_n(n, 6, 1);
         kv_emit_tap(KV_HOME);
         kv_emit_tap(KV_END);
         kv_emit_tap(KV_RGHT);
@@ -213,8 +285,9 @@ void kv_emit_indent_motion(kv_keycode_t ang, kv_motion_t m, int n) {
         return;
     }
     /* 词动作（w/e/b/W/E/B）：**行范围**由宿主半开选区决定，与真实 Vim 的整行展开一致
-     * （`>w` 只缩进当前行、`>e` 跨行时缩进两行）；光标停在移动目标（已知偏差②）。 */
-    emit_op_range(m, n);
+     * （`>w` 只缩进当前行、`>e` 跨行时缩进两行）；光标停在移动目标（已知偏差②）。
+     * 成本：0 + 1×n（选区）+ 2（tab, Esc）。 */
+    (void)emit_op_range(m, n, 2, 0);
     kv_emit_tap(tab);
     kv_emit_tap(KV_ESC);          /* 取消宿主 Tab 后残留的高亮选区（否则下一个键替换整段） */
 }
@@ -222,6 +295,10 @@ void kv_emit_indent_motion(kv_keycode_t ang, kv_motion_t m, int n) {
 void kv_emit_indent_line(kv_keycode_t ang, int n) {
     if (n < 1) n = 1;
     kv_keycode_t tab = (ang == KV_C_GT) ? KV_TAB : KV_LSFT_KC(KV_TAB);
+    /* 多行成本：2(Home,Home) + n(Shift+Down) + 1(tab) + 1(Esc) + n(Up) + 1(Home)
+     *           + [1(Right) 仅 `>`] = (5 或 6) + 2×n。
+     * 截断到 1 时退化为下面的单行分支（无选区，行首插 Tab），仍是完整命令。 */
+    n = kv_emit_clamp_n(n, (ang == KV_C_GT) ? 6 : 5, 2);
     /* 真实 Vim：`>>` 1 行、`2>>` 2 行、`3>>` 3 行；旧实现用 ×(n-1) 会少缩进一行。
      * 宿主选区是半开区间：n 行 = Shift+Down×n。 */
     if (n == 1) {
@@ -253,9 +330,10 @@ void kv_emit_visual_line_enter(void) {
     kv_emit_tap(KV_LSFT_KC(KV_END));
 }
 
-/* 纵向扩展 n 行（活动端随宿主移动 n 行）。 */
+/* 纵向扩展 n 行（活动端随宿主移动 n 行）。成本 0 + 1×n。 */
 void kv_emit_vline_move(bool up, int n) {
     if (n < 1) n = 1;
+    n = kv_emit_clamp_n(n, 0, 1);
     kv_emit_taps(up ? KV_LSFT_KC(KV_UP) : KV_LSFT_KC(KV_DOWN), n);
 }
 
@@ -273,17 +351,19 @@ void kv_emit_vline_move_head(void) { kv_emit_tap(KV_LSFT_KC(KV_HOME)); }
  *     = [Up×(off_before−1) | Down×(1−off_before)] + Home + Shift+Up×(1−off_after)
  *   to_up=false （off_after>0）：锚移到 A 行首，活动端落在 A+off_after 行尾
  *     = Down×(−off_before) + Home + Shift+Down×off_after + Shift+End
- * 键码数：to_up ≤ n+3、to_down ≤ n+2（off_before 项相消），与 Normal 的 99dd(103) 同量级。 */
+ * 键码数：to_up ≤ n+3、to_down ≤ n+2（off_before 项相消），与 Normal 的 99dd(103) 同量级。
+ * 预算（design §4.4）：本函数是**几何序列**（截断某个方向键组会得到不同的选区），
+ * 故按剩余预算对各个方向键组做确定性截断；后续的改文档键（`Ctrl+X`）仍由调用方发出。 */
 void kv_emit_vline_reanchor(bool to_up, int off_before, int off_after) {
     if (to_up) {
-        if (off_before > 1)      kv_emit_taps(KV_UP, off_before - 1);
-        else if (off_before < 1) kv_emit_taps(KV_DOWN, 1 - off_before);
+        if (off_before > 1)      emit_taps_room(KV_UP, off_before - 1, 1);
+        else if (off_before < 1) emit_taps_room(KV_DOWN, 1 - off_before, 1);
         kv_emit_tap(KV_HOME);
-        kv_emit_taps(KV_LSFT_KC(KV_UP), 1 - off_after);
+        emit_taps_room(KV_LSFT_KC(KV_UP), 1 - off_after, 0);
     } else {
-        if (off_before < 0) kv_emit_taps(KV_DOWN, -off_before);
+        if (off_before < 0) emit_taps_room(KV_DOWN, -off_before, 2);
         kv_emit_tap(KV_HOME);
-        if (off_after > 0) kv_emit_taps(KV_LSFT_KC(KV_DOWN), off_after);
+        if (off_after > 0) emit_taps_room(KV_LSFT_KC(KV_DOWN), off_after, 1);
         kv_emit_tap(KV_LSFT_KC(KV_END));
     }
 }
@@ -292,8 +372,8 @@ void kv_emit_vline_reanchor(bool to_up, int off_before, int off_after) {
  * DOWN 态先把光标移到 (A+1) 行首再扩展。 */
 void kv_emit_vline_gg(bool dir_up, int off) {
     if (!dir_up) {
-        if (off > 1)      kv_emit_taps(KV_UP, off - 1);
-        else if (off < 1) kv_emit_taps(KV_DOWN, 1 - off);
+        if (off > 1)      emit_taps_room(KV_UP, off - 1, 1);
+        else if (off < 1) emit_taps_room(KV_DOWN, 1 - off, 1);
         kv_emit_tap(KV_HOME);
     }
     kv_emit_tap(KV_CS(KV_HOME));
@@ -303,7 +383,7 @@ void kv_emit_vline_gg(bool dir_up, int off) {
 void kv_emit_vline_G(bool dir_up, int off) {
     if (dir_up) {
         kv_emit_tap(KV_END);
-        if (off < 0) kv_emit_taps(KV_DOWN, -off);
+        if (off < 0) emit_taps_room(KV_DOWN, -off, 2);
         kv_emit_tap(KV_HOME);
     }
     kv_emit_tap(KV_CS(KV_END));
@@ -352,24 +432,25 @@ void kv_emit_visual_motion(kv_keycode_t kc) {
  *   Esc 把选区塌到活动端（= 宿主光标）；随后用**不带 Shift** 的方向键把光标移到
  *   "锚点外侧一格"，再 Shift+方向 扩到目标。全部相对运算，无需知道绝对列。 */
 void kv_emit_visual_reanchor_left(int w, int n) {
-    /* 光标在 hi：Esc 后 Left×(w−1) 到 lo+1，再 Shift+Left×(n−w+2) 到目标。 */
+    /* 光标在 hi：Esc 后 Left×(w−1) 到 lo+1，再 Shift+Left×(n−w+2) 到目标。
+     * 预算：各方向键组按剩余预算确定性截断（调用方已把 n 限在 KV_VCHAR_MAX_OFF 内）。 */
     kv_emit_tap(KV_ESC);
-    kv_emit_taps(KV_LEFT, w - 1);
-    kv_emit_taps(KV_LSFT_KC(KV_LEFT), n - w + 2);
+    emit_taps_room(KV_LEFT, w - 1, 0);
+    emit_taps_room(KV_LSFT_KC(KV_LEFT), n - w + 2, 0);
 }
 
 void kv_emit_visual_reanchor_right(int w, int n) {
     /* 光标在 lo：Esc 后 Right×(w−1) 到 hi−1（= Vim 锚点），再 Shift+Right×(n−w+2)。 */
     kv_emit_tap(KV_ESC);
-    kv_emit_taps(KV_RGHT, w - 1);
-    kv_emit_taps(KV_LSFT_KC(KV_RGHT), n - w + 2);
+    emit_taps_room(KV_RGHT, w - 1, 0);
+    emit_taps_room(KV_LSFT_KC(KV_RGHT), n - w + 2, 0);
 }
 
 /* 字符级 VISUAL 的 `0`/`^`（光标在右端）：目标列 0 一定 ≤ 锚列，故需重锚到
  * [行首, 锚字符] 的半开表示：Esc, Left×(w−1), Shift+Home。 */
 void kv_emit_visual_zero_from_right(int w) {
     kv_emit_tap(KV_ESC);
-    kv_emit_taps(KV_LEFT, w - 1);
+    emit_taps_room(KV_LEFT, w - 1, 1);
     kv_emit_tap(KV_LSFT_KC(KV_HOME));
 }
 
@@ -377,7 +458,7 @@ void kv_emit_visual_zero_from_right(int w) {
  * 锚字符处，再由调用方发 Shift+End, Shift+Right（含行尾换行）。 */
 void kv_emit_visual_dollar_from_left(int w) {
     kv_emit_tap(KV_ESC);
-    kv_emit_taps(KV_RGHT, w - 1);
+    emit_taps_room(KV_RGHT, w - 1, 0);
 }
 
 /* 字符级 VISUAL 前向词动作的重锚（design §4.9，缺陷 D12）：`v` 的预选把宿主光标
@@ -400,6 +481,8 @@ void kv_emit_visual_word_fwd_anchor(void) {
  * 本实现会以 hi 为锚点重建——少选左端到目标之间那一段。 */
 void kv_emit_visual_word_back_anchor(int n) {
     if (n < 1) n = 1;
+    /* 成本：2（Esc, Shift+Left）+ 1×n（Ctrl+Shift+Left） */
+    n = kv_emit_clamp_n(n, 2, 1);
     kv_emit_tap(KV_ESC);
     kv_emit_tap(KV_LSFT_KC(KV_LEFT));
     kv_emit_taps(KV_CS(KV_LEFT), n);
@@ -415,6 +498,7 @@ void kv_emit_visual_word_back_anchor(int n) {
 void kv_emit_delete_char_n(int n) {
     if (n < 1) n = 1;
     s_reg_linewise = false;
+    n = kv_emit_clamp_n(n, 1, 1);      /* Shift+Right×n + Ctrl+X */
     kv_emit_taps(KV_LSFT_KC(KV_RGHT), n);
     kv_emit_tap(KV_LCTL_KC(KV_X));
 }
@@ -427,6 +511,7 @@ void kv_emit_delete_char(void) { kv_emit_delete_char_n(1); }
 void kv_emit_backspace_char_n(int n) {
     if (n < 1) n = 1;
     s_reg_linewise = false;
+    n = kv_emit_clamp_n(n, 2, 1);      /* Shift+Left×n + Ctrl+C + BSPC */
     kv_emit_taps(KV_LSFT_KC(KV_LEFT), n);
     kv_emit_tap(KV_LCTL_KC(KV_C));
     kv_emit_tap(KV_BSPC);
@@ -438,6 +523,7 @@ void kv_emit_backspace_char(void) { kv_emit_backspace_char_n(1); }
 void kv_emit_substitute_n(int n) {
     if (n < 1) n = 1;
     s_reg_linewise = false;
+    n = kv_emit_clamp_n(n, 1, 1);      /* Shift+Right×n + Ctrl+X（enter_insert i 不发键） */
     kv_emit_taps(KV_LSFT_KC(KV_RGHT), n);
     kv_emit_tap(KV_LCTL_KC(KV_X));
     kv_emit_enter_insert(KV_I);
@@ -457,17 +543,22 @@ void kv_emit_delete_to_eol(void) {
     kv_emit_tap(KV_LCTL_KC(KV_X));
 }
 
-/* C/D/Y 带计数：选区 = [光标, 下面第 n-1 行的行尾]（真实 Vim 的 `dN$`）。 */
-static void emit_eol_range(int n) {
+/* C/D/Y 带计数：选区 = [光标, 下面第 n-1 行的行尾]（真实 Vim 的 `dN$`）。
+ * `tail` 是调用方随后还要发的固定键数（Ctrl+X，必要时 + Shift+Enter,Left）；
+ * 成本 = 1(Shift+End) + (n−1)(Shift+Down) + [n>1](Shift+End) + tail，按 1+tail + 1×n 估。
+ * 返回实际使用的 n（可能被确定性截断，下限 1）。 */
+static int emit_eol_range(int n, int tail) {
+    n = kv_emit_clamp_n(n, 1 + tail, 1);
     kv_emit_tap(KV_LSFT_KC(KV_END));
     if (n > 1) {
         kv_emit_taps(KV_LSFT_KC(KV_DOWN), n - 1);
         kv_emit_tap(KV_LSFT_KC(KV_END));
     }
+    return n;
 }
 
-void kv_emit_delete_to_eol_n(int n) { if (n < 1) n = 1; s_reg_linewise = false; emit_eol_range(n); kv_emit_tap(KV_LCTL_KC(KV_X)); }
-void kv_emit_change_to_eol_n(int n) { if (n < 1) n = 1; s_reg_linewise = false; emit_eol_range(n); kv_emit_tap(KV_LCTL_KC(KV_X)); kv_emit_enter_insert(KV_I); }
+void kv_emit_delete_to_eol_n(int n) { if (n < 1) n = 1; s_reg_linewise = false; emit_eol_range(n, 1); kv_emit_tap(KV_LCTL_KC(KV_X)); }
+void kv_emit_change_to_eol_n(int n) { if (n < 1) n = 1; s_reg_linewise = false; emit_eol_range(n, 1); kv_emit_tap(KV_LCTL_KC(KV_X)); kv_emit_enter_insert(KV_I); }
 
 void kv_emit_visual_enter(void) { kv_emit_tap(KV_LSFT_KC(KV_RGHT)); }
 
@@ -486,6 +577,11 @@ void kv_emit_visual_paste(void)  { kv_emit_tap(KV_LCTL_KC(KV_V)); kv_emit_tap(KV
  * 旧实现一律 Ctrl+V（`P` 先 `←`）：`xp`/`ylp`/`ddp` 都会粘错位置（行级 `yyp` 恰好蒙对）。 */
 void kv_emit_paste_n(bool before, int n) {
     if (n < 1) n = 1;
+    /* 定位键数（固定）：行级 p 是 End,→ 2 键，字符级 p 是 → 1 键，P 无定位。
+     * 成本 = 定位 + 1×n（Ctrl+V），尾键没有别的。**先截断再定位**：
+     * 定位键会占掉预算，若先发再取 room，算出的 n 会偏大。 */
+    const int loc = before ? 0 : (s_reg_linewise ? 2 : 1);
+    n = kv_emit_clamp_n(n, loc, 1);
     /* **只定位一次**：逐个"定位 + 粘贴"会把副本交错插到不同位置（审查 P0-5）。 */
     if (!before) {
         if (s_reg_linewise) { kv_emit_tap(KV_END); kv_emit_tap(KV_RGHT); }
@@ -510,8 +606,7 @@ void kv_emit_join(void) {
 void kv_emit_join_n(int n) {
     if (n < 1) n = 1;
     int reps = (n > 1) ? n - 1 : 1;
-    int room = KV_CMD_KEY_BUDGET - kv_emit_pending();
-    int maxr = room / 4;                       /* J = End, Space, Delete, Left */
+    int maxr = kv_emit_room() / 4;             /* J = End, Space, Delete, Left（每次 4 键） */
     if (maxr < 1) maxr = 1;
     if (reps > maxr) reps = maxr;
     for (int i = 0; i < reps; i++) kv_emit_join();

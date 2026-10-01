@@ -5,6 +5,14 @@
 #include "../include/kv_kc.h"
 #include "ctx.h"
 
+/* 发送队列预算（design §4.4）。EMIT_CAP=256 且溢出**静默丢键**（= 数据损坏），
+ * 故所有带计数的发射器都必须先按剩余预算截断计数：
+ *   kv_emit_room()                 —— KV_CMD_KEY_BUDGET(250) − kv_emit_pending()，下限 0
+ *   kv_emit_clamp_n(n, fix, per)   —— 把 n 截断到 fixed + per×n ≤ room 的最大值（下限 1）
+ * KV_CMD_KEY_BUDGET 定义在 command.c。 */
+int kv_emit_room(void);
+int kv_emit_clamp_n(int n, int fixed, int per);
+
 /* Motion kinds. */
 typedef enum {
     M_NONE = 0,

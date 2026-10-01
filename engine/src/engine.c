@@ -94,6 +94,9 @@ static void vline_reset(void) {
 static void vline_move(bool up, int n) {
     if (n < 1) n = 1;
     if (n > 99) n = 99;
+    /* 发送队列预算（design §4.4）：本函数随后至多发 n+3 键（重锚骨架 + 贴边键），
+     * 按剩余预算截断 n —— 否则连续大计数行选动作会撑爆 256 格队列并静默丢键。 */
+    n = kv_emit_clamp_n(n, 3, 1);
     if (s_vl_abs) {                       /* 行号未知：只做纵向扩展 + 按活动端所在边界收边 */
         kv_emit_vline_move(up, n);
         if (s_vl_up) kv_emit_vline_move_head();   /* gg 之后：活动端是上边界 → 贴行首 */
@@ -146,6 +149,9 @@ static void vchar_move(bool right, int n) {
     s_v_rt1 = false;
     if (n < 1) n = 1;
     if (n > 99) n = 99;
+    /* 发送队列预算（design §4.4）：本函数最多发 n+2 键（重锚路径的 Esc + Shift+方向），
+     * 按剩余预算截断 n —— 否则连续大计数动作会把 256 格队列撑到顶并静默丢键。 */
+    n = kv_emit_clamp_n(n, 2, 1);
     if (s_v_abs) {                        /* 偏移已失效：旧的"每步一个 Shift+方向" */
         for (int i = 0; i < n; i++) kv_emit_visual_motion(right ? KV_L : KV_H);
         return;
@@ -199,9 +205,13 @@ static void vchar_motion(kv_keycode_t kc, int n) {
         case KV_W: case KV_E: case KV_C_W: case KV_C_E:
             if (s_v_word_ok) {
                 /* D12：先 Shift+Left 把宿主光标移到 Vim 光标列，再 Ctrl+Shift+Right
-                 * 从**正确列**起算词动作，最后 Shift+Right 把目标字符纳入半开选区。 */
+                 * 从**正确列**起算词动作，最后 Shift+Right 把目标字符纳入半开选区。
+                 * 每次 3 键：`v99w` = 297 键 > EMIT_CAP(256)，故按剩余预算截断计数
+                 * （design §4.4：确定性截断，绝不静默丢键）。 */
+                n = kv_emit_clamp_n(n, 0, 3);
                 for (int i = 0; i < n; i++) kv_emit_visual_word_fwd_anchor();
             } else {
+                n = kv_emit_clamp_n(n, 0, 1);
                 for (int i = 0; i < n; i++) kv_emit_visual_motion(kc);
             }
             s_v_abs = true;   /* 目标列未知：后续 h/l 回退 */
@@ -214,9 +224,11 @@ static void vchar_motion(kv_keycode_t kc, int n) {
              * 宿主光标已在**左端**时（上一动作是向左/词动作已越锚），锚点本就在右端，
              * 直接 Ctrl+Shift+Left×n 才是正确且不塌的。 */
             if (!s_v_abs && s_v_end_r) {
+                n = kv_emit_clamp_n(n, 2, 1);   /* Esc, Shift+Left + 1×n */
                 kv_emit_visual_word_back_anchor(n);
                 s_v_end_r = false;    /* 锚点现在在右端：活动端变成左端 */
             } else {
+                n = kv_emit_clamp_n(n, 0, 1);
                 for (int i = 0; i < n; i++) kv_emit_visual_motion(kc);
             }
             s_v_abs = true; s_v_word_ok = false;
@@ -249,16 +261,19 @@ static void vchar_motion(kv_keycode_t kc, int n) {
                 kv_emit_tap(KV_LSFT_KC(KV_LEFT));
                 s_v_rt1 = false;   /* 光标已在 Vim 所在列，+1 消失 */
             }
+            n = kv_emit_clamp_n(n, 2, 1);   /* 至多 2 键骨架 + Shift+Up×n */
             for (int i = 0; i < n; i++) kv_emit_visual_motion(kc);
             s_v_abs = true; s_v_word_ok = false;
             return;
         case KV_J:
             /* 向下时光标落在右端：只作废 lo/hi 偏移，**保持** s_v_rt1。 */
+            n = kv_emit_clamp_n(n, 0, 1);
             for (int i = 0; i < n; i++) kv_emit_visual_motion(kc);
             s_v_abs = true; s_v_word_ok = false;
             return;
         case KV_C_G:
         default:
+            n = kv_emit_clamp_n(n, 0, 1);
             for (int i = 0; i < n; i++) kv_emit_visual_motion(kc);
             s_v_abs = true; s_v_word_ok = false;
             s_v_rt1 = false;   /* 绝对位置：无法保证 +1 */
@@ -381,6 +396,10 @@ static void rec_replay_n(int n) {
     if (per < 1) return;                          /* 该命令不发键（例如被吞掉） */
     int maxrep = 99 / per;
     if (maxrep < 1) maxrep = 1;
+    /* 预算（design §4.4）：第一次回放已经占掉 per 键，剩下的按剩余预算再限一次
+     * —— 否则 `99.` 压在非空队列上仍会把 256 格队列撑到顶并静默丢键。 */
+    const int fit = kv_emit_room() / per;
+    if (fit < maxrep) maxrep = fit;
     for (int i = 1; i < n && i < maxrep; i++) rec_replay();
 }
 
@@ -468,7 +487,11 @@ static kv_feed_t feed_normal(kv_keycode_t kc) {
                 case T_P:     kv_emit_paste_n(false, n);   reset_pending(); return R_CONSUMED;
                 case T_PUP:   kv_emit_paste_n(true, n);    reset_pending(); return R_CONSUMED;
                 case T_JOIN:  kv_emit_join_n(n);           reset_pending(); return R_CONSUMED; /* NJ 连 N-1 次 */
-                case T_UNDO:  for (i = 0; i < n; i++) kv_emit_undo();           reset_pending(); return R_CONSUMED;
+                case T_UNDO: { /* 每次 1 键；按剩余预算截断（design §4.4） */
+                    n = kv_emit_clamp_n(n, 0, 1);
+                    for (i = 0; i < n; i++) kv_emit_undo();
+                    reset_pending(); return R_CONSUMED;
+                }
                 case T_D_BIG: kv_emit_delete_to_eol_n(n);                       reset_pending(); return R_CONSUMED;
                 case T_C_BIG: kv_emit_change_to_eol_n(n); s_mode = KV_MODE_INSERT; reset_pending(); return R_CONSUMED;
                 case T_Y_BIG: kv_emit_line_op(KV_Y, n);                         reset_pending(); return R_CONSUMED; /* Y ≡ yy */
@@ -627,7 +650,14 @@ static kv_feed_t feed_visual(kv_keycode_t kc) {
              * （`V<Esc>x`@L1 模型 `L1L2\n…`、Vim `1\nL2…`，缓冲区可见）。
              * DOWN 态（锚在 A 行）需 `Up×off`；UP 态光标本就在最上行。 */
             if (!s_vl_abs) {
-                if (!s_vl_up && s_vl_off > 0) kv_emit_taps(KV_UP, s_vl_off);
+                /* 预算（design §4.4）：Up×off 至多 100 键；这里可以**少发到 0**（不是带计数
+                 * 命令的"至少 1 次"），预算里预扣随后的 Home 与 Esc 两个固定键。 */
+                if (!s_vl_up && s_vl_off > 0) {
+                    int up = s_vl_off, room = kv_emit_room() - 2;   /* 预留 Home, Esc */
+                    if (room < 0) room = 0;
+                    if (up > room) up = room;
+                    if (up > 0) kv_emit_taps(KV_UP, up);
+                }
                 kv_emit_tap(KV_HOME);
             }
         } else if (s_v_rt1 || (!s_v_abs && s_v_end_r)) kv_emit_tap(KV_LEFT);
