@@ -12,6 +12,8 @@
 
 退出码：0 = 全绿（含允许的等价变异）；1 = 有未论证的 SURVIVED；2 = 门禁自身错误；130 = SIGINT。
 只用标准库；无交互提示；记录顺序 = 执行顺序（确定性）。
+还原：替换前把原件另存到临时备份目录（连 SIGKILL 也丢不了原件），finally 与 SIGINT/SIGTERM
+处理器都还原，正常结束后删除备份。
 收尾自证：被碰文件与运行前逐字节一致 + 目标文件与全部跟踪文件 git status 干净，
 否则拒绝报绿（退出码 2）；新出现的未跟踪文件只提示（可能来自并发进程）。
 
@@ -28,9 +30,11 @@ from __future__ import annotations
 import argparse
 import os
 import re
+import shutil
 import signal
 import subprocess
 import sys
+import tempfile
 import time
 from pathlib import Path
 
@@ -56,6 +60,7 @@ EXIT_OK, EXIT_SURVIVED, EXIT_ERROR, EXIT_INTERRUPT = 0, 1, 2, 130
 _current: "tuple[Path, bytes] | None" = None
 _touched: "dict[str, bytes]" = {}     # 相对路径 -> 运行前字节（用于收尾自证）
 _child: "subprocess.Popen | None" = None   # 当前套件进程（独立进程组，便于整组终止）
+_backup_dir: "str | None" = None      # 原文件的磁盘备份目录（SIGKILL 也丢不了原件）
 
 
 # --------------------------------------------------------------------------
@@ -233,8 +238,24 @@ def _restore_current() -> None:
         with open(path, "wb") as fh:
             fh.write(data)
     except OSError as exc:                        # 绝不静默
-        sys.stderr.write("[mutants] 致命：还原 %s 失败: %s\n" % (path, exc))
+        sys.stderr.write("[mutants] 致命：还原 %s 失败: %s（原件备份：%s）\n"
+                         % (path, exc, _backup_dir or "无"))
     _current = None
+
+
+def _backup(rel: str) -> None:
+    """把原件另存一份到临时目录：即使进程被 SIGKILL、还原代码没能跑到，原件也在。"""
+    global _backup_dir
+    if _backup_dir is None:
+        _backup_dir = tempfile.mkdtemp(prefix="kvmutants-")
+    (Path(_backup_dir) / rel.replace("/", "_")).write_bytes((REPO_ROOT / rel).read_bytes())
+
+
+def _drop_backups() -> None:
+    global _backup_dir
+    if _backup_dir:
+        shutil.rmtree(_backup_dir, ignore_errors=True)
+        _backup_dir = None
 
 
 def _verify_touched() -> "list[str]":
@@ -278,6 +299,7 @@ def _on_signal(signum, _frame):                   # noqa: ANN001 - signal handle
     _kill_child()
     _restore_current()
     restore_tracked_bins("SIGINT/SIGTERM")
+    _drop_backups()
     sys.stderr.write("\n[mutants] 收到信号 %d：已终止套件并还原被改文件，中断（退出码 %d）\n"
                      % (signum, EXIT_INTERRUPT))
     sys.stderr.flush()
@@ -291,6 +313,7 @@ def apply_mutant(m: Mutant) -> None:
     global _current
     path = m.path
     if m.file not in _touched:
+        _backup(m.file)                           # 磁盘备份（SIGKILL 兜底）
         _touched[m.file] = path.read_bytes()
     data = path.read_bytes()
     old_b, new_b = m.old.encode("utf-8"), m.new.encode("utf-8")
@@ -360,6 +383,7 @@ def _print_table(rows: "list[tuple[str, str, str, str]]", out=sys.stdout) -> Non
 # main
 # --------------------------------------------------------------------------
 def main(argv: "list[str] | None" = None) -> int:
+    global _backup_dir
     ap = argparse.ArgumentParser(
         prog="run.py",
         description="声明式变异门禁：施加 mutants.txt 的替换、跑套件、分类、还原。",
@@ -426,6 +450,12 @@ def main(argv: "list[str] | None" = None) -> int:
     baseline = set(dirty)
     baseline_tracked = set(porcelain(untracked=False))
 
+    # 备份目录先建好并把路径打出来：即使进程被 SIGKILL，用户也知道去哪找原件。
+    _backup_dir = tempfile.mkdtemp(prefix="kvmutants-")
+    if not quiet:
+        sys.stderr.write("[mutants] %d 条记录；逐条施加→跑套件→还原。被改文件的原件备份在 %s"
+                         "（正常结束即删除）\n" % (len(records), _backup_dir))
+
     signal.signal(signal.SIGINT, _on_signal)
     signal.signal(signal.SIGTERM, _on_signal)
 
@@ -480,6 +510,7 @@ def main(argv: "list[str] | None" = None) -> int:
         _kill_child()
         _restore_current()
         restore_tracked_bins("KeyboardInterrupt")
+        _drop_backups()
         sys.stderr.write("\n[mutants] 中断：已还原被改文件\n")
         return EXIT_INTERRUPT
     finally:
@@ -515,10 +546,12 @@ def main(argv: "list[str] | None" = None) -> int:
         print("  ERROR      %s —— %s" % (m.id, msg))
 
     if clean_problems:
-        sys.stderr.write("\n[mutants] 工作区自证失败，拒绝报绿：\n")
+        sys.stderr.write("\n[mutants] 工作区自证失败，拒绝报绿（原件备份保留在 %s，"
+                         "可用 git checkout -- 恢复）：\n" % (_backup_dir or "无"))
         for p in clean_problems:
             sys.stderr.write("  - %s\n" % p)
         return EXIT_ERROR
+    _drop_backups()
     if not quiet:
         sys.stderr.write("[mutants] 收尾自证：%d 个被碰文件与运行前逐字节一致；"
                          "目标文件与全部跟踪文件 git status 干净\n" % len(_touched))
