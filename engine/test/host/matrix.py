@@ -549,8 +549,12 @@ XFAIL = {
     '2ddp': 'PASTEC',
     'ddpp': 'PASTEC',
     'rep-ddp': 'PASTEC',
-    'last-Gddp': 'PASTEC',
-    'last-GddP': 'PASTEC',
+    # Same root cause as last-Gddx: `G` -> Ctrl+End lands after the final newline (D14),
+    # so `dd` acts on the wrong line -- not the paste cursor.
+    'last-Gddp': 'D14',
+    # Same root cause as last-Gddx: `G` -> Ctrl+End lands after the final newline (D14),
+    # so `dd` acts on the wrong line -- not the paste cursor.
+    'last-GddP': 'D14',
     'last-jddp': 'PASTEC',
     'last-jddP': 'PASTEC',
     'Dp': 'EOLDEL',
