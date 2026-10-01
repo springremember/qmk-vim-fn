@@ -18,16 +18,16 @@
 | 行首(^) | `^` | `Home` | |
 | 行尾 | `$` | `End` | |
 | 文档末 | `G` | `Ctrl+End` | |
-| 删字符 | `x` | `Delete` | |
-| 前一字符 | `X` | `Backspace` | |
-| 改字符 | `s` | `Shift+→`,change(+Insert) | |
+| 删字符 | `x` | `Shift+→`,`Ctrl+X`（选中光标下 1 字符并剪切 → 写无名寄存器） | D7 |
+| 前一字符 | `X` | `Shift+←`,`Ctrl+C`,`Backspace`（**不**用 `Shift+←,Ctrl+X`：列 0 空选区会被当成"剪切整行"） | D7 |
+| 改字符 | `s` | `Shift+→`,`Ctrl+X`,Insert（`s`≡`cl`） | D7 |
 | 撤到行尾 | `C` | 选到行尾→`Ctrl+X`(+Insert) | |
 | 删到行尾 | `D` | 选到行尾→`Ctrl+X` | |
-| 复制到行尾 | `Y` | 选到行尾→`Ctrl+C` | |
-| 整行改 | `S` | `Home`,`Home`,`Shift+End`,change(+Insert) | |
-| 粘贴 | `p` | `Ctrl+V`（光标后粘） | |
-| 向前粘 | `P` | `←`,`Ctrl+V`（光标前粘；**不做行选定位**） | |
-| 合并 | `J` | `End`,`Space`,`Delete`（插一个空格；不去前导空白） | |
+| 复制到行尾 | `Y` | **≡ `yy`（行级）**：`Home`,`Home`,`Shift+Down×1`,`Ctrl+C`,`Esc`,`Up×1` | D8 |
+| 整行改 | `S` | **≡ `cc`**：`Home`,`Home`,`Shift+End`,`Shift+→`,`Ctrl+X`,`Shift+Enter`,`←`(+Insert) | |
+| 粘贴 | `p` | **按无名寄存器类型定位**（`s_reg_linewise`）：字符级=`→`,`Ctrl+V`；行级=`End`,`→`,`Ctrl+V` | D7 |
+| 向前粘 | `P` | 同上定位：字符级=`Ctrl+V`；行级=`Ctrl+V`（**不发 `←`**） | D7 |
+| 合并 | `J` | `End`,`Space`,`Delete`,`←`（插一个空格并把光标留在空格上；不去前导空白） | D15 |
 | 撤销 | `u` | `Ctrl+Z`（**单次**） | E4 |
 | 重复 | `.` | 重放上一命令 token | A2 |
 | Normal Esc 透传 | `Esc`（Normal） | 发真实 `Esc`，回 Insert | |
@@ -51,27 +51,27 @@
 ## 3. 行操作（自叠）
 | 用例 | 输入 | 期望 | 关联 |
 |---|---|---|---|
-| 删行 | `dd` | `Home,Home,Shift+End,Ctrl+X,Backspace` | E1,E4 |
-| 删 3 行 | `3dd` | `Home,Home,Shift+End,Shift+Down×2,Ctrl+X,Backspace`（单次选区覆盖 3 行） | |
-| 复制行 | `yy` | `Home,Home,Shift+Down×1,Ctrl+C` | |
-| 改行 | `cc` | `Home,Home,Shift+End`,`Ctrl+X`(+Insert) —— **不发 `Backspace`**，留一个空行 | |
-| 改 3 行 | `3cc` / `3S` | `Home,Home,Shift+End,Shift+Down×2`,`Ctrl+X`(+Insert)（单次选区覆盖 3 行；留一个空行） | |
-| 复制 3 行 | `3yy` | `Home,Home,Shift+Down×3,Ctrl+C`（单次选区覆盖 3 行） | |
-| `dd` 末行 | 在文档末行 `dd` | 可删除 | E1 |
-| `dd` 首行 | 在首行 `dd` | 允许留一个空行（已知取舍） | E1 |
-| `dd` 后撤销 | `dd`,`u` | **只恢复一半**，需再 `u` | E4,#10 |
+| 删行 | `dd` | `Home,Home,Shift+End,`**`Shift+→`**`,Ctrl+X`（`Shift+→` 把**行尾换行**纳入半开选区，否则首行留空行） | E1 |
+| 删 3 行 | `3dd` | `Home,Home,Shift+End,Shift+→,Shift+Down×2,Ctrl+X`（单次选区覆盖 3 行） | |
+| 复制行 | `yy` | `Home,Home,Shift+Down×1,Ctrl+C,Esc,Up×1`（`Esc` 取消宿主残留选区；`Up` 回原位） | |
+| 改行 | `cc` | `Home,Home,Shift+End,Shift+→,Ctrl+X,Shift+Enter,←`(+Insert) —— **不发 `Backspace`**，留一个空行且寄存器为**行级** | |
+| 改 3 行 | `3cc` / `3S` | `Home,Home,Shift+End,Shift+→,Shift+Down×2,Ctrl+X,Shift+Enter,←`(+Insert)（单次选区覆盖 3 行；留一个空行） | |
+| 复制 3 行 | `3yy` | `Home,Home,Shift+Down×3,Ctrl+C,Esc,Up×3`（单次选区覆盖 3 行） | |
+| `dd` 末行 | 在文档末行 `dd` | 可删除（缓冲区与寄存器均与 Vim 一致） | E1 |
+| `dd` 首行 | 在首行 `dd` | **不留空行**（`Shift+→` 已把行尾换行纳入选区；实测 `dd`@L1 与 Vim 一致） | E1 |
+| `dd` 后撤销 | `dd`,`u` | **一次 `u` 完整恢复**（`dd` 现为单次 `Ctrl+X`，只有一个宿主编辑步骤；实测 `ddu` 与 Vim 一致） | E4 |
 
 ## 4. 缩进
 | 用例 | 输入 | 期望 | 关联 |
 |---|---|---|---|
-| 缩进当前行 | `>>` | 缩进 | |
-| 反缩进当前行 | `<<` | 反缩进 | |
-| 缩进到行首 | `>0` | 缩进到行首（`0` 作行首、丢弃 n） | |
-| 反缩进到行首 | `<0` | 反缩进到行首 | |
-| 缩进到移动 | `>j` | 缩进到下一行 | |
-| 计数缩进 | `3>>` | 缩进 3 行 | |
-| 操作符+计数 | `2>3j` | 缩进 6 行 | #2 |
-| 后置计数含 0 | `>10j` / `>20j` | 缩进 10 / 20 行（`0` 续接计数） | #2 |
+| 缩进当前行 | `>>` | `Home`,`Tab`（n=1 无选区，在行首插一个 Tab） | |
+| 反缩进当前行 | `<<` | `Home`,`Shift+Tab` | |
+| 缩进到行首 | `>0` | 缩进当前行（`0` 作行首、丢弃 n；`h`/`l`/`^`/`$` 同理恒为当前行） | D4 |
+| 反缩进到行首 | `<0` | 反缩进当前行 | D4 |
+| 缩进到移动 | `>j` | **2 行**（当前行 + 下 1 行 = `n+1` 行；vim.tiny 实测 `>j` 缩进 2 行） | |
+| 计数缩进 | `3>>` | 缩进 3 行（n≥2 走多行骨架 + `Esc,Up×n,Home[,Right]`） | |
+| 操作符+计数 | `2>3j` | **7 行**（`fold_counts(2,3)=6` ⇒ `>6j` ⇒ `n+1=7`；vim.tiny 实测 7 行） | #2 |
+| 后置计数含 0 | `>10j` / `>20j` | **11 / 21 行**（`0` 续接计数；同样是 `n+1` 行，vim.tiny 实测 11 行） | #2 |
 
 ## 5. 前缀 `g` / `Z`
 | 用例 | 输入 | 期望 | 关联 |
@@ -87,17 +87,18 @@
 | 用例 | 输入 | 期望 | 关联 |
 |---|---|---|---|
 | 前缀计数多位移移动 | `12w` | 移动 12 词 | |
-| 计数作用于 `x` | `3x` | 删 3 个字符（`Delete` ×3） | A1 |
-| 计数作用于 `s` | `3s` | 改 3 个字符（`Shift+Right,Delete` ×3 + Insert） | A1 |
-| 计数作用于 `p` | `3p` | 粘贴 3 次（`Ctrl+V` ×3） | A1 |
-| 计数作用于 `P` | `3P` | 粘贴 3 次（`Left,Ctrl+V` ×3） | A1 |
-| 计数作用于 `J` | `3J` | 连接 3 行（`End,Space,Delete` ×3） | A1 |
-| 计数作用于 `u` | `3u` | 撤销 3 次（`Ctrl+Z` ×3） | A1 |
+| 计数作用于 `x` | `3x` | **一次**选中 3 个字符再剪切（`Shift+→×3, Ctrl+X`）—— 寄存器拿到全部 3 个（逐个删只剩最后一个） | A1,P0-6 |
+| 计数作用于 `s` | `3s` | `Shift+→×3, Ctrl+X`,Insert（寄存器拿到全部 3 个） | A1 |
+| 计数作用于 `p` | `3p` | **只定位一次**再 `Ctrl+V×3`（逐个定位会把副本交错插入） | A1,P0-5 |
+| 计数作用于 `P` | `3P` | `Ctrl+V×3`（字符级 `P` 无定位；行级 `P` 也只在当前位置粘） | A1,P0-5 |
+| 计数作用于 `J` | `3J` | 连接 3 行 = `End,Space,Delete,←` **×(N−1)=2 次**（Vim：`2J` 连 2 行、`3J` 连 3 行） | A1,D9 |
+| 计数作用于 `u` | `3u` | 撤销 3 次（`Ctrl+Z` ×3，按剩余预算截断） | A1 |
 | 计数作用于 `.` | `3.` | 重复 3 次（见 §9 `N.` 行） | A1 |
 | 计数不作用于 `gg` | `3gg` | 丢弃 3，`gg` 执行 | #2b |
 | 计数不作用于 `ZZ` | `3ZZ` | 丢弃 3，`ZZ` 执行 | A1 |
-| 计数作用于 `X` | `3X` | 向前删 3 个字符（`Backspace` ×3） | A1 |
-| 计数作用于 `C/D/Y` | `3C`/`3D`/`3Y` | 作用到**下面第 N-1 行的行尾**（`Shift+End[,Shift+Down×(N-1),Shift+End]`） | A1 |
+| 计数作用于 `X` | `3X` | **一次**选中 3 个字符再复制+删（`Shift+←×3, Ctrl+C, Backspace`） | A1 |
+| 计数作用于 `C/D` | `3C`/`3D` | 作用到**下面第 N-1 行的行尾**：`Shift+End, Shift+Down×2, Shift+End` + `Ctrl+X`（`3C` 再进 Insert） | A1 |
+| 计数作用于 `Y` | `3Y` | **≡ `3yy`（行级）**：`Home,Home,Shift+Down×3,Ctrl+C,Esc,Up×3` | A1,D8 |
 | `S` 接受计数 | `3S` | 改 3 行（≡`3cc`） | #2b |
 | 计数不作用于插入键 | `3i` / `3I` / `3a` / `3A` / `3o` / `3O` | 丢弃 3，进入 Insert | A1 |
 | 计数不作用于 `v`/`V` | `3v` / `3V` | 丢弃 3，进入 Visual / Visual-Line | A1 |
@@ -115,14 +116,14 @@
 ## 7. Visual
 | 用例 | 输入 | 期望 | 关联 |
 |---|---|---|---|
-| 进入并删 | `v` `l` `d` | `Shift+→` 扩展 → `Shift+End`+`Ctrl+X` 删除 → 回 Normal | §4.9 动作后退出 |
+| 进入并删 | `v` `l` `d` | `Shift+→`（`v` 预选光标下 1 字符）→ `Shift+→`（`l`）→ `Ctrl+X`（`d`，直接作用当前选区）→ 回 Normal | §4.9 动作后退出 |
 | 选择复制 | `v` `e` `y` | 扩展选区 → `Ctrl+C` → 回 Normal | §4.9 |
 | 行选进入 | `V` | `Home`,`Shift+End` → 选中整行（`off=0`，DOWN 态） | §4.9 |
 | 行选向下 | `V` `j` | `Shift+Down`,`Shift+End`（DOWN 态直接扩展） | §4.9 |
 | 行选向下计数 | `V` `3` `j` | 一次移动 3 行：`Shift+Down`×3,`Shift+End`（不是 3× 基础序列） | §4.8 §4.9 |
-| 行选向上（方向翻转 → 重锚） | `V` `k` | `Shift+Up`,`Down`×2,`Home`,`Shift+Up`×2（锚移到 A+1 行首，选区含 A 行换行） | §4.9 |
+| 行选向上（方向翻转 → 重锚） | `V` `k` | 进入 `Home`,`Shift+End` 后 `Down`×1,`Home`,`Shift+Up`×2（锚移到 A+1 行首，选区含 A 行换行；**直接从当前光标重建**，不做冗余 `Shift+Up` 再重锚） | §4.9 |
 | 行选向上后回下 | `V` `k` `j` | 接上行后 `Shift+Down`（`off=0` 仍处 UP 态，不重锚） | §4.9 |
-| 行选向下越过锚点回锚 | `V` `k` `j` `j` | 上行 `j` 后 `off>0`：`Shift+Down`,`Up`,`Home`,`Shift+Down`,`Shift+End`（重锚回 A 行首） | §4.9 |
+| 行选向下越过锚点回锚 | `V` `k` `j` `j` | `Shift+Down`（第一个 `j`，`off=0`）；第二个 `j` 使 `off=+1>0` → 重锚回 DOWN：`Home`,`Shift+Down`,`Shift+End` | §4.9 |
 | 行选不改行范围 | `V` `h` / `V` `l` / `V` `0` / `V` `^` / `V` `$` | **0 输出**（真实 Vim 里行范围不变） | §4.9 |
 | 行选动作-复制 | `V` `y` | `Shift+Right`,`Ctrl+C`,`Esc` → 回 Normal（linewise，含换行） | §4.9 |
 | 行选动作-删除 | `V` `d` / `V` `x` | `Shift+Right`,`Ctrl+X` → 回 Normal（**删掉整行**，不是只清正文） | §4.9 |
@@ -223,10 +224,10 @@
 
 | 编号 | 用例 | 期望 |
 |---|---|---|
-| E1 | `dd` 末行 / 首行 | 末行可删；首行留空行（取舍） |
+| E1 | `dd` 末行 / 首行 | 末行可删；**首行不留空行**（`Shift+→` 纳入换行，实测与 Vim 一致） |
 | E2 | 修饰键释放被吞后继续命令 | 不再反复重装修饰位、不卡 `Shift` |
 | E3 | `Alt+Tab` | Tab 不卡（key-up 对称透传） |
-| E4 | `dd` 后 `u` | 方案 A：一次只恢复一半 |
+| E4 | `dd` 后 `u` | `dd` 现为**单次**宿主编辑 ⇒ 一次 `u` **完整恢复**（旧"方案 A 半恢复"随 `Backspace` 版 `dd` 一并作废） |
 | E5 | 子模块 bump | 重编并校验 `output`/`.build` 哈希（流程项） |
 | E6 | 集成（层数/rgbrec） | 键盘侧，不回归 |
 
@@ -249,7 +250,8 @@
 
 > 仓库内自包含的端到端对拍：把引擎按当前 `engine/src/*.c` 发出的**宿主键码流**喂给
 > `engine/test/host/kvhost.py` 的宿主编辑器模型，再与真实 `/usr/bin/vim.tiny`（VIM 9.1）
-> 对同一按键序列的结果逐例比较（共 599 例：Normal / Visual / Visual-Line / 粘贴寄存器）。
+> 对同一按键序列的结果逐例比较（**共 598 例**：Normal / Visual / Visual-Line / 粘贴寄存器）。
+> 工程流程、验收基线与棘轮语义的权威表述见 [`../qmk/engineering-spec.md`](../qmk/engineering-spec.md) §2/§3。
 
 运行（在 `engine/` 下）：
 
@@ -267,13 +269,15 @@
 Vim 侧统一使用 `vim.tiny -Nu NONE -N -es -c 'set nofixendofline' -c "silent! normal! <KEYS>" -c 'w! OUT' -c 'qall!' IN`；
 转义字节是**真实** `\x1b`（不是 `\e` 两个字符），且总是先 `gg` 到第 1 行（`-es` 下光标从末行开始）。
 
-**xfail 归属**：`engine/test/host/matrix.py` 顶部的 `XFAIL` 表把用例名映射到
-[`design.md`](design.md) §4.9「已知偏差」列表的编号 ①–⑩（`DEVIATIONS` 表给出每个编号的含义），
-每个 xfail 都必须写明编号以保证可审计。只有命中该表的用例才允许不符；其余不符一律判 FAIL，
-打印用例名/输入缓冲/按键序列/模型结果/Vim 结果。表中已能对上真 Vim 的用例以 `XPASS` 列出，提示删除。
+**xfail 归属**：`engine/test/host/matrix.py` 顶部的 `XFAIL` 表把用例名映射到**偏差编号**，
+`DEVIATIONS` 表给出每个编号的含义 + 出处章节（`design.md` §4.4/§4.9、`readme.md`）。
+现有编号既有 §4.9 VISUAL_LINE 的 ①–⑩，也有独立编号 `D2`/`D14`–`D18`/`D23`/`E-W`/`YCOL`/
+`VCUR`/`PASTEC`/`EOLDEL`/`GPFX`/`FAILMOT`/`VCAP`/`VBLOCK`/`VPASTE`/`IND`。每个 xfail 都必须
+写明编号以保证可审计。只有命中该表的用例才允许不符；其余不符一律判 FAIL，打印用例名/输入缓冲/
+按键序列/模型结果/Vim 结果。表中已能对上真 Vim 的用例以 `XPASS` 列出，提示删除。
 
-**退出码**：0 = 全部通过或全部命中已声明偏差；非 0 = 存在未声明的不符（当前引擎仍有此类，
-见输出末尾的 `FAILING CASES` 汇总）。`make test` / `make glue-test` 不受影响。
+**退出码**：0 = 全部通过或全部命中已声明偏差；非 0 = 存在未声明的不符、或存在 XPASS/可删除的
+棘轮条目。`make test` / `make glue-test` 不受影响。
 
 ## 15. 矩阵测试的 ratchet 基线（`engine/test/host/known_failures.txt`）
 
@@ -287,16 +291,34 @@ Vim 侧统一使用 `vim.tiny -Nu NONE -N -es -c 'set nofixendofline' -c "silent
 | `matrix.py` 的 `XFAIL`（已声明偏差）里的用例现在一致 | **硬失败**，要求删除（同严格 xfail） |
 
 格式：`<用例名> <失败维度>`，维度 ∈ `buf`（缓冲区）、`reg`（无名寄存器）、`cur`（光标），如
-`yyp cur`、`dw buf+reg`。用例名不唯一（少数用例有两个缓冲区），表按名字合并维度。
+`yyp cur`、`dw buf+reg`。
 
-**为什么有这张表**：599 个用例里仍有一批与 Vim 不一致，其中大部分是 `design.md` §4.4/§4.9
+**重名陷阱（判定规则）**：少数用例名重复（同一名字、两个缓冲区），因此**不能按名字建索引**判定
+通过/失败。正确判据是"该名字是否**还有任何**不符实例"：
+- XPASS 只在某名字**没有任何**失败实例时才算（否则"一个通过、一个不符"会被误判成 XPASS，
+  进而错误地要求删表）；
+- 基线条目同理，只在**没有任何**同名实例仍失败时才算"已修好，应删行"。
+新增用例时**名字必须唯一**（生成器已用 `_` 转义空格）。
+
+**为什么有这张表**：598 个用例里仍有一批与 Vim 不一致，其中大部分是 `design.md` §4.4/§4.9
 或 `readme.md` 里**已经声明**的偏差，只是还没逐条搬进 `XFAIL`；其余是纯键码层**固有**的
 （引擎读不到缓冲区边界/长度）或仍待修的缺陷。把它们留在表里可让门禁立刻可用；
 **优先把条目搬进 `XFAIL` 并引用声明**，只有确实无法引用时才留在表里。
 
 
-【当前状态】基线已排空（只剩头部说明）：`TOTAL 598 PASS 399 XFAIL 199 KNOWN-FAIL 0 NEW-FAIL 0 XPASS 0`。199 个不符用例全部已逐条引用 `DEVIATIONS` 里的已书面声明，因此棘轮基线里已没有“未引用”项；门禁现在等价于**严格 xfail**：任何未声明的不符都会硬失败（不再被基线掩盖）。
+【当前状态（2026-10-01，HEAD `7be99d1`）】基线**已排空**（只剩头部说明）：实测
+`TOTAL 598 PASS 405 XFAIL 193 KNOWN-FAIL 0 NEW-FAIL 0`、**退出码 0**（无 XPASS）。193 个不符用例
+全部已逐条引用 `DEVIATIONS` 里的书面声明，因此棘轮基线里已没有"未引用"项；门禁现在等价于
+**严格 xfail**：任何未声明的不符都会硬失败（不再被基线掩盖）。
+> 注：`matrix.py` 只在**非空**时打印 `XPASS ...`/`NEW FAILURES ...`/`FIXED ...` 行，所以"绿"的
+> 输出里**没有** `XPASS 0` 这个字样；判绿看退出码 0 与 `KNOWN-FAIL 0 NEW-FAIL 0`。
 
-【名字冲突】生成器曾把 `'yl l p'` 与 `'yllp'` 都命名为 `pp-yllp`，使后者被隐藏（一个通过、一个不符，而 XFAIL 按名字建索）。现用 `_` 保证名字唯一，并删掉 `'yl l p'` —— 它含**字面空格键**，而宿主模型未实现空格作为移动，该用例测的是模型而不是引擎。
+【名字冲突】生成器曾把 `'yl l p'` 与 `'yllp'` 都命名为 `pp-yllp`，使后者被隐藏（一个通过、一个不符，而 XFAIL 按名字建索引）。现用 `_` 保证名字唯一，并删掉 `'yl l p'` —— 它含**字面空格键**，而宿主模型未实现空格作为移动，该用例测的是模型而不是引擎。
 已验证门禁**有效**（不是橡皮图章）：注入一个语义变异（去掉行级 `p` 的 `End,→` 定位）后
 `make matrix-test` 由 0 变 2、报出 `NEW-FAIL 8`。
+
+【`matrix.py` 里的陈旧说明文字（代码，本次未改）】`DEVIATIONS` 中 `D17` 的说明仍写"cgg@行0
+切掉整行"，而 `design.md` §4.9 ⑭ 已实测它不再构成偏差；`VBLOCK` 的说明仍写"OPEN (real defect,
+not yet fixed)"，而 `design.md` §4.9 的 D24 已修好（`vis-ky`/`v-k-y` 已通过、无用例引用它）。
+两者都属 `engine/test/host/matrix.py`（代码），本次审计**只登记不改动**；下次改该文件时应同步
+说明文字或删条目。`③`/`⑥`/`⑩` 三个编号当前无用例引用（合法保留：无实例触发）。

@@ -19,13 +19,20 @@
 - `qmk/` —— QMK 适配层与**流程规范**。
   - [`qmk/README.md`](qmk/README.md)：**共享层 ↔ 键盘分支的同步与验证规范**
     （文档先行顺序、子模块同步、编译归档、验证清单、坑位清单）。
+  - [`qmk/engineering-spec.md`](qmk/engineering-spec.md)：**工程规范与验收基线**
+    （文档先行/测试先红/变异验证/独立复核、`make test`/`glue-test`/`matrix-test` 的实测数字、
+    矩阵与棘轮语义、键码预算规范、体积评估结论、发布判据、真机未验证清单）。
 
 ## 构建 / 测试引擎
 
 ```sh
 make -C engine test        # 引擎单测
 make -C engine glue-test   # QMK 适配层 / 共享 keymap 层
+make -C engine matrix-test # 与真实 vim.tiny 的矩阵对拍
 ```
+
+> 当前实测基线与判据（含"什么算绿"）见 [`qmk/engineering-spec.md`](qmk/engineering-spec.md) §2。
+> 注意 `make glue-test` 会改写两个已跟踪的测试二进制，收尾需 `git checkout --` 还原。
 
 ## 改动的硬性顺序（文档先行）
 

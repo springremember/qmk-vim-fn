@@ -35,7 +35,8 @@
 
 - `gg` / `G` 改为 `Ctrl+Home` / `Ctrl+End`（比上游的 `Ctrl+A`+方向更可靠）。
 - `o` / `O` 换行改用 **`Shift+Enter`**（部分编辑器 `Enter` 行为不一致）。
-- `dd` 行删除重写（见 §5 E1）：`Home×2 → Shift+End → Ctrl+X → Backspace`。
+- `dd` 行删除重写（见 §5 E1）：**现行**为 `Home×2 → Shift+End → Shift+→ → [Shift+Down×(n−1)] → Ctrl+X`
+  （**单次宿主编辑**，首行不留空行；`Backspace` 版已于 §7.19 作废）。
 - `yy` 行复制：`Home×2 → Shift+Down×n → Ctrl+C`（`Home×2` 抵消 smart-home）。
 - 操作符待定遇非法键：**清空 pending 并把该键重新识别**（非 vim 键透传）——取代上游 `g` 前缀 / 文本对象的吞键（上游操作符本就重处理）。
 - 计数：仅前缀、**前后相乘**（`2d3w`=`d6w`）；最多 **2 位（≤99）**，第 3 位起忽略；作用域限移动/缩进/行操作（含 `cc`/`S`），其余键**丢弃计数**；其中移动的例外 `G`/`gg` **任何上下文都丢弃计数**（见 §3 A1）。
@@ -94,10 +95,10 @@
 
 | 编号 | 问题 | 处理 |
 |---|---|---|
-| **E1** | `dd` 依赖编辑器 / 末行删不掉 | 定稿 `Home×2 + Shift+End + Ctrl+X + Backspace`：**末行可删**、缩进正确、`p` 可粘；代价：**首行留一个空行**、`dd` 是两次宿主编辑 |
+| **E1** | `dd` 依赖编辑器 / 末行删不掉 | 定稿 `Home×2 + Shift+End + Ctrl+X + Backspace`：**末行可删**、缩进正确、`p` 可粘；代价：**首行留一个空行**、`dd` 是两次宿主编辑。**⚠ 该版本已作废**：§7.19 起改为 `Home×2,Shift+End,Shift+→[,Shift+Down×(n−1)],Ctrl+X` —— 首行**不留**空行且为**单次**宿主编辑（2026-10 实测 `dd`@L1 与 Vim 一致） |
 | **E2** | 修饰键"幽灵"放大 → 卡 `Shift` | 旧实现打包 + 无条件 `set_mods`，一次释放被吞即反复重装；目标：**不打包、不回写**，只按物理修饰键影子动作 |
 | **E3** | Alt+Tab 卡 `Tab`（吞 key-up） | 旧实现吞释放；目标：**key-up 一律透传**（held motion 例外） |
-| **E4** | `dd` 撤销需要两步 | `dd` 是两次宿主编辑；**方案 A：取消自动双撤销**——一次 `u` 只恢复一半，需再按一次 |
+| **E4** | `dd` 撤销需要两步 | 旧 `dd` 是两次宿主编辑；**⚠ 已不成立**：现行 `dd` 是单次 `Ctrl+X`，一次 `u` **完整恢复**（实测 `ddu` 与 Vim 的缓冲区+寄存器一致），"方案 A 只恢复一半"作废 |
 | **E5** | 子模块版本错配 | bump 后**必须重编并校验** `output/`、`.build/` 哈希（产物 ≠ 源码） |
 | **E6** | 其它集成 | 裁剪依赖、`layer_count`、rgbrec Fn 特判等 |
 
@@ -190,8 +191,9 @@
 | `cc` / `S` / `Ncc` | 与 `dd` 相同（多发 `Backspace`），**整行被并掉**：`L1\|L2\|L3` ⇒ `L1\|L3` | **留一个空行**：`L1\|\|L3`；`2cc` ⇒ `L1\|\|L4` | 去掉 `Backspace`：`Home×2 → Shift+End [→ Shift+Down×(n−1)] → Ctrl+X`，三种行位置都与 Vim 一致 |
 | `J` | `End → Delete`，得到 `threefour` | 插一个空格：`three four` | `End → Space → Delete`。已知偏差：Vim 还会去掉下一行前导空白，固件读不到空白长度 |
 
-`dd` 的"首行留空行"是 §4.8 E1 里**已记录的历史取舍**（纯键注入下无法同时兼顾首行与末行），
-本次不改，但在 `readme.md` 中与 `cc` 的区别写清楚了。
+`dd` 的"首行留空行"曾是 §4.8 E1 里**已记录的历史取舍**（纯键注入下无法同时兼顾首行与末行），
+**§7.19 起已修**（`Shift+→` 把行尾换行纳入选区），现行 `dd` 在首/中/末行都与 Vim 一致，
+`readme.md` 中与 `cc` 的区别也已同步更新。
 
 ### 7.4 字符级 Visual 动作与复制后的残留选区（2026-09 全面审核）
 
@@ -718,7 +720,7 @@ Vim 也**不**改写，所以 `vhP`/`vlP`/`vllP` 全对。
 `backspace_char_n`/`substitute_n`/`emit_eol_range`/`paste_n`，以及 engine 层的 `vchar_move`/
 `vchar_motion` 各分支/`vline_move`/`Nu`/`N.` 回放/行选 Esc。
 
-**测试**（`test_main.c:1597 test_count_queue_accumulation`，用不 flush 的 `kv_kbd()`）：
+**测试**（`test_main.c:1644 test_count_queue_accumulation`，用不 flush 的 `kv_kbd()`）：
 红 = `pass=715 fail=63`（仅回退 src、保留测试），绿 = **`pass=778 fail=0`**，既有 633 条断言原样通过。
 **变异 31 处：CAUGHT 29**，2 处 SURVIVED 经论证为等价变异（`b` 重锚的重复截断恒等；`C_G/default`
 分支只会以 n=1 到达）。
@@ -729,3 +731,45 @@ Vim 也**不**改写，所以 `vhP`/`vlP`/`vllP` 全对。
 
 **残余**：预填 `pending ≥ 248` 时最小命令仍可能顶到 256，丢掉尾部纯装饰键（改文档键不丢）；
 真实 1 键/ms 排空下不可达，已如实写入 `design.md` §4.4。
+
+### 7.34 文档审计与实测复核（2026-10-01，HEAD `7be99d1`）
+
+本轮**只改文档**（不改 `engine/**`），产出：新增 [`../qmk/engineering-spec.md`](../qmk/engineering-spec.md)
+（工程流程 + 验收基线 + 矩阵/棘轮语义 + 键码预算 + 体积评估 + 发布判据 + 真机未验证清单），
+并修正下列**文档与代码矛盾**（以代码为准）：
+
+| 位置 | 旧文档 | 代码/实测（现行） |
+| :--- | :--- | :--- |
+| `readme.md` §3、`testcase.md` §1/§3/§6 | `x`=`Delete`、`X`=`Backspace`、`s`=`Shift+→,Delete`、`Y`=`y$`、`p`/`P`=裸 `Ctrl+V`/`←,Ctrl+V`、`J` 无 `←`、`3x`=`Delete×3`… | `x`=`Shift+→,Ctrl+X`；`X`=`Shift+←,Ctrl+C,Backspace`；`s`=`Shift+→,Ctrl+X`+Insert；`Y`≡`yy`（行级）；`p`/`P` 按 `s_reg_linewise` 定位；`J` 末尾补 `←`；`Nx`/`NX`/`Ns` **一次**选中 N 字符；`Np`/`NP` 只定位一次；`NJ`=×(N−1)（`command.c:498-618`、`engine.c:455-497`） |
+| `testcase.md` §4 | `>j`=缩进 1 行、`2>3j`=6 行、`>10j`=10 行 | `>j`=**2** 行（`n+1`）；`2>3j`=**7** 行；`>10j`=**11** 行（`command.c:255-257`；`vim.tiny` 实测 2/7/11） |
+| `testcase.md` §7 | `v l d` 含 `Shift+End`；`V k`=`Shift+Up,Down×2,Home,Shift+Up×2`；`V k j j` 含冗余 `Up` | 实测发射流：`v l d`=`Shift+→,Shift+→,Ctrl+X`；`V k`=进入后 `Down,Home,Shift+Up×2`；`V k j j`=进入后 `Shift+Down,Home,Shift+Down,Shift+End`（`command.c:357-369`、`engine.c:94-125`） |
+| `design.md` §4.1 #10、§4.11、§5；`readme.md` §3.2；`testcase.md` §3/§12；`changes.md` §2/§5 | `dd` 两次宿主编辑、`u` 只恢复一半（方案 A）、首行留空行 | `dd` 现为**单次** `Ctrl+X`（`Shift+→` 纳入换行）⇒ 首行不留空行、一次 `u` **完整恢复**；实测 `ddu`/`3ddu`@L1/L4 的缓冲区+寄存器与 `vim.tiny` 一致（模型 `kvhost.py` 有 undo 栈，一次宿主编辑=一次快照） |
+| `testcase.md` §14/§15 | 599 例、`PASS 399 XFAIL 199`、`XPASS 0` 字样、XFAIL 只引 ①–⑩ | 实测 `TOTAL 598 PASS 405 XFAIL 193 KNOWN-FAIL 0 NEW-FAIL 0`、退出码 0；`XPASS` 只在非空时打印；XFAIL 引用 23 个编号（①–⑩ 中仅 ①②④⑤⑦⑧⑨ 有实例 + `D2/D14/D15/D16/D18/D23/E-W/EOLDEL/FAILMOT/GPFX/IND/PASTEC/VCAP/VCUR/VPASTE/YCOL`） |
+| `changes.md` §7.33 | 引用 `test_main.c:1597` | 函数实际在 `test_main.c:1644` |
+| `caps/readme.md` §1 | "键盘侧零代码接入（只提供 `hold_ms` 等 cfg 值）" | `hold_ms` 只用于鼠标模式；Caps 接入契约是 `cfg->fn_layer` + 既有 `Caps` 键位（`caps/design.md` §1、`qmk/vim_keymap_common.h:40,48`） |
+| `docs/{全面审查报告,键盘迁移计划}.md` | Caps 单击开关 vim / 长按临时 Normal；`C/D/Y/X`、`x s p P J u .` 丢弃计数；NUT65 不实现休眠；`dynamic_keymap_reset` 保留 | 均已被 `caps/changes.md` 1.1.0、`design.md` §4.2 2b、`fn/readme` 1.1.0 与 V2.11、`keyboard_post_init_user` 移除（V2.1）取代 —— 已在两份文档顶部加"部分内容已被取代"的提示 |
+
+**实测复核（本轮）**：
+
+- `make test` = `pass=778 fail=0`；`make glue-test` = 10 套件全 `fail=0`（671/250/68/24/153/441/377/493/48/67，合计 2592）；
+  `make matrix-test` = `TOTAL 598 PASS 405 XFAIL 193 KNOWN-FAIL 0 NEW-FAIL 0`、退出码 0。
+  **`make glue-test` 会改写两个已跟踪二进制**（`engine/test/glue/test_adapter_regress{,2}`），收尾已 `git checkout --` 还原。
+- **§7.33 的"前/后探针逐键比对"已独立复现并扩大**：把 `760b83a` 与 `7be99d1` 分别编成探针，在矩阵**全部
+  598 条用例**上逐键比对发射流 ⇒ **598/598 逐字节相同**；计数命令探针另测 `v99w` 257→250
+  （`maxpend` 256→249）、`99J` 248、`99C/D/X` 101、`99Y` 202、`99x/s` 100 —— 与文档一致。
+- **效率审计更正（重要）**：旧结论"`&` 替 `%` 收益为零、四个候选链接出的 `.text` 逐字节相同（6488 B）"
+  **未复现**。实测：真实 QK61 固件 `.build/qk61_vim.elf`（构建于 2026-09-30 18:31，子模块工作区 `7be99d1`）
+  的 `push` 是 **64 B**（含 `ands`+`bpl`+`subs`/`orrs`/`adds` 的符号修正，证明 `% 256` **不是**掩码）；
+  改成 `& (EMIT_CAP-1)` 后同一 flags 下 `push`=44 B、`send_one` 80→60 B；引擎源码集单独链接
+  （`-Os -mcpu=cortex-m0 -mthumb`，`--gc-sections`，含 libgcc）`.text` LTO **6732→6696**、无 LTO **7732→7692**。
+  故"源码级微优化收益为零"**不能作为结论引用**；体积评估方法（两侧各自重建 `cmp`）保留。
+  另有已核实项：`classify.c` **无** `static const` 表（`grep -c` = 0）；`kv_emit_yank_to_eol`/`_n` 已由
+  `b84d09d` 删除，当前源码无此死代码（"NUT65 删死代码省几十字节"无法复现）。
+  证据与未复验项写入 `engineering-spec.md` §5。
+
+**代码注释陈旧（属 `engine/**`，本次**未改**，仅登记）**：
+
+- `engine/test/host/kvhost.py:29-30` 的注释仍写"`dd` = Ctrl+X + Backspace needs two undos"——
+  现行 `dd` 只有一个宿主编辑，`engine/test/host/matrix.py` 的 `DEVIATIONS['D17']` 仍写"cgg@行0
+  切掉整行"（`design.md` §4.9 ⑭ 已实测不再构成偏差）、`DEVIATIONS['VBLOCK']` 仍写"OPEN (real defect,
+  not yet fixed)"（`design.md` §4.9 D24 已修好，且无 XFAIL 条目再引用它）。下次改动这些文件时同步。

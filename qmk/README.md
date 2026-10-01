@@ -30,14 +30,21 @@
 1. **先改文档**：`vim/design.md`（架构/接口，唯一权威）、`vim/readme.md`（目标行为/状态指示），
    必要时 `vim/changes.md`（变更与缺陷记录）、`vim/testcase.md`（用例清单）、`fn/readme.md`、
    `caps/{design,readme,changes,testcase}.md`（Caps 长按模块），以及**本规范** `qmk/README.md`
-   （流程/同步/验证规则自身变更时）。
+   与 [`engineering-spec.md`](engineering-spec.md)（流程/同步/验证规则自身变更时）。
 2. **文档单独提交**：该提交**只含文档**，且**早于**任何源码提交。
    同一提交里既改文档又改源码 = **回填，违规**。
 3. **测试次之**：用例按已提交的文档写，可单独提交。此阶段测试**应当编译失败**（红），
    这本身就是"测试先行"的证据。
 4. **才允许改代码**：`engine/` + `qmk/` 实现对齐已提交的文档；**实现提交里不得夹带文档改动**
    （含头文件里的契约注释——注释也是代码）。
-5. **同步到键盘分支**（§3）→ 键盘侧实现 → 编译归档（§4）→ 验证（§5）。
+5. **证伪自己的测试**：每条修复都要做**变异验证**（改坏实现 → 测试必须变红 = CAUGHT；
+   SURVIVED 必须论证是等价变异或补覆盖），并按 [`engineering-spec.md`](engineering-spec.md) §1.1
+   登记 pass/fail 数与理由。
+6. **同步到键盘分支**（§3）→ 键盘侧实现 → 编译归档（§4）→ 验证（§5）。
+
+> **判据/基线/评估结论**（什么算绿、`make test`/`glue-test`/`matrix-test` 的实测数字、矩阵与
+> 棘轮语义、键码预算规范、体积评估、真机未验证清单）以
+> [`engineering-spec.md`](engineering-spec.md) 为准；本文件只管**同步/归档操作**。
 
 > **为什么**：历史上违反顺序导致共享层与键盘子模块各自漂移出一份**内容相同、哈希不同**的子模块提交，
 > 两块键盘事实上跑的是两套共享层；也出现过"文档承诺 `cfg` 字段、代码却只写不读"的契约空转。
@@ -93,6 +100,14 @@ make qk61:vim:bin                          # 或 make leku/nut65:vim:bin ALLOW_W
   | NUT65 | `output/leku_nut65_vim_vX.Y.{bin,hex}` + `_via.json`（= `keyboards/leku/nut65/NUT65.json`） |
 
 - 发布提交与实现提交**分开**；打 **注解 tag**（`vX.Y-<键盘>`）并推送。
+- **只有 `engine/src/` 变了才重发版本**（`output/` 新增归档 + tag）。**仅测试/文档变更只同步子模块
+  指针**（固件字节不变），提交信息里要写明理由；不要为了"对齐版本号"而重发固件。
+- readme 版本块必须同时列**当前版与上一版**（`output/<kb>_vim_vX.Y.*`）。
+- **归档必须逐字节校验**：`git show <分支>:output/<归档>.bin | cmp - .build/<TARGET>.bin`；
+  再把归档的 **HEX 解码回来与 BIN 比对**；收尾 `git ls-remote` 复核**分支与标签**都已 push。
+- 提交信息用 **`git commit -F <file>`**：CJK + 括号走 `-m` 会被搞坏。
+- ⚠️ **不要引入 `sync-keyboards.sh`**（用户明确不要）：同步一律按本文件 §3 手工执行并逐条核对。
+- 两个键盘的 `output/` 归档文件名必须带 `<kb>` 前缀，**不得交叉污染**（§5④ 的两个 `grep -c` 必须为 0）。
 
 ---
 
@@ -122,15 +137,22 @@ done
 git -C <qmk_firmware> ls-tree -r --name-only qk61  | grep -c '^keyboards/leku/'
 git -C <qmk_firmware> ls-tree -r --name-only nut65 | grep -c '^keyboards/qk61/'
 
-# ⑤ 主机测试（全绿才算完成）
+# ⑤ 主机测试（全绿才算完成；当前实测数字与逐套件断言见 engineering-spec.md §2）
 make -C <qmk-vim-fn>/engine test          # 引擎单测
 make -C <qmk-vim-fn>/engine glue-test     # 适配层/共享 keymap 层
+make -C <qmk-vim-fn>/engine matrix-test   # 与真实 vim.tiny 的矩阵对拍（退出码 0）
 cd <keymap>/test && make                  # 键盘侧
 
 # ⑥ 固件重编 == 归档（逐字节）
 git -C <qmk_firmware> show <分支>:output/<归档>.bin | cmp - .build/<TARGET>.bin
 ls <qmk_firmware>/*.bin <qmk_firmware>/*.hex 2>/dev/null     # 必须为空
 ```
+
+> ⚠️ **`make glue-test` 会改写两个已跟踪的二进制**
+> （`engine/test/glue/test_adapter_regress{,2}`，`engine/Makefile:21-27` 逐个 `-o` 覆盖）。
+> 跑完必须 `git checkout --` 还原、**不得暂存**；`git status --porcelain` 必须干净。
+> ⚠️ `make matrix-test` 的"绿"输出里**没有** `XPASS 0` 字样（只在非空时打印），
+> 判绿看**退出码 0** + `KNOWN-FAIL 0 NEW-FAIL 0`。
 
 无法用主机测试覆盖的部分（键盘侧 **RGB 实际渲染**：颜色常量、灯位索引、亮度百分比、
 低电/测试灯让位）**只能实机确认**；主机测试不得声称覆盖了它们。
@@ -158,3 +180,14 @@ ls <qmk_firmware>/*.bin <qmk_firmware>/*.hex 2>/dev/null     # 必须为空
 对涉及 P0/P1 或跨键盘的变更，建议由**未参与实现**的一方按上述 §5 独立复核，
 并额外要求：自写独立测试（不复用实现者的断言）、给出反例、并明确列出覆盖缺口。
 审计结论与整改同样走 §2 顺序（文档 → 测试 → 实现）。
+
+**复核纪律（与 [`engineering-spec.md`](engineering-spec.md) §1.4 同级）**：
+
+1. 用**修改前/修改后两个探针**跑**同一批用例**：能比发射流的场合**逐键比对发射流**，
+   否则**逐维比对**缓冲区/寄存器/光标；结论必须是 **`N FIXED / 0 REGRESSED`**
+   （`REGRESSED > 0` 即未完成）。
+2. **数字必须实测**，禁止估算后当实测写。
+3. **子代理报告的结论必须由父级独立复验后才采信**（已抓到过错误结论：`Ncc` 夹取、
+   `y` 的光标语义，见 `vim/changes.md` §7.23/§7.26）。
+4. **harness 自身也要审**：旧 `/tmp/audA` harness 有 7 个自身缺陷（"H1 把 `\e` 当字面量"
+   会让所有 Esc 用例基准出错）；复核前先确认探针/harness 本身正确。
