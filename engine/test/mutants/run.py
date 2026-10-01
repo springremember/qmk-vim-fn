@@ -12,6 +12,8 @@
 
 退出码：0 = 全绿（含允许的等价变异）；1 = 有未论证的 SURVIVED；2 = 门禁自身错误；130 = SIGINT。
 只用标准库；无交互提示；记录顺序 = 执行顺序（确定性）。
+收尾自证：被碰文件与运行前逐字节一致 + 目标文件与全部跟踪文件 git status 干净，
+否则拒绝报绿（退出码 2）；新出现的未跟踪文件只提示（可能来自并发进程）。
 
 用法（在 engine/ 下）：
     make mutation-test                  # = python3 test/mutants/run.py
@@ -201,8 +203,9 @@ def git(*args: str) -> "subprocess.CompletedProcess[str]":
     )
 
 
-def porcelain() -> "list[str]":
-    out = git("status", "--porcelain").stdout
+def porcelain(untracked: bool = True) -> "list[str]":
+    args = ["status", "--porcelain"] + ([] if untracked else ["--untracked-files=no"])
+    out = git(*args).stdout
     return [l for l in out.splitlines() if l.strip()]
 
 
@@ -235,7 +238,7 @@ def _restore_current() -> None:
 
 
 def _verify_touched() -> "list[str]":
-    """收尾自证：(1) 每个被碰过的文件与运行前逐字节相同；(2) 额外脏文件为 0。"""
+    """收尾自证 (1)：每个被碰过的文件与运行前**逐字节**相同。"""
     problems = []
     for rel, want in _touched.items():
         p = REPO_ROOT / rel
@@ -421,6 +424,7 @@ def main(argv: "list[str] | None" = None) -> int:
             sys.stderr.write("  %s\n" % l)
         return EXIT_ERROR
     baseline = set(dirty)
+    baseline_tracked = set(porcelain(untracked=False))
 
     signal.signal(signal.SIGINT, _on_signal)
     signal.signal(signal.SIGTERM, _on_signal)
@@ -482,12 +486,22 @@ def main(argv: "list[str] | None" = None) -> int:
         _restore_current()
         restore_tracked_bins("收尾")
 
-    # ---- 收尾自证：工作区必须干净 ----
+    # ---- 收尾自证 ----
+    # 硬判据（任一不满足 ⇒ 拒绝报绿，退出码 2）：
+    #   (1) 每个被碰文件与运行前**逐字节**一致；
+    #   (2) 目标文件（被变异文件 + make glue-test 覆盖的两个跟踪二进制）git status 干净；
+    #   (3) 全仓**跟踪**状态相对运行前无新增改动（`--untracked-files=no`）。
+    # 只提示不判死：新出现的**未跟踪**文件（`??`）—— 它可能来自并发进程（实测 `make matrix-test`
+    # 期间 vim.tiny 会短暂生成 engine/.swp），不代表变异没还原。
     clean_problems = _verify_touched()
-    now = set(porcelain())
-    extra = sorted(now - baseline)
-    if extra:
-        clean_problems.append("出现未预期的脏文件：%s" % ", ".join(extra))
+    st_targets = git("status", "--porcelain", "--", *targets).stdout.strip()
+    if st_targets:
+        clean_problems.append("目标文件未还原干净：%s" % st_targets.replace("\n", " | "))
+    extra_tracked = sorted(set(porcelain(untracked=False)) - baseline_tracked)
+    if extra_tracked:
+        clean_problems.append("跟踪文件出现未预期改动：%s" % ", ".join(extra_tracked))
+    extra_untracked = sorted({l for l in porcelain() if l.startswith("??")} -
+                             {l for l in baseline if l.startswith("??")})
 
     print()
     _print_table(results)
@@ -506,10 +520,11 @@ def main(argv: "list[str] | None" = None) -> int:
             sys.stderr.write("  - %s\n" % p)
         return EXIT_ERROR
     if not quiet:
-        st = git("status", "--porcelain", "--", *targets).stdout.strip()
         sys.stderr.write("[mutants] 收尾自证：%d 个被碰文件与运行前逐字节一致；"
-                         "目标文件 git status %s\n"
-                         % (len(_touched), "干净" if not st else "脏：" + st))
+                         "目标文件与全部跟踪文件 git status 干净\n" % len(_touched))
+    if extra_untracked:
+        sys.stderr.write("[mutants] 提示：出现新的未跟踪文件（可能来自并发进程，不影响还原"
+                         "自证）：%s\n" % ", ".join(extra_untracked))
     if errors:
         return EXIT_ERROR
     if survivors:
