@@ -525,7 +525,10 @@ XFAIL = {
     'key-Y': 'YCOL',
     'key-3Y': 'YCOL',
     'y$': 'YCOL',
-    'yj': 'YCOL',
+    # The matrix's `yj` case sits on the LAST line: Vim's `j` fails there, so the
+    # operator ABORTS and the register stays unchanged; the model yanks L4 instead.
+    # Measured yj@L1/L2/L3 = ok, yj@L4 = reg+cur diff (regM 'L4\n' vs regV '').
+    'yj': 'FAILMOT',
     'yk': 'FAILMOT',   # reg diff: k fails on line 1 => Vim aborts, register unchanged
     '>G': 'IND',
     '>G-x': 'IND',
