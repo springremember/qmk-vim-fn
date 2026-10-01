@@ -773,3 +773,20 @@ Vim 也**不**改写，所以 `vhP`/`vlP`/`vllP` 全对。
   现行 `dd` 只有一个宿主编辑，`engine/test/host/matrix.py` 的 `DEVIATIONS['D17']` 仍写"cgg@行0
   切掉整行"（`design.md` §4.9 ⑭ 已实测不再构成偏差）、`DEVIATIONS['VBLOCK']` 仍写"OPEN (real defect,
   not yet fixed)"（`design.md` §4.9 D24 已修好，且无 XFAIL 条目再引用它）。下次改动这些文件时同步。
+
+### 7.35 环形下标 `% EMIT_CAP` → `& EMIT_MASK`（真实体积收益，实测）
+
+**我此前转述的结论是错的**：早先效率审计称「LTO 下四个候选微优化 `.text` 逐字节相同（6488 B）⇒
+源码级无收益」，我照此转述过。独立文档审计复测**推翻了这一条**：Cortex-M0 上 `int % 256`
+对带符号被除数要生成符号修正（反汇编 `ands`+`bpl`+`subs`/`orrs`/`adds`），而 `& 255` 只需一条
+`uxtb`；`push`/`send_one` 都在**每个键的热路径**上。
+
+**改动**（`66d3db2`）：两处环形下标改为 `& EMIT_MASK`，并用 `typedef char kv_emit_cap_must_be_power_of_two[...]`
+在编译期强制 `EMIT_CAP` 是 2 的幂（将来改 EMIT_CAP 会**编译失败**而不是静默算错）。
+两处被除数恒非负（`s_head∈[0,255]`、`s_count∈[0,256]`）⇒ 与 `%` **严格等价**。
+
+**父级复验（固件级实测）**：两侧各自重建并与上一版归档对比 —— **NUT65 −16 B**（83308→83292）、
+**QK61 −40 B**（77548→77508）。验收门禁不变：engine 778 断言、10 个 glue 套件、矩阵 exit 0。
+
+**教训（已写入 engineering-spec §1.4）**：子代理的「无收益」结论**未被父级复验就转述**了一次，
+而它恰恰是错的 —— 复验不能省。
