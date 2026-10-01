@@ -138,6 +138,7 @@ git -C <qmk_firmware> ls-tree -r --name-only qk61  | grep -c '^keyboards/leku/'
 git -C <qmk_firmware> ls-tree -r --name-only nut65 | grep -c '^keyboards/qk61/'
 
 # ⑤ 主机测试（全绿才算完成；当前实测数字与逐套件断言见 engineering-spec.md §2）
+make -C <qmk-vim-fn>/engine verify-all    # = test+glue-test+matrix-test+mutation-test（§2.1）
 make -C <qmk-vim-fn>/engine test          # 引擎单测
 make -C <qmk-vim-fn>/engine glue-test     # 适配层/共享 keymap 层
 make -C <qmk-vim-fn>/engine matrix-test   # 与真实 vim.tiny 的矩阵对拍（退出码 0）
@@ -151,6 +152,8 @@ ls <qmk_firmware>/*.bin <qmk_firmware>/*.hex 2>/dev/null     # 必须为空
 > ⚠️ **`make glue-test` 会改写两个已跟踪的二进制**
 > （`engine/test/glue/test_adapter_regress{,2}`，`engine/Makefile:21-27` 逐个 `-o` 覆盖）。
 > 跑完必须 `git checkout --` 还原、**不得暂存**；`git status --porcelain` 必须干净。
+> 走 `make -C <qmk-vim-fn>/engine verify-all`（engineering-spec.md §2.1）时这两个二进制由它
+> 自动还原，并在收尾自证里拒绝"仍有跟踪文件是脏的"（未跟踪文件只提示）。
 > ⚠️ `make matrix-test` 的"绿"输出里**没有** `XPASS 0` 字样（只在非空时打印），
 > 判绿看**退出码 0** + `KNOWN-FAIL 0 NEW-FAIL 0`。
 

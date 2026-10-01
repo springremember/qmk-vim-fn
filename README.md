@@ -22,6 +22,10 @@
   - [`qmk/engineering-spec.md`](qmk/engineering-spec.md)：**工程规范与验收基线**
     （文档先行/测试先红/变异验证/独立复核、`make test`/`glue-test`/`matrix-test` 的实测数字、
     矩阵与棘轮语义、键码预算规范、体积评估结论、发布判据、真机未验证清单）。
+  - [`qmk/on-device-checklist.md`](qmk/on-device-checklist.md)：**真机验收清单**（主机测试覆盖不到
+    的部分：键码节流/高计数命令、右 Shift 懒发送、Caps 合成 Ctrl、宿主列保持与选区保持、
+    末行无尾换行、3 秒 Esc 宽限、7 色可区分度、NUT65 深睡/无线/bootloader、QK61 枚举/RAM 余量、
+    刷机前归档核对），逐条给出操作步骤、预期结果与结果栏。
 
 ## 构建 / 测试引擎
 
@@ -29,10 +33,14 @@
 make -C engine test        # 引擎单测
 make -C engine glue-test   # QMK 适配层 / 共享 keymap 层
 make -C engine matrix-test # 与真实 vim.tiny 的矩阵对拍
+make -C engine verify-all  # 一次跑完全部四道门禁（顺序固定、首个失败即停、末尾汇总）
 ```
 
 > 当前实测基线与判据（含"什么算绿"）见 [`qmk/engineering-spec.md`](qmk/engineering-spec.md) §2。
-> 注意 `make glue-test` 会改写两个已跟踪的测试二进制，收尾需 `git checkout --` 还原。
+> `make verify-all` 会在收尾自动还原 `make glue-test` 改写的两个已跟踪测试二进制；
+> 手工单跑 `glue-test` 时才需要自己 `git checkout --` 还原。
+> **主机测试全绿 ≠ 真机通过**：真机上才能确认的部分按
+> [`qmk/on-device-checklist.md`](qmk/on-device-checklist.md) 逐条走。
 
 ## 改动的硬性顺序（文档先行）
 

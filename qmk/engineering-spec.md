@@ -161,7 +161,8 @@ python3 test/mutants/run.py --quiet           # 只留汇总
 
 ## 2. 验收基线（"什么算绿"）
 
-全部在 **`engine/`** 目录下执行。任一条不满足 = 未完成。
+全部在 **`engine/`** 目录下执行。任一条不满足 = 未完成。四条可**一条命令一次跑完**（§2.1）：
+`make -C engine verify-all`。
 
 | # | 命令 | 判据 | 实测（2026-10-01，HEAD `927ecb1`，工作区干净） |
 |---|:---|:---|:---|
@@ -195,6 +196,35 @@ python3 test/mutants/run.py --quiet           # 只留汇总
 **④ 变异验证**（`make mutation-test`，§1.1.1）：**16** 条记录全绿 ——
 `CAUGHT 15 / EQUIVALENT 1 / SURVIVED 0`，退出码 0，整轮 **≈50 s**；
 判据、记录格式与"如何加一条"见 §1.1.1（记录表 `engine/test/mutants/mutants.txt`）。
+
+### 2.1 一条命令跑完全部门禁 `make verify-all`
+
+```sh
+make -C engine verify-all                                  # 顺序固定，首个失败即停
+make -C engine verify-all VERIFY_GATES="test glue-test"    # 只跑子集（自检用）
+```
+
+- **顺序（固定）**：`test` → `glue-test` → `matrix-test` → `mutation-test`；**首个失败即停**，
+  其后的门禁在汇总表里记 `SKIP`；汇总表列为 `gate | result | wall time`，末尾打印**总墙钟时间**。
+- **退出码**：`0` = 全绿；非 0 = 未通过。内部 shell 用 `1`（门禁失败）/`2`（收尾自证失败、拒绝报绿）
+  区分两类失败，但 make 对任何失败配方都返回 `2`，故对外只保证"非 0"；失败类别看汇总后的
+  `[verify-all]` 行。
+- **收尾还原（只碰这两个文件）**：`make glue-test` 会改写 §2② 警告的那两个**已跟踪**二进制；
+  `verify-all` 在 `glue-test` 之后与全部门禁跑完后各做一次
+  `git checkout -- engine/test/glue/test_adapter_regress engine/test/glue/test_adapter_regress2`。
+- **收尾自证（与 `test/mutants/run.py` 同口径）**：
+  - 运行前后各取一次 `git status --porcelain`；还原上述两个二进制后，若出现**新增的跟踪改动** ⇒
+    拒绝报绿（非 0 退出）并逐个列出文件名；
+  - 新出现的**未跟踪**文件（实测 `make matrix-test` 期间 `vim.tiny` 会短暂生成
+    `engine/.swp`/`.swpx`）**只提示、不判失败**；
+  - 运行前**已存在**的其它跟踪改动**一律不碰**，只在汇总后提示 —— 因此 `verify-all` 可以安全地
+    在脏工作区上运行，不会吞掉用户未提交的工作。
+- **实测（2026-10-01，HEAD `35b24d2` + 引入本目标的提交，工作区另有两处未提交文档改动）**：
+  四道门禁 **4/4 OK** —— `test` 1.7 s、`glue-test` 12.3 s、`matrix-test` 205.3 s、
+  `mutation-test` 43.8 s，**总墙钟 263.0 s**（matrix-test 占大头）。判定数字与 §2①②③④ 完全一致：
+  `pass=784 fail=0`、10/10 `fail=0`、`KNOWN-FAIL 0 NEW-FAIL 0`、`CAUGHT 15 / EQUIVALENT 1 /
+  SURVIVED 0`。该次运行期间我在并行编辑跟踪文档，收尾自证**按设计拒绝报绿**（这正说明自证项生效）；
+  提交后在工作区干净时重跑，汇总同样 4/4 OK 且退出码 0。
 
 ---
 
@@ -371,22 +401,42 @@ python3 test/mutants/run.py --quiet           # 只留汇总
 以下是**主机测试无法覆盖**的假设/行为，任何"全绿"声明都不得声称已覆盖它们。改动相关代码后必须
 在真机上重验，并把结论写回本节或对应键盘 readme。
 
+> **逐条可执行版本见 [`on-device-checklist.md`](on-device-checklist.md)**（编号 A1–A11）：
+> 每条都给了 编号 / 要验证什么 / 前置条件 / 操作步骤 / **预期结果（具体到行数、字节数、颜色）** /
+> 风险 / 结果栏（☐ 通过 ☐ 不符）。本节 1–7 是原有条目；8–11 是随该清单**补记**的同类未验证项
+> （原清单遗漏，编号 1–7 不动，避免破坏既有引用）。
+
 1. **真实 OS/IME 下的右 Shift 懒 Shift**：孤立右 Shift 不发键（避免 IME 切换）、与其他键同按才
    临时补左 Shift —— 不同 IME（尤其 Linux fcitx / macOS）行为未被真机验证。
+   （操作步骤：清单 **A2**）
 2. **Caps 合成 Ctrl 与物理 Ctrl 的交错**：位模型（LCTL/RCTL 是不同 bit、`register_code`
    无引用计数）已有主机覆盖（`engine/test/glue/test_rgb.c: test_caps_ctrl_bitmodel`，
    `caps/testcase.md` §0 列为已覆盖），但"合成 Ctrl + 物理 Ctrl + 多个非 F 键重叠"在真机上的
-   组合观感未验证。
+   组合观感未验证。（操作步骤：清单 **A3**）
 3. **宿主 `Shift+↓` 的列保持**：行选/字符级 VISUAL 的 `Shift+↓` 近似**假设宿主保持列**；
-   VSCode / 终端 / 浏览器等宿主是否如此未逐一验证。
+   VSCode / 终端 / 浏览器等宿主是否如此未逐一验证。（操作步骤：清单 **A4**）
 4. **7 色在真实矩阵上的实际观感**（紫/洋红的区分、橙 vs 绿的可辨识度、亮度）。
+   （操作步骤：清单 **A8**）
 5. **NUT65 深睡 / 无线 / bootloader**：`Fn+L` 短按休眠、`Fn+右上角` 唯一唤醒、
-   `Fn+右Shift+Esc` bootloader 在真机上的行为。
+   `Fn+右Shift+Esc` bootloader 在真机上的行为。（操作步骤：清单 **A9**）
 6. **QK61 USB 枚举与 16 KB RAM 余量**：`>~0x13F58(81752B)` 会导致有线 USB 枚举失败
    （`qmk/README.md` §4）；既有 ELF 实测 `bss = 15040 B`（< 16 KiB，余量约 1.3 KiB，且该值随
-   功能增长而变），每次改动后必须看 `Size after:`。
+   功能增长而变），每次改动后必须看 `Size after:`。（操作步骤：清单 **A10**）
 7. **真机宿主对连续键码的接受速率**：`KV_EMIT_GAP_MS = 1`（1 键/ms）是**假设**；大计数命令
-   （如 `99yy` 202 键）在真实宿主上是否被完整接受、是否丢键未验证。
+   （如 `99yy` 202 键）在真实宿主上是否被完整接受、是否丢键未验证。（操作步骤：清单 **A1**；
+   尤其 §4.3 的「已知残余」= 队列预填到 `pending ≥ 248` 时连发两条大命令）
+8. **`Ctrl+C` 复制后宿主是否保留选区**：`y`/`yy`/行选动作在 `Ctrl+C` 后补发 `Esc` 的前提是
+   "宿主复制后仍保留高亮选区"（`vim/design.md` §4.9「`Esc` 收尾」）；真实宿主是否如此、
+   `Esc` 是否另有副作用未验证。（操作步骤：清单 **A5**）
+9. **末行无尾换行的缓冲区表现**：`dd` 依赖 `Shift+Right` 在**缓冲末尾**是 no-op
+   （`design.md` §4.9 ③），主机模型用 `set nofixendofline` 复刻；真实编辑器（多数会保存时自动补
+   尾换行）是否一致未验证。（操作步骤：清单 **A6**）
+10. **3 秒 `Esc` 宽限（grace）的实际手感**：`VIM_ESC_GRACE_MS = 3000` 的窗口长度、橙色续期、
+    连续 `Esc` 场景的可用性，以及 >65.5 s 不出现 16 位回绕假橙，都只在主机侧验证过。
+    （操作步骤：清单 **A7**）
+11. **刷机前归档核对**：待刷的 `output/<kb>_vim_vX.Y.bin` 是否确实来自对应分支、版本块/注解 tag/
+    子模块指针/`cmp`/HEX↔BIN/sha256 是否一致，是纯人工步骤（`qmk/README.md` §4/§5）。
+    （操作步骤：清单 **A11**）
 
 ---
 
