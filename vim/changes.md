@@ -981,9 +981,9 @@ CAUGHT/EQUIVALENT、被碰文件也确实逐字节还原）。已按任务要求
 ④每例断言 `s_orphan == 0`；⑤CAG / Visual / 待决 Normal Esc 均不动；另各一条覆盖边界 (a)(b)。
 
 **红→绿**：实现前 `make glue-test` 在 `test_glue` 上 `pass=738 fail=22`；实现后 10 套件全绿、
-`test_glue: pass=760 fail=0`。其中 `test_esc_grace_window()` 与 `test_rgb.c` 各 1 条
-「窗口内 press 立即透传」断言编码的是**旧契约**（判定在 press），按 §4.13 合法改为
-press 吞下 / release 补发（已在实现提交里显式改期望，非静默）。
+`test_glue: pass=760 fail=0`。其中 `test_esc_grace_window()` 2 条（press/release 均 `true`）与
+`test_rgb.c` 1 条「窗口内 Esc 立即透传」断言编码的是**旧契约**（判定在 press），按 §4.13 合法改为
+press 先吞、release 由配对表消费（短按另补发真 Esc）（已在实现提交里显式改期望，非静默）。
 
 **变异**（`mutants.txt` 16 → **19** 条，3 条新记录全部 CAUGHT，见 §1.1）：
 
