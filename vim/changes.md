@@ -945,3 +945,60 @@ CAUGHT/EQUIVALENT、被碰文件也确实逐字节还原）。已按任务要求
 长按判定必须在 **release 事件**上用事件时间完成，且 press/release 成对被吞、不留孤儿 release。
 
 本提交为**文档先行**，实现与测试在后续提交。
+
+### 7.43 新功能：长按 Esc 直接进 Normal（实现 + release 判定）
+
+**规范**：`design.md` §4.13（§7.42 文档先行；`88d9b40`/`4e03bf3`）。阈值 **200 ms 固定**；**Insert 下
+任何长按都进 Normal**（不看窗口）；触发时**宿主零输出**并清窗口；窗口内短按行为不变；无窗口短按
+不延迟；CAG / Visual / Normal 待决 Esc 不受影响。实现不得依赖周期钩子（`vim_keymap_common_task()`
+在出货键盘上无调用点）⇒ 判定必须在 **release 事件**上用事件时间完成，且 press/release 成对吞。
+
+**实现**（`f5dc8ec`，`qmk/vim_keymap_common.c`；原先 `esc_process()` 在 `!record->event.pressed`
+处直接返回 false，**根本没有 release 分支**）：
+- 新增固定阈值 `VIM_ESC_HOLD_MS 200` 与 `s_esc_armed` / `s_esc_press_at`（§4.13 判定状态）。
+- **窗口内 Insert press 不再透传**：`s_esc_armed=true`、`s_esc_press_at=vim_timer_start32()`、
+  `vim_glue_swallow(KC_ESC)`（记配对）、返回 true —— 结果未定前宿主不得先收到 Esc press。
+- **release 路径**（新增）：若 `s_esc_armed`，按 `vim_timer_elapsed32(s_esc_press_at, 200)` 判定：
+  长按 ⇒ `s_esc_grace=0; kv_cancel(); kv_set_mode(KV_MODE_NORMAL)`（只切模式、零输出）；
+  短按 ⇒ `s_esc_grace=vim_timer_start32()`（重置窗口）+ `tap_code16(KC_ESC)`（重建被吞掉的真 Esc 点击）。
+  两条都返回 false，把 release 交给共享配对表消费（release 的唯一所有者，design §4.12 #2）⇒
+  `s_orphan` 恒为 0。
+- **无窗口分支逐字未动**：press 立即吞掉并进 Normal，绝不为长按判定延迟（§4.13 #5）。
+- `set_vim_enabled()` 与 `vim_keymap_common_init()` 清 `s_esc_armed`（enable/disable 转换丢弃待决判定）。
+- 顺带修正把宽限窗口误标为 **§4.12** 的注释（`vim_timer_start32` 注释、`vim_insert_flash` 注释、
+  头文件两处）改指 **§4.13**；§4.12 是 glue 层职责规格。
+
+**规范未定的两处边界（已写入 `design.md` §4.13，并各有一条测试）**：
+(a) **长按期间夹按其它键不取消判定** —— 只看 Esc 自身 press→release 的事件时间，其它键照常走各自
+管线；长按是"无歧义信号"，不该被无关按键打断，取消反而更不可预期。
+(b) **press/release 之间 vim 被关闭：丢弃判定**，release 仍由配对表吞掉、不发任何键 —— 唯一硬约束
+是不留孤儿 release（`s_orphan == 0`）。
+
+**测试**（`test_glue.c` 新增 6 个用例、65 行 CHECK；helper `open_grace_window()` 复用使运行时更多）：
+①窗口内长按 ≥200 ms ⇒ Normal 且 `s_hits[KC_ESC]` 不增、窗口清；同时钉住 **199 ms 仍是短按 /
+200 ms 即长按** 的边界；②窗口内短按 ⇒ 真 Esc 补发（`s_hits[KC_ESC]+1`、`reg_count(KC_ESC)==0`）
+且窗口重置（release 后 2999/3000 ms 判定）；③无窗口短按 ⇒ press 后立即 Normal、release 配对；
+④每例断言 `s_orphan == 0`；⑤CAG / Visual / 待决 Normal Esc 均不动；另各一条覆盖边界 (a)(b)。
+
+**红→绿**：实现前 `make glue-test` 在 `test_glue` 上 `pass=738 fail=22`；实现后 10 套件全绿、
+`test_glue: pass=760 fail=0`。其中 `test_esc_grace_window()` 与 `test_rgb.c` 各 1 条
+「窗口内 press 立即透传」断言编码的是**旧契约**（判定在 press），按 §4.13 合法改为
+press 吞下 / release 补发（已在实现提交里显式改期望，非静默）。
+
+**变异**（`mutants.txt` 16 → **19** 条，3 条新记录全部 CAUGHT，见 §1.1）：
+
+| id | 破坏的行为 | 结果 | 被谁抓住 |
+| --- | --- | --- | --- |
+| `esc-longpress-threshold-dead` | release 长按判定永远不成立（`if (false)`）⇒ 长按不进 Normal、反而补发真 Esc | CAUGHT | `test_glue.c:1606/1607/1608/1670` |
+| `esc-shorttap-no-rebuild` | 短按不再 `tap_code16(KC_ESC)` ⇒ 窗口内短按宿主收不到 Esc | CAUGHT | `test_glue.c:1595/1625` |
+| `esc-shorttap-no-window-reset` | 窗口内短按不再重置宽限窗口 | CAUGHT | `test_glue.c:1631` |
+
+**门禁**（干净工作区，HEAD 本主题两提交）：
+- `make test` → `pass=784 fail=0`；
+- `make glue-test` → 10 套件全绿（`test_glue 760/0`、`test_rgb 414/0`、其余同前）；
+- `make matrix-test` → `TOTAL 598 PASS 405 XFAIL 193 KNOWN-FAIL 0 NEW-FAIL 0`，退出码 0；
+- `make mutation-test` → **CAUGHT 18 / EQUIVALENT 1 / SURVIVED 0 / ERROR 0（共 19 条）**，退出码 0
+  （等价项仍是已登记的 `d19-outer-clamp-idempotent`）。
+
+**未验证**：200 ms 阈值的**真机手感**无法在 host 桩环境验证（桩时间 `g_now` 可任意推进，覆盖了
+逻辑边界，但无法反映真实按键抖动/人体感知）。真机验收需按 `qmk/on-device-checklist.md` 人工确认。
