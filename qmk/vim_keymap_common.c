@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 //
 // vim_keymap_common.c — shared keymap layer for the qmk-vim-fn engine.
-// Design authority: qmk-vim-fn/vim/design.md §2.1, §4.9, §4.10, §4.12.
+// Design authority: qmk-vim-fn/vim/design.md §2.1, §4.9, §4.10, §4.12, §4.13.
 //
 // vim_pipeline_process() is the single-source interception chain; every
 // keyboard feeds process_record_user() into it.  The steps are explicitly
@@ -37,7 +37,7 @@ bool vim_timer_elapsed(uint16_t start, uint16_t ms) {
 
 // 32-bit stamp/compare for windows that may go unchecked across the 16-bit wrap:
 // QMK's timer_read() is (uint16_t)timer_read32(), so an *expired* window re-reads as
-// "elapsed" again after 65536 ms (design §4.12: Esc grace window).
+// "elapsed" again after 65536 ms (design §4.13: Esc grace window).
 uint32_t vim_timer_start32(void) {
     uint32_t t = timer_read32();
     return t ? t : 1; // same zero-reading guard as the 16-bit helper
@@ -328,11 +328,42 @@ static bool shift_esc_process(uint16_t keycode, keyrecord_t *record) {
 // The window is 3 s, is opened ONLY by this Normal -> Insert transition, and
 // is reset by every in-window Esc.  Visual / pending-Normal / CAG Escapes are
 // left to the engine and shortcut layers, unchanged.
+//
+// design §4.13 long press: inside the window the host outcome depends on how
+// long Esc is held, so the press is withheld and decided on the *release* (the
+// shared layer's task hook has no call site on the shipped keyboards, so event
+// time on the release is the only clock available):
+//   hold >= 200 ms (fixed) -> NORMAL, host receives nothing, window cleared;
+//   shorter                -> the withheld press is rebuilt as a real Esc tap.
+// Outside the window INSERT Esc is still swallowed immediately (never delayed),
+// and both edges are paired through the shared press/release table.
 #define VIM_ESC_GRACE_MS 3000
-static uint32_t s_esc_grace; // 0 = no window; else vim_timer_start32() stamp (32-bit: no wrap)
+#define VIM_ESC_HOLD_MS  200 // §4.13: fixed long-press threshold, not configurable
+static uint32_t s_esc_grace;    // 0 = no window; else vim_timer_start32() stamp (32-bit: no wrap)
+static bool     s_esc_armed;    // an in-window INSERT press is withheld, release pending
+static uint32_t s_esc_press_at; // vim_timer_start32() stamp of that withheld press
 
 static bool esc_process(uint16_t keycode, keyrecord_t *record) {
-    if (keycode != KC_ESC || !record->event.pressed) return false;
+    if (keycode != KC_ESC) return false;
+
+    if (!record->event.pressed) {
+        // Release of a withheld in-window press: decide long vs short here.
+        if (!s_esc_armed) return false; // any other Esc release: existing path
+        s_esc_armed = false;
+        if (!kv_vim_enabled()) return false; // §4.13 决策 b: dropped; pairing table consumes it
+        if (vim_timer_elapsed32(s_esc_press_at, VIM_ESC_HOLD_MS)) {
+            // Long press: only the engine mode changes, the host gets nothing.
+            s_esc_grace = 0;
+            kv_cancel();
+            kv_set_mode(KV_MODE_NORMAL);
+            return false; // press already swallowed: the pairing table consumes this release
+        }
+        // Short tap: rebuild the real Esc click the withheld press suppressed.
+        s_esc_grace = vim_timer_start32(); // in-window Esc: real Esc, reset window
+        tap_code16(KC_ESC);
+        return false; // press already swallowed: the pairing table consumes this release
+    }
+
     if (!kv_vim_enabled()) return false; // vim off: plain Esc
 
     uint8_t mods = vim_glue_mods();
@@ -354,10 +385,16 @@ static bool esc_process(uint16_t keycode, keyrecord_t *record) {
 
     // INSERT.
     if (s_esc_grace && !vim_timer_elapsed32(s_esc_grace, VIM_ESC_GRACE_MS)) {
-        s_esc_grace = vim_timer_start32(); // in-window Esc: real Esc, reset window
-        return false;
+        // In-window Esc: withhold the press; the release decides (>200 ms -> NORMAL,
+        // else a rebuilt real Esc).  vim_glue_swallow() pairs the edge so the
+        // release esc_process() lets through is consumed by the shared table.
+        s_esc_armed    = true;
+        s_esc_press_at = vim_timer_start32();
+        vim_glue_swallow(KC_ESC);
+        return true;
     }
-    // No window (entered Insert another way) or it expired: swallow, go NORMAL.
+    // No window (entered Insert another way) or it expired: swallow, go NORMAL
+    // immediately — never delayed waiting for the long-press decision (§4.13 #5).
     s_esc_grace = 0;
     kv_cancel();
     kv_set_mode(KV_MODE_NORMAL);
@@ -576,7 +613,8 @@ static bool caps_mode_process(uint16_t keycode, keyrecord_t *record) {
 }
 
 static void set_vim_enabled(bool enabled) {
-    s_esc_grace = 0; // an enable/disable transition invalidates the window
+    s_esc_grace = 0;  // an enable/disable transition invalidates the window
+    s_esc_armed = false; // ... and drops any withheld press still awaiting release (§4.13)
     if (s_cfg->vim_set_enabled) {
         s_cfg->vim_set_enabled(enabled);
     } else if (enabled) {
@@ -751,7 +789,8 @@ static bool vim_dispatch(uint16_t keycode, keyrecord_t *record, const vim_cfg_t 
     // 7 — Shift+Esc.
     if (shift_esc_process(keycode, record)) return false;
 
-    // 8 — Esc toggle (opens/resets the escape grace window on Normal->Insert).
+    // 8 — Esc toggle (grace window on Normal->Insert; §4.13 long-press decision
+    //     on the release of an in-window Insert press).
     if (esc_process(keycode, record)) return false;
 
     // 9 — §2.1 shortcuts.
@@ -792,6 +831,7 @@ void vim_keymap_common_init(void) {
     s_caps_ctrl_owned  = 0;
     s_caps_phys_ctrl_held = 0;
     s_esc_grace        = 0;
+    s_esc_armed        = false;
     vim_glue_init();
 }
 
@@ -852,7 +892,7 @@ void vim_rgb_state_color(bool enabled, kv_mode_t m, bool pending, bool mouse, ui
 }
 
 bool vim_insert_flash(void) {
-    // Design §4.12: true iff vim on + mode INSERT + the Esc grace window is still
+    // Design §4.13: true iff vim on + mode INSERT + the Esc grace window is still
     // open.  That window is opened by exactly one event — esc_process()'s
     // "idle-Normal Esc -> INSERT" — is restarted by an in-window Esc, and is
     // dropped by vim_pipeline_process() as soon as the mode leaves INSERT.  So it

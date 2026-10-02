@@ -1035,5 +1035,14 @@ CAD 的触发检测+厂商调用）、底排键位与触发键**定义**、VIA�
 **实现要点**：窗口内 Esc 的 **press** 先吞掉并记时间戳；**release** 时若 `now - press >= 200 ms`
 ⇒ 进 Normal、什么都不发；否则补发一次真 Esc 点击（press 已被吞，需在 release 上重建这一击）。
 
+**规范未定的两处边界（2026-09 实现决策，取最简单确定的行为）**：
+
+- **(a) 长按期间按下其它键：不取消长按判定。** 判定只看 Esc 自身 press→release 的**事件时间**，
+  期间其它键照常走自己的管线（Insert 下就是正常输入）。理由：长按是"无歧义信号"，不该被无关按键
+  打断；反之若取消，则"按住 Esc 顺手敲了个字母"会退化成补发真 Esc，更不可预期。
+- **(b) press 与 release 之间 vim 被关闭：丢弃本次判定，release 仍由配对表吞掉、不发任何键。**
+  press 已经吞掉，且 enable/disable 转换本身即作废宽限窗口（`set_vim_enabled`），此时再补发真 Esc
+  或切 Normal 都没有意义；唯一硬约束是**不得留下孤儿 release**（glue falsify 查 `s_orphan`）。
+
 > 注：`qmk/vim_keymap_common.c` 里 `s_esc_grace` 附近的注释写的是 "design §4.12"，
 > 但 §4.12 实际是「glue 层职责规格」；宽限窗口的规范在**本节 §4.13**，实现时应把该注释改指本节。

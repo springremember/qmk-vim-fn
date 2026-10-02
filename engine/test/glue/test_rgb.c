@@ -319,8 +319,8 @@ static void test_insert_flash(void) {
     CHECK(pipeline(KC_ESC, true) == true); /* t0 */
     (void)pipeline(KC_ESC, false);
     g_now += 2999;
-    CHECK(pipeline(KC_ESC, true) == true); /* 窗口内：真 Esc，重置窗口 */
-    (void)pipeline(KC_ESC, false);
+    CHECK(pipeline(KC_ESC, true) == false); /* §4.13: press withheld pending the release decision */
+    (void)pipeline(KC_ESC, false);          /* short tap -> real Esc rebuilt, window reset */
     CHECK(vim_insert_flash());
     g_now += 2999;
     CHECK(vim_insert_flash()); /* t0+5998 仍在（窗口已重置） */

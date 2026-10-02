@@ -1538,11 +1538,14 @@ static void test_esc_grace_window(void) {
     CHECK(kv_get_mode() == KV_MODE_INSERT);
     CHECK(pipeline(KC_ESC, false) == true);
 
-    /* 2999 ms later: still in window -> real Esc, stays INSERT */
+    /* 2999 ms later: still in window -> real Esc, stays INSERT.  §4.13 moved the
+     * decision to the release, so the press is now withheld (returns false) and
+     * the short tap is rebuilt as a real host Esc on the release. */
     g_now = 1000 + 2999;
-    CHECK(pipeline(KC_ESC, true) == true);
-    CHECK(kv_get_mode() == KV_MODE_INSERT);    /* real Esc, mode unchanged */
-    CHECK(pipeline(KC_ESC, false) == true);
+    CHECK(pipeline(KC_ESC, true) == false);    /* press withheld for the 200 ms decision */
+    CHECK(kv_get_mode() == KV_MODE_INSERT);    /* mode unchanged until the release */
+    CHECK(pipeline(KC_ESC, false) == false);   /* short: real Esc rebuilt, window reset */
+    CHECK(kv_get_mode() == KV_MODE_INSERT);
 
     /* exactly 3000 ms after the reset: window expired -> swallow, NORMAL */
     g_now += 3000;
@@ -1561,6 +1564,170 @@ static void test_esc_no_window_other_paths(void) {
     CHECK(pipeline(KC_ESC, true) == false);
     CHECK(kv_get_mode() == KV_MODE_NORMAL);
     CHECK(pipeline(KC_ESC, false) == false);
+}
+
+/* ================= Esc long press (design §4.13) ================= */
+
+/* Normal idle Esc: real host Esc + back to INSERT with the 3 s window open.
+ * Leaves the engine in INSERT with the window stamped at the current g_now. */
+static void open_grace_window(void) {
+    kv_set_mode(KV_MODE_NORMAL);
+    CHECK(feed_cfg(KC_ESC, true, &g_cfg) == true);
+    CHECK(kv_get_mode() == KV_MODE_INSERT);
+    CHECK(feed_cfg(KC_ESC, false, &g_cfg) == true);
+    CHECK(vim_insert_flash());
+}
+
+/* ① window open + hold >= 200 ms: NORMAL and the host receives nothing; the
+ * window is cleared.  The threshold is fixed at exactly 200 ms (>= counts). */
+static void test_esc_long_press_in_window(void) {
+    reset_engine();
+    g_now = 5000;
+    open_grace_window();
+    int hits = s_hits[KC_ESC];
+
+    /* 199 ms hold: still a short tap -> the real Esc is rebuilt on the release. */
+    g_now += 199;
+    CHECK(feed_cfg(KC_ESC, true, &g_cfg) == false);   /* press withheld */
+    CHECK(s_hits[KC_ESC] == hits);                    /* nothing emitted yet */
+    g_now += 199;
+    CHECK(feed_cfg(KC_ESC, false, &g_cfg) == false);  /* paired release */
+    CHECK(s_hits[KC_ESC] == hits + 1);                /* 199 ms = short: real Esc */
+    CHECK(kv_get_mode() == KV_MODE_INSERT);
+    CHECK(s_orphan == 0);
+
+    /* exactly 200 ms hold: long press -> NORMAL, host receives nothing. */
+    hits = s_hits[KC_ESC];
+    g_now += 100;
+    CHECK(feed_cfg(KC_ESC, true, &g_cfg) == false);
+    CHECK(s_hits[KC_ESC] == hits);
+    g_now += 200;                                     /* now - press == 200 ms */
+    CHECK(feed_cfg(KC_ESC, false, &g_cfg) == false);
+    CHECK(kv_get_mode() == KV_MODE_NORMAL);
+    CHECK(s_hits[KC_ESC] == hits);                    /* host got nothing */
+    CHECK(!vim_insert_flash());                       /* window cleared */
+    CHECK(s_orphan == 0);
+}
+
+/* ② window open + short tap: real host Esc still reaches the host and the
+ * window is reset — unchanged behaviour, only the emission moved to release. */
+static void test_esc_short_tap_in_window(void) {
+    reset_engine();
+    g_now = 5000;
+    open_grace_window();
+    int hits = s_hits[KC_ESC];
+
+    g_now += 50;
+    CHECK(feed_cfg(KC_ESC, true, &g_cfg) == false);   /* press withheld */
+    CHECK(s_hits[KC_ESC] == hits);
+    g_now += 50;                                      /* 50 ms hold */
+    CHECK(feed_cfg(KC_ESC, false, &g_cfg) == false);  /* consumed release */
+    CHECK(s_hits[KC_ESC] == hits + 1);                /* real Esc rebuilt for host */
+    CHECK(reg_count(KC_ESC) == 0);                    /* a tap, not a held key */
+    CHECK(kv_get_mode() == KV_MODE_INSERT);
+    CHECK(vim_insert_flash());                        /* window reset at t=5100 */
+
+    g_now += 2999;
+    CHECK(vim_insert_flash());                        /* still inside the reset window */
+    g_now += 1;
+    CHECK(!vim_insert_flash());                       /* 3000 ms after reset: gone */
+    CHECK(s_orphan == 0);
+}
+
+/* ③ no window + short press: swallowed immediately -> NORMAL with no delay for
+ * the long-press decision, and the matching release is paired and silent. */
+static void test_esc_no_window_immediate(void) {
+    reset_engine();                                   /* INSERT, no window */
+    int hits = s_hits[KC_ESC];
+
+    CHECK(feed_cfg(KC_ESC, true, &g_cfg) == false);   /* swallowed at once */
+    CHECK(kv_get_mode() == KV_MODE_NORMAL);           /* not delayed */
+    CHECK(s_hits[KC_ESC] == hits);                    /* nothing to the host */
+    g_now += 1000;                                    /* even held "long" ... */
+    CHECK(feed_cfg(KC_ESC, false, &g_cfg) == false);  /* ... release stays paired */
+    CHECK(kv_get_mode() == KV_MODE_NORMAL);           /* and emits nothing */
+    CHECK(s_hits[KC_ESC] == hits);
+    CHECK(s_orphan == 0);
+}
+
+/* (a) Another key pressed during the hold does not cancel the pending long
+ * press (design §4.13 决策 a): the hold keeps counting wall-clock time. */
+static void test_esc_hold_other_key_no_cancel(void) {
+    reset_engine();
+    g_now = 5000;
+    open_grace_window();
+    int hits = s_hits[KC_ESC];
+
+    g_now += 10;
+    CHECK(feed_cfg(KC_ESC, true, &g_cfg) == false);   /* hold starts, withheld */
+    g_now += 10;
+    CHECK(feed_cfg(KC_A, true, &g_cfg) == true);      /* typing still passes through */
+    CHECK(feed_cfg(KC_A, false, &g_cfg) == true);
+    CHECK(kv_get_mode() == KV_MODE_INSERT);           /* still typing */
+
+    g_now += 200;                                     /* 210 ms since the Esc press */
+    CHECK(feed_cfg(KC_ESC, false, &g_cfg) == false);
+    CHECK(kv_get_mode() == KV_MODE_NORMAL);           /* the hold still became long */
+    CHECK(s_hits[KC_ESC] == hits);                    /* host got no Esc */
+    CHECK(s_orphan == 0);
+}
+
+/* (b) vim disabled between press and release: the pending decision is dropped,
+ * the release is still consumed by the pairing table (no orphan) and nothing is
+ * emitted (design §4.13 决策 b). */
+static void test_esc_hold_vim_disabled_mid_hold(void) {
+    reset_engine();
+    g_now = 5000;
+    open_grace_window();
+    int hits = s_hits[KC_ESC];
+
+    g_now += 10;
+    CHECK(feed_cfg(KC_ESC, true, &g_cfg) == false);   /* withheld */
+    caps_toggle_vim();                                /* vim off mid-hold */
+    CHECK(!kv_vim_enabled());
+
+    g_now += 300;                                     /* well past the threshold */
+    CHECK(feed_cfg(KC_ESC, false, &g_cfg) == false);  /* still consumed: no orphan */
+    CHECK(s_hits[KC_ESC] == hits);                    /* nothing emitted */
+    CHECK(s_orphan == 0);
+}
+
+/* ⑤ CAG / Visual / pending-NORMAL Esc are untouched by the §4.13 hold path. */
+static void test_esc_long_press_untouched_paths(void) {
+    /* CAG (Ctrl+Esc) in INSERT: neither edge dies in esc_process — a real
+     * Ctrl+Esc reaches the host no matter how long it is held. */
+    reset_engine();
+    int hits = s_hits[KC_ESC];
+    CHECK(feed_cfg(KC_LCTL, true, &g_cfg) == true);
+    CHECK(feed_cfg(KC_ESC, true, &g_cfg) == true);
+    CHECK(s_hits[KC_ESC] == hits + 1);
+    CHECK(kv_get_mode() == KV_MODE_INSERT);
+    g_now += 500;                                     /* long hold changes nothing */
+    CHECK(feed_cfg(KC_ESC, false, &g_cfg) == true);
+    CHECK(feed_cfg(KC_LCTL, false, &g_cfg) == true);
+    CHECK(s_orphan == 0);
+
+    /* Visual Esc: the engine exits to NORMAL and emits nothing. */
+    reset_engine();
+    kv_set_mode(KV_MODE_VISUAL);
+    hits = s_hits[KC_ESC];
+    CHECK(feed_cfg(KC_ESC, true, &g_cfg) == false);
+    CHECK(kv_get_mode() == KV_MODE_NORMAL);
+    g_now += 500;                                     /* long hold: still silent */
+    CHECK(feed_cfg(KC_ESC, false, &g_cfg) == false);
+    CHECK(s_hits[KC_ESC] == hits);
+    CHECK(s_orphan == 0);
+
+    /* NORMAL with a pending prefix/operator: Esc cancels it, nothing emitted. */
+    reset_engine();
+    kv_set_mode(KV_MODE_NORMAL);
+    CHECK(feed_cfg(KC_D, true, &g_cfg) == false);     /* pending operator */
+    hits = s_hits[KC_ESC];
+    CHECK(feed_cfg(KC_ESC, true, &g_cfg) == false);
+    g_now += 500;                                     /* long hold: still silent */
+    CHECK(feed_cfg(KC_ESC, false, &g_cfg) == false);
+    CHECK(s_hits[KC_ESC] == hits);
+    CHECK(s_orphan == 0);
 }
 
 /* ================= Right Shift lazy send ================= */
@@ -1773,6 +1940,13 @@ int main(void) {
     test_esc_normal_to_insert();
     test_esc_grace_window();
     test_esc_no_window_other_paths();
+    /* Esc long press (design §4.13) */
+    test_esc_long_press_in_window();
+    test_esc_short_tap_in_window();
+    test_esc_no_window_immediate();
+    test_esc_hold_other_key_no_cancel();
+    test_esc_hold_vim_disabled_mid_hold();
+    test_esc_long_press_untouched_paths();
     /* Right Shift lazy send */
     test_rshift_alone_silent();
     test_rshift_letter_uppercase();

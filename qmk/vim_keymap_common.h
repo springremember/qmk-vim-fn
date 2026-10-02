@@ -93,7 +93,7 @@ bool vim_is_layer_key(uint16_t keycode);
  * (insert).  `pending` never overrides Visual / Visual-Line. */
 void vim_rgb_state_color(bool enabled, kv_mode_t m, bool pending, bool mouse, uint8_t *r, uint8_t *g, uint8_t *b);
 
-/* True while the "back to typing" flash is due (design §4.12): vim is enabled,
+/* True while the "back to typing" flash is due (design §4.13): vim is enabled,
  * the mode is INSERT, and the Esc grace window is still open — i.e. the current
  * INSERT was entered by an idle-Normal Esc, within VIM_ESC_GRACE_MS (3000 ms).
  * An in-window Esc restarts the window; leaving INSERT drops it immediately, so
@@ -119,7 +119,7 @@ uint16_t vim_timer_start(void);
 bool     vim_timer_elapsed(uint16_t start, uint16_t ms);
 
 /* 32-bit variant for windows that may go unchecked across the 16-bit wrap
- * (design §4.12: the Esc grace window). */
+ * (design §4.13: the Esc grace window). */
 uint32_t vim_timer_start32(void);
 bool     vim_timer_elapsed32(uint32_t start, uint32_t ms);
 
