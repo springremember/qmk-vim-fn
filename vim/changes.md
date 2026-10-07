@@ -1051,3 +1051,41 @@ D25 让 `.` 能回放插入类修改之后，这个错位就从"看不出来"变
 （后者不是 Vim 插入，补 `Left` 会把光标键发给宿主 shell）。
 
 本提交为**文档先行**，实现与测试在后续提交。
+
+### 7.46 缺陷 D26 的实现、红灯与门禁（2026-10-07）
+
+**提交链**（文档先行 → 红灯 → 实现 → 变异）：
+
+| 提交 | 内容 |
+|---|---|
+| `468006d` | docs：design §4.15（D26 规范）、§4.9 ⑮ D18 重分类、⑯⑰ `XEMPTY`/`PEMPTY`、changes §7.45、engineering-spec §1.3 |
+| `22ef6e8` | test（红灯）：`test_leave_insert_left`、`test_dot_repeat_insert` 三处回放期望、kvhost `\r`、matrix 15 条新用例 + D18/XEMPTY/PEMPTY 引用改正 |
+| `cb8e524` | docs：订正 §4.15 触发条件（Esc 透传插入永不补 `Left`，需 `s_rec_change` 判据） |
+| `a8cd389` | test（红灯）：补 `flush_emit()`（否则断言测的是队列而非 recorder）+ 插入回放预算断言 |
+| `6f4774e` | fix：`engine/src/engine.c` 实现（`s_ins_typed` + INSERT→NORMAL 补偿一个 `Left`） |
+| `c23a42d` | test(mutation)：5 条 D26 变异 + 修正 `d25-rec-overflow-guard` 漂移锚点 |
+
+**红灯 → 绿灯（实测）**：实现前 `make test` = `pass=811 fail=14`、`make matrix-test` =
+`TOTAL 613 PASS 412 XFAIL 193 KNOWN-FAIL 0 NEW-FAIL 8`；实现后 `pass=825 fail=0`、
+`TOTAL 613 PASS 420 XFAIL 193 KNOWN-FAIL 0 NEW-FAIL 0`。
+
+**与真实 `vim.tiny` 对照（`iAB<Esc>.` 等 18 例）**：`:normal!`（§1.2 的 `vim_run`）与
+`pty.fork()` 交互运行**逐例一致**；引擎模型在**全部非空插入**用例上与两者一致。
+两处残余与实测相符且已声明：`i<Esc>x`（空插入不补偿 ⇒ D18）、`cc<Esc>x`（`x` 在空行上删掉
+行尾换行 ⇒ `XEMPTY`）；`I<Esc>x` 与 Vim 一致（列 0 无需补偿 —— 正是"不得 always-compensate"
+的反例）。**未发现 `:normal!` 与交互不一致的用例。**
+
+**门禁（干净工作区，HEAD 含本主题 6 个提交）**：
+
+| 门禁 | 实测 |
+|---|---|
+| `make test` | `pass=825 fail=0`，退出码 0 |
+| `make glue-test` | 10/10 套件 `fail=0`（760/250/68/24/153/441/414/493/48/67 = 2718 断言）；收尾已 `git checkout --` 还原两个已跟踪二进制 |
+| `make matrix-test` | `TOTAL 613 PASS 420 XFAIL 193 KNOWN-FAIL 0 NEW-FAIL 0`，退出码 0 |
+| `make mutation-test` | `CAUGHT 26 / EQUIVALENT 1 / SURVIVED 0 / ERROR 0`（共 27 条），退出码 0 |
+
+**未验证 / 未修**：① 空插入退出不补偿（D18）仍是缓冲区可见的残余 —— 修它需要知道宿主列号，
+纯键码无法安全表达（列 0 的 `Left` 会回绕）；② `o<Esc>p`/`o<Esc>x` 的残余属 `XEMPTY`/`PEMPTY`，
+与 D26 无关；③ 真机手感（宿主 smart-home 下的 `I`/`^`、`KV_EMIT_GAP_MS` 排空节奏）仍按
+`qmk/on-device-checklist.md` 人工确认；④ 独立复核由未参与实现的一方按 §1.4 执行
+（前/后探针逐键比对 + `N FIXED / 0 REGRESSED`）。

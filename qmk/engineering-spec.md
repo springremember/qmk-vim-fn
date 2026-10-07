@@ -98,6 +98,11 @@ python3 test/mutants/run.py --quiet           # 只留汇总
   glue 3 条 × ~9 s；`make matrix-test` 的 ~2 min 不参与）。覆盖：键码预算
   （`kv_emit_room`/`kv_emit_clamp_n`）、D13/D19/D20/D22/D23/D24 的关键键码与落点、
   环形下标、Caps 拦截优先级与物理 Ctrl 守卫。
+- **复测（2026-10-07，HEAD `c23a42d`，D26）**：**27** 条记录 ⇒
+  **CAUGHT 26 / EQUIVALENT 1 / SURVIVED 0 / ERROR 0**，退出码 0。新增 5 条 D26 变异
+  （`d26-no-compensate` / `d26-always-compensate` / `d26-typed-mark-dropped` /
+  `d26-esc-passthrough-compensate` / `d26-replay-mark-dropped`）全部 CAUGHT；
+  同时把 `d25-rec-overflow-guard` 的 `old` 锚点更新到 D26 重写后的 `rec_commit_insert()`。
 - **门禁第一次运行就查出一个真实测试空洞（已按本节"补齐覆盖后重测"处理）**：
   `budget-clamp-n-floor-zero`（`kv_emit_clamp_n` 的 `maxn < 1 → 1` 下限改成 `0`）首轮
   **SURVIVED** —— 既有预算测试只预填到 240（room=10），**从未**走到 `room < fixed+per`，
@@ -184,6 +189,17 @@ python3 test/mutants/run.py --quiet           # 只留汇总
 > 中间提交增补断言后已有两个套件变化 —— `test_glue` 671 → **681**、`test_rgb` 377 → **414**，
 > 十套件合计 2592 → **2639**（其余套件不变）。判据不变：**10 个套件全部 `fail=0`**。
 
+> **复测（2026-10-07，HEAD `c23a42d`，D26 落地后；四条门禁逐条手跑）**：表内仍是 `927ecb1` 的
+> 时点值，D26 后实测为 ——
+> ① `pass=825 fail=0`（D25 的 784 + D26 新增 41 条断言：`test_leave_insert_left`、
+> `test_dot_repeat_insert` 的回放 Left、`test_count_queue_accumulation` 第 (7) 段）；
+> ② 10/10 `fail=0`，逐套件 `760/250/68/24/153/441/414/493/48/67`，合计 **2718**
+> （`test_glue` 681 → **760**，其余同上一条复测注）；
+> ③ `TOTAL 613 PASS 420 XFAIL 193 KNOWN-FAIL 0 NEW-FAIL 0`，退出码 0（新增 15 条 D26 用例；
+> XFAIL 表**不增行**，只把 6 条 `ins-o/O-*` 的引用由 D18 改为新增的 `XEMPTY`/`PEMPTY`）；
+> ④ `27` 条记录 ⇒ **CAUGHT 26 / EQUIVALENT 1 / SURVIVED 0 / ERROR 0**，退出码 0
+> （新增 5 条 D26 变异全部 CAUGHT；等价项仍是 `d19-outer-clamp-idempotent`）。
+
 > ⚠️ **`make glue-test` 会改写两个已跟踪的二进制**：`engine/test/glue/test_adapter_regress`
 > 与 `engine/test/glue/test_adapter_regress2`（`engine/Makefile:21-27` 对 `GLUE_TESTS`
 > 逐个 `-o test/glue/$$t` 覆盖）。
@@ -197,8 +213,8 @@ python3 test/mutants/run.py --quiet           # 只留汇总
 判绿看**退出码 0** 与 `KNOWN-FAIL 0 NEW-FAIL 0`，以及没有 `XPASS (in the xfail table ...)` 行。
 退出码公式：`return 1 if (unknown or xpasses or fixed) else 0`（`matrix.py:724`）。
 
-**④ 变异验证**（`make mutation-test`，§1.1.1）：**16** 条记录全绿 ——
-`CAUGHT 15 / EQUIVALENT 1 / SURVIVED 0`，退出码 0，整轮 **≈50 s**；
+**④ 变异验证**（`make mutation-test`，§1.1.1）：**27** 条记录全绿 ——
+`CAUGHT 26 / EQUIVALENT 1 / SURVIVED 0 / ERROR 0`，退出码 0（D26 复测，2026-10-07，HEAD `c23a42d`）；
 判据、记录格式与"如何加一条"见 §1.1.1（记录表 `engine/test/mutants/mutants.txt`）。
 
 ### 2.1 一条命令跑完全部门禁 `make verify-all`
