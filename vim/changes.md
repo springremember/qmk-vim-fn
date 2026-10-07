@@ -1002,3 +1002,18 @@ press 先吞、release 由配对表消费（短按另补发真 Esc）（已在�
 
 **未验证**：200 ms 阈值的**真机手感**无法在 host 桩环境验证（桩时间 `g_now` 可任意推进，覆盖了
 逻辑边界，但无法反映真实按键抖动/人体感知）。真机验收需按 `qmk/on-device-checklist.md` 人工确认。
+
+### 7.44 缺陷 D25：`.` 不能重复插入类修改（规范先行）
+
+**现象**（用户报「重复指令失效」「行首/行尾插入压根没实现重复」）：`.` 能重复 `x`/`dw`/`dd`，
+但**所有插入类改动都不回放**。实测（真实 `vim.tiny` 基准，缓冲区 `abcdefghij\nklmnopqrst\n`）：
+`iX<Esc>.` Vim `XXabcdefghij` / 模型 `Xabcdefghij`；`AZ<Esc>j.`、`iAB<Esc>2.`、`xi<Esc>.`、`2x3.` 同样不符。
+
+**根因**（已定位）：`engine/src/engine.c` 的 `rec_should_record()` 白名单**没有插入入口**
+（`T_INSERT`）；插入期间键入的键走 pass-through，在 `kv_kbd()` 的
+`if (s_rec_len > 0) rec_clear();`（"pass-through abandons a partial prefix"）被整段丢弃；
+进入插入时还有 `if (s_mode == KV_MODE_INSERT) rec_clear();` 再抹一次 ⇒ 插入类改动**永远提交不了**。
+
+**为什么长期未被发现**：`engine/test/host/matrix.py` 里 **`.` 用例 0 条**，四道门禁全都不覆盖 `.`。
+
+**规范**见 `design.md` §4.14（含实测表与六条规则）。本提交为**文档先行**，实现与测试在后续提交。
