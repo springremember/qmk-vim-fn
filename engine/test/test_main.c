@@ -446,6 +446,17 @@ static void test_repeat_count(void) {
     CHECK(rec_count() <= 250);
 }
 
+/* 建立 `.` 目标 → 清记录器（只保留 s_last）→ 喂 `N.`；把**回放部分**的发射流与 ref 对照。 */
+static void check_dot(const kv_keycode_t *base, int nb,
+                      const kv_keycode_t *tail, int nt,
+                      const kv_keycode_t *ref, int nr) {
+    fresh();
+    for (int i = 0; i < nb; i++) key(base[i]);
+    rec_start();
+    for (int i = 0; i < nt; i++) key(tail[i]);
+    check_same(ref, nr);
+}
+
 /* P2-2/D27 主用例：`N.` ≡「计数换成 N 的原命令」。 */
 static void test_dot_count_replace(void) {
     kv_keycode_t ref[128];
@@ -453,55 +464,65 @@ static void test_dot_count_replace(void) {
 
     /* --- x：N. ≡ Nx（**一次**操作；寄存器是 N 个字符，不是 N 次裸 x） --- */
     nr = capture(ref, 128, SEQ(KV_2, KV_X), 2);
-    fresh(); key(KV_2); key(KV_X); key(KV_2); key(KV_DOT); check_same(ref, nr);   /* 2x2. ≡ 2x */
+    check_dot(SEQ(KV_2, KV_X), 2, SEQ(KV_2, KV_DOT), 2, ref, nr);          /* 2x2. ≡ 2x */
     nr = capture(ref, 128, SEQ(KV_3, KV_X), 2);
-    fresh(); key(KV_2); key(KV_X); key(KV_3); key(KV_DOT); check_same(ref, nr);   /* 2x3. ≡ 3x */
+    check_dot(SEQ(KV_2, KV_X), 2, SEQ(KV_3, KV_DOT), 2, ref, nr);          /* 2x3. ≡ 3x */
     nr = capture(ref, 128, SEQ(KV_2, KV_X), 2);
-    fresh(); key(KV_3); key(KV_X); key(KV_2); key(KV_DOT); check_same(ref, nr);   /* 3x2. ≡ 2x */
+    check_dot(SEQ(KV_3, KV_X), 2, SEQ(KV_2, KV_DOT), 2, ref, nr);          /* 3x2. ≡ 2x */
     nr = capture(ref, 128, SEQ(KV_3, KV_X), 2);
-    fresh(); key(KV_X); key(KV_3); key(KV_DOT); check_same(ref, nr);              /* x3.  ≡ 3x */
+    check_dot(SEQ(KV_X), 1, SEQ(KV_3, KV_DOT), 2, ref, nr);                /* x3.  ≡ 3x */
     nr = capture(ref, 128, SEQ(KV_2, KV_X), 2);
-    fresh(); key(KV_2); key(KV_X); key(KV_DOT); check_same(ref, nr);              /* 2x.  ≡ 2x（裸 .） */
+    check_dot(SEQ(KV_2, KV_X), 2, SEQ(KV_DOT), 1, ref, nr);                /* 2x.  ≡ 2x（裸 .） */
     nr = capture(ref, 128, SEQ(KV_1, KV_X), 2);
-    fresh(); key(KV_2); key(KV_X); key(KV_1); key(KV_DOT); check_same(ref, nr);   /* 2x1. ≡ 1x */
+    check_dot(SEQ(KV_2, KV_X), 2, SEQ(KV_1, KV_DOT), 2, ref, nr);          /* 2x1. ≡ 1x */
     nr = capture(ref, 128, SEQ(KV_2, KV_X), 2);
-    fresh(); key(KV_4); key(KV_X); key(KV_2); key(KV_DOT); check_same(ref, nr);   /* 4x2. ≡ 2x */
+    check_dot(SEQ(KV_4, KV_X), 2, SEQ(KV_2, KV_DOT), 2, ref, nr);          /* 4x2. ≡ 2x */
+    /* X：`2X3.` ≡ `3X`（矩阵用例在列 0 会命中 D16 的空选区，故这里用发射流钉住计数替换） */
+    nr = capture(ref, 128, SEQ(KV_3, KV_C_X), 2);
+    check_dot(SEQ(KV_2, KV_C_X), 2, SEQ(KV_3, KV_DOT), 2, ref, nr);        /* 2X3. ≡ 3X */
     /* 显式计数 1 与裸 `.` 必须**不同**（旧实现两者都折到 n=1，是 P2-2 的一半根因） */
-    fresh(); key(KV_2); key(KV_X); key(KV_DOT);           int n_bare = rec_count();
-    fresh(); key(KV_2); key(KV_X); key(KV_1); key(KV_DOT); int n_one = rec_count();
+    fresh(); key(KV_2); key(KV_X); rec_start(); key(KV_DOT);              int n_bare = rec_count();
+    fresh(); key(KV_2); key(KV_X); rec_start(); key(KV_1); key(KV_DOT);   int n_one  = rec_count();
     CHECK(n_bare != n_one);
     CHECK(n_bare == 3 && n_one == 2);
 
     /* --- 操作符 + 运动：前缀/后缀计数都被替换（后缀被丢弃） --- */
     nr = capture(ref, 128, SEQ(KV_3, KV_D, KV_W), 3);
-    fresh(); key(KV_D); key(KV_W); key(KV_3); key(KV_DOT); check_same(ref, nr);   /* dw3.  ≡ 3dw */
-    fresh(); key(KV_2); key(KV_D); key(KV_W); key(KV_3); key(KV_DOT); check_same(ref, nr); /* 2dw3. ≡ 3dw */
-    fresh(); key(KV_D); key(KV_2); key(KV_W); key(KV_3); key(KV_DOT); check_same(ref, nr); /* d2w3. ≡ 3dw */
+    check_dot(SEQ(KV_D, KV_W), 2, SEQ(KV_3, KV_DOT), 2, ref, nr);          /* dw3.  ≡ 3dw */
+    check_dot(SEQ(KV_2, KV_D, KV_W), 3, SEQ(KV_3, KV_DOT), 2, ref, nr);    /* 2dw3. ≡ 3dw */
+    check_dot(SEQ(KV_D, KV_2, KV_W), 3, SEQ(KV_3, KV_DOT), 2, ref, nr);    /* d2w3. ≡ 3dw */
     nr = capture(ref, 128, SEQ(KV_D, KV_W), 2);
-    fresh(); key(KV_D); key(KV_W); key(KV_DOT); check_same(ref, nr);              /* dw.   ≡ dw */
+    check_dot(SEQ(KV_D, KV_W), 2, SEQ(KV_DOT), 1, ref, nr);                /* dw.   ≡ dw */
     /* d0：`0` 是**动作**不是计数位，删计数时必须保留（否则 3d 会留下待决操作符） */
     nr = capture(ref, 128, SEQ(KV_D, KV_0), 2);
-    fresh(); key(KV_D); key(KV_0); key(KV_3); key(KV_DOT); check_same(ref, nr);   /* d03.  ≡ d0 */
-    fresh(); key(KV_2); key(KV_D); key(KV_0); key(KV_3); key(KV_DOT); check_same(ref, nr); /* 2d03. ≡ d0 */
+    check_dot(SEQ(KV_D, KV_0), 2, SEQ(KV_3, KV_DOT), 2, ref, nr);          /* d03.  ≡ d0 */
+    check_dot(SEQ(KV_2, KV_D, KV_0), 3, SEQ(KV_3, KV_DOT), 2, ref, nr);    /* 2d03. ≡ d0 */
+    /* D：`2D3.` ≡ `3D`（矩阵里 2D 的寄存器尾换行是既有偏差，故用发射流钉住） */
+    nr = capture(ref, 128, SEQ(KV_3, KV_C_D), 2);
+    check_dot(SEQ(KV_2, KV_C_D), 2, SEQ(KV_3, KV_DOT), 2, ref, nr);        /* 2D3.  ≡ 3D */
 
     /* --- dd / J / >> / p --- */
     nr = capture(ref, 128, SEQ(KV_2, KV_D, KV_D), 3);
-    fresh(); key(KV_D); key(KV_D); key(KV_2); key(KV_DOT); check_same(ref, nr);   /* dd2.  ≡ 2dd */
+    check_dot(SEQ(KV_D, KV_D), 2, SEQ(KV_2, KV_DOT), 2, ref, nr);          /* dd2.  ≡ 2dd */
     nr = capture(ref, 128, SEQ(KV_3, KV_D, KV_D), 3);
-    fresh(); key(KV_2); key(KV_D); key(KV_D); key(KV_3); key(KV_DOT); check_same(ref, nr); /* 2dd3. ≡ 3dd */
+    check_dot(SEQ(KV_2, KV_D, KV_D), 3, SEQ(KV_3, KV_DOT), 2, ref, nr);    /* 2dd3. ≡ 3dd */
     nr = capture(ref, 128, SEQ(KV_2, KV_D, KV_D), 3);
-    fresh(); key(KV_3); key(KV_D); key(KV_D); key(KV_2); key(KV_DOT); check_same(ref, nr); /* 3dd2. ≡ 2dd */
+    check_dot(SEQ(KV_3, KV_D, KV_D), 3, SEQ(KV_2, KV_DOT), 2, ref, nr);    /* 3dd2. ≡ 2dd */
     nr = capture(ref, 128, SEQ(KV_D, KV_D), 2);
-    fresh(); key(KV_D); key(KV_D); key(KV_DOT); check_same(ref, nr);              /* dd.   ≡ dd */
+    check_dot(SEQ(KV_D, KV_D), 2, SEQ(KV_DOT), 1, ref, nr);                /* dd.   ≡ dd */
     nr = capture(ref, 128, SEQ(KV_3, KV_C_J), 2);
-    fresh(); key(KV_2); key(KV_C_J); key(KV_3); key(KV_DOT); check_same(ref, nr); /* 2J3.  ≡ 3J */
-    fresh(); key(KV_C_J); key(KV_3); key(KV_DOT); check_same(ref, nr);            /* J3.   ≡ 3J */
+    check_dot(SEQ(KV_2, KV_C_J), 2, SEQ(KV_3, KV_DOT), 2, ref, nr);        /* 2J3.  ≡ 3J */
+    check_dot(SEQ(KV_C_J), 1, SEQ(KV_3, KV_DOT), 2, ref, nr);              /* J3.   ≡ 3J */
     nr = capture(ref, 128, SEQ(KV_3, KV_C_GT, KV_C_GT), 3);
-    fresh(); key(KV_2); key(KV_C_GT); key(KV_C_GT); key(KV_3); key(KV_DOT); check_same(ref, nr); /* 2>>3. ≡ 3>> */
+    check_dot(SEQ(KV_2, KV_C_GT, KV_C_GT), 3, SEQ(KV_3, KV_DOT), 2, ref, nr); /* 2>>3. ≡ 3>> */
     nr = capture(ref, 128, SEQ(KV_2, KV_C_GT, KV_C_GT), 3);
-    fresh(); key(KV_C_GT); key(KV_C_GT); key(KV_2); key(KV_DOT); check_same(ref, nr);            /* >>2.  ≡ 2>> */
-    nr = capture(ref, 128, SEQ(KV_Y, KV_Y, KV_3, KV_P), 4);
-    fresh(); key(KV_Y); key(KV_Y); key(KV_2); key(KV_P); key(KV_3); key(KV_DOT); check_same(ref, nr); /* 2p3. ≡ 3p */
+    check_dot(SEQ(KV_C_GT, KV_C_GT), 2, SEQ(KV_2, KV_DOT), 2, ref, nr);       /* >>2.  ≡ 2>> */
+    /* p 的定位取决于**最近一次写剪贴板的命令**是行级还是字符级（D7）：先跑 `yy`
+     * 建立行级寄存器，再取 `3p` 的发射流作 ref。 */
+    fresh(); key(KV_Y); key(KV_Y); rec_start(); key(KV_3); key(KV_P);
+    nr = rec_count(); for (int i = 0; i < nr; i++) ref[i] = rec_at(i);
+    fresh(); key(KV_Y); key(KV_Y); key(KV_2); key(KV_P); rec_start();
+    key(KV_3); key(KV_DOT); check_same(ref, nr);                          /* yy2p3. ≡ 3p */
 
     /* --- 计数类但会进 Insert 的 s / C：前缀计数被替换，重放一次 --- */
     /* 2s<Esc>3. ≡ 3s（空插入：显式命令与回放都不补 Left） */
@@ -510,14 +531,16 @@ static void test_dot_count_replace(void) {
     fresh(); key(KV_2); key(KV_S); kv_cancel(); kv_set_mode(KV_MODE_NORMAL);
     rec_start(); key(KV_3); key(KV_DOT); check_same(ref, nr);                     /* 2s<Esc>3. ≡ 3s */
     /* 2CAB<Esc>2. ≡ 2CAB（非空插入 ⇒ 显式命令的提交也补一个 Left） */
-    fresh(); key(KV_2); key(KV_C); key(KV_A); key(KV_B); kv_cancel(); kv_set_mode(KV_MODE_NORMAL);
+    fresh(); key(KV_2); key(KV_C_C); key(KV_A); key(KV_B); kv_cancel(); kv_set_mode(KV_MODE_NORMAL);
+    flush_emit();   /* kv_cancel() 的 Left 只在队列里，读 recorder 前必须先冲刷 */
     nr = rec_count(); for (int i = 0; i < nr; i++) ref[i] = rec_at(i);
-    fresh(); key(KV_2); key(KV_C); key(KV_A); key(KV_B); kv_cancel(); kv_set_mode(KV_MODE_NORMAL);
+    fresh(); key(KV_2); key(KV_C_C); key(KV_A); key(KV_B); kv_cancel(); kv_set_mode(KV_MODE_NORMAL);
     rec_start(); key(KV_2); key(KV_DOT); check_same(ref, nr);                     /* 2CAB<Esc>2. ≡ 2CAB */
     /* CAB<Esc>2. ≡ 2CAB */
-    fresh(); key(KV_2); key(KV_C); key(KV_A); key(KV_B); kv_cancel(); kv_set_mode(KV_MODE_NORMAL);
+    fresh(); key(KV_2); key(KV_C_C); key(KV_A); key(KV_B); kv_cancel(); kv_set_mode(KV_MODE_NORMAL);
+    flush_emit();   /* kv_cancel() 的 Left 只在队列里，读 recorder 前必须先冲刷 */
     nr = rec_count(); for (int i = 0; i < nr; i++) ref[i] = rec_at(i);
-    fresh(); key(KV_C); key(KV_A); key(KV_B); kv_cancel(); kv_set_mode(KV_MODE_NORMAL);
+    fresh(); key(KV_C_C); key(KV_A); key(KV_B); kv_cancel(); kv_set_mode(KV_MODE_NORMAL);
     rec_start(); key(KV_2); key(KV_DOT); check_same(ref, nr);                     /* CAB<Esc>2. ≡ 2CAB */
 
     /* --- 插入类：整段插入执行 N 次；只有末次补 Left（`2.` 平铺 ≠ `..` 嵌套） --- */
@@ -587,11 +610,13 @@ static void test_dot_count_budget(void) {
     kv_kbd(KV_9); kv_kbd(KV_9); kv_kbd(KV_DOT);
     budget_check(KV_LEFT, 0);
 
-    /* 插入类、`N.` 被预算截断到 1 次时，仍要补那一个 Left */
-    budget_prep(249); kv_set_mode(KV_MODE_NORMAL);
+    /* 插入类、`N.` 被预算截断到 1 次时，仍要补那一个 Left（room 只剩 4 ⇒ fit<2）。
+     * 注意 §4.4「已知残余」：队列预填到 pending ≥ 248 时连最小骨架都放不下，本用例
+     * 取 pending=246，保证仍在 250 的预算内。 */
+    budget_prep(245); kv_set_mode(KV_MODE_NORMAL);
     kv_kbd(KV_I); kv_kbd(KV_A); kv_kbd(KV_B);
     kv_cancel(); kv_set_mode(KV_MODE_NORMAL);
-    CHECK(kv_emit_pending() == 250);
+    CHECK(kv_emit_pending() == 246);
     kv_kbd(KV_9); kv_kbd(KV_9); kv_kbd(KV_DOT);
     CHECK(kv_emit_pending() <= 250);
     flush_emit();
@@ -969,9 +994,11 @@ static void test_count_drop(void) {
     /* Y ≡ yy（行级）：3Y == 3yy */
     fresh(); key(KV_3); key(KV_C_Y);  CHECK_SEQ(KV_HOME, KV_HOME, KV_LSFT_KC(KV_DOWN), KV_LSFT_KC(KV_DOWN), KV_LSFT_KC(KV_DOWN), KV_LCTL_KC(KV_C), KV_ESC, KV_UP, KV_UP, KV_UP); CHECK(kv_pending() == false);
 
-    /* 3. 重复 3 次（真实 Vim：dw 后 3. 连删 3 个词）；计数本身不泄漏进回放的命令 */
+    /* `3.` 把录制 `x` 的计数**换成 3** ⇒ 一次 `3x`（4 键：Shift+Right×3 + Ctrl+X），
+     * 不是三次裸 `x`（旧实现按"重复 3 次"= 6 键；寄存器可区分：`3x` 是 `bcd`、三次 `x` 是 `d`）。
+     * design §4.14 #3 / P2-2 D27。 */
     fresh(); key(KV_X); rec_start(); key(KV_3); key(KV_DOT);
-    CHECK_SEQ(S_X, S_X, S_X); CHECK(kv_pending() == false);
+    CHECK_SEQ(S_X3); CHECK(kv_pending() == false);
 
     /* 3ZZ drops the count and still saves */
     fresh(); key(KV_3); key(KV_C_Z); key(KV_C_Z);

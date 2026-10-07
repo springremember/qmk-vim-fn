@@ -15,13 +15,16 @@ static kv_ctx_t   s_ctx;
 /* repeat recording */
 #define REC_MAX 64
 static kv_keycode_t s_rec[REC_MAX];
+static bool         s_rec_iscnt[REC_MAX]; /* 该位是不是**计数位**（P2-2/D27，见 kc_is_count_digit） */
 static int          s_rec_len;
 static bool         s_rec_change; /* 本次录制里是否含「修改缓冲区」的命令 */
 static bool         s_rec_overflow; /* 录制超 REC_MAX ⇒ 本次修改不得提交（§4.14 #6） */
 static bool         s_ins_typed;    /* 本次插入里是否真的键入了字符（D26 补偿 Left 的判据） */
 static kv_keycode_t s_last[REC_MAX];
+static bool         s_last_iscnt[REC_MAX];
 static int          s_last_len;
 static bool         s_replaying;
+static bool         s_suppress_left; /* 插入类 `N.` 的中间次：回放结束**不**补 D26 的 Left */
 
 /* internal feed result: consumed / pass-through / needs re-identification */
 typedef enum { R_CONSUMED = 0, R_PASSTHROUGH, R_REIDENTIFY } kv_feed_t;
@@ -294,6 +297,26 @@ static int digit_of(kv_keycode_t kc) {
     return (kc == KV_0) ? 0 : (int)(kc - KV_1 + 1);
 }
 
+/* 该键是不是**计数位**（P2-2/D27）：由按下它时解析器的状态决定。
+ * 计数态（ST_CNT/ST_OPCNT/ST_ANGCnt）里的数字（含 `0`）都是计数；
+ * ST_IDLE/ST_OP/ST_ANG 里的 `1..9` 是计数起始，而 `0` 是 `0` 动作（T_ZERO）——
+ * **必须保留**：`d0` 的 `0` 若被当成计数删掉，`d03.` 会退化成待决的 `3d`（数据损坏）。 */
+static bool kc_is_count_digit(kv_keycode_t kc, kv_state_t st_before) {
+    switch (st_before) {
+        case ST_CNT: case ST_OPCNT: case ST_ANGCnt:
+            return kv_classify_digit(kc) == T_DIGIT;
+        case ST_IDLE: case ST_OP: case ST_ANG:
+            return kv_classify(kc) == T_COUNT;
+        default:
+            return false;
+    }
+}
+
+/* 数字键码：1..9 → KV_1..KV_9，0 → KV_0（`N.` 的 N ≤ 99，最多两位）。 */
+static kv_keycode_t digit_kc(int d) {
+    return (d == 0) ? KV_0 : (kv_keycode_t)(KV_1 + d - 1);
+}
+
 /* Fold two counts by multiplication, clamped so the emitted key sequence can
  * never overflow the non-blocking queue (design #2; 2d3w = d6w). */
 static int fold_counts(int n, int n2) {
@@ -322,10 +345,15 @@ static kv_motion_t motion_of(kv_keycode_t kc) {
     }
 }
 
-static void rec_push(kv_keycode_t kc) {
+static void rec_push(kv_keycode_t kc, bool is_cnt) {
     if (s_replaying) return;
-    if (s_rec_len < REC_MAX) s_rec[s_rec_len++] = kc;
-    else s_rec_overflow = true; /* 静默丢弃会损坏数据（P0-2）：记下溢出，提交时拒绝 */
+    if (s_rec_len < REC_MAX) {
+        s_rec[s_rec_len] = kc;
+        s_rec_iscnt[s_rec_len] = is_cnt;
+        s_rec_len++;
+    } else {
+        s_rec_overflow = true; /* 静默丢弃会损坏数据（P0-2）：记下溢出，提交时拒绝 */
+    }
 }
 
 /* Only "change-like" commands are worth replaying with '.'.  Insert/visual
@@ -363,6 +391,7 @@ static void rec_commit(void) {
     if (s_replaying) return;
     if (s_rec_len > 0) {
         memcpy(s_last, s_rec, sizeof(kv_keycode_t) * (size_t)s_rec_len);
+        memcpy(s_last_iscnt, s_rec_iscnt, sizeof(bool) * (size_t)s_rec_len);
         s_last_len = s_rec_len;
     }
     s_rec_len = 0;
@@ -390,7 +419,9 @@ static void rec_clear(void) {
 static void rec_commit_insert(void) {
     if (s_replaying) return;
     if (s_mode != KV_MODE_INSERT) return;
-    if (s_ins_typed) { kv_emit_tap(KV_LEFT); s_ins_typed = false; }
+    /* P2-2/D27：插入类 `N.` 的中间次抑制补偿（Vim 在重复之间把光标留在插入文本之后），
+     * 只在末次补这一个 `Left`。s_ins_typed 由随后的 abort_input()/rec_clear() 清掉。 */
+    if (s_ins_typed && !s_suppress_left) { kv_emit_tap(KV_LEFT); s_ins_typed = false; }
     if (s_rec_len > 0 && s_rec_change && !s_rec_overflow) rec_commit();
     else rec_clear();
 }
@@ -404,11 +435,20 @@ static void abort_input(void) {
     rec_clear();
 }
 
-static void rec_replay(void) {
-    if (s_replaying || s_last_len == 0) return; /* never re-enter '.' */
-    rec_clear();  /* 丢弃残留录制（例如 `. ` 前的计数），否则会在回放结束时被提交（P0-1） */
-    s_replaying = true;
+/* 录制是否为**插入类**（`i/a/I/A/o/O` 入口，design §4.14 #3）：跳过前缀计数位，
+ * 看第一个真正的命令键是不是 T_INSERT。插入类与计数类的 `N.` 语义不同。 */
+static bool rec_is_insert_class(void) {
     for (int i = 0; i < s_last_len; i++) {
+        if (s_last_iscnt[i]) continue;           /* 跳过前缀计数（如 `3i` 的 3） */
+        return kv_classify(s_last[i]) == T_INSERT;
+    }
+    return false;
+}
+
+/* 回放录制的键。strip_counts=true 时跳过计数位（P2-2/D27 的计数类 `N.` 用）。 */
+static void rec_replay_keys(bool strip_counts) {
+    for (int i = 0; i < s_last_len; i++) {
+        if (strip_counts && s_last_iscnt[i]) continue;
         /* 真因 A：插入期录下的键必须由引擎**直接发进发射队列**。正常路径靠 kv_kbd() 返回
          * KV_PASSTHROUGH 让 glue 转发，但回放是引擎内部循环、没有 glue 参与，返回值会被
          * 丢掉 ⇒ 插入文本永远到不了宿主。 */
@@ -421,31 +461,69 @@ static void rec_replay(void) {
         }
         kv_kbd(s_last[i]);
     }
-    s_replaying = false;
-    /* 回放完若仍在 INSERT 必须回 NORMAL（真实 Vim 的 `.` 结束后停在 Normal）。 */
-    if (s_mode == KV_MODE_INSERT) kv_set_mode(KV_MODE_NORMAL);
-    s_rec_len = 0;        /* 回放不产生新的录制（rec_push/rec_commit 在回放期已短路） */
-    s_rec_change = false;
 }
 
-/* `N.` 重复 N 次（真实 Vim：dw 后 3. 连删 3 个词）。总键码数必须留在发送队列内：
- * emit 队列只有 EMIT_CAP=256 格且溢出**静默丢键**，故封顶在 99 键
- * （与 Normal 的"2 位计数 ≤99"语义一致）。
- * 封顶不能用"录制键数"估：`dd` 只录 2 键却发 5 键，`99dw` 录 3 键却发 100 键。
- * 因此先回放一次、量出本次命令**实际**发出的键数，再据此决定还能重复几次。 */
+/* 回放一次录制。emit_left=false 抑制结束时的 D26 `Left`（插入类 `N.` 的中间次；
+ * Vim 在重复之间把光标留在插入文本之后）。返回本次回放是否键入了字符。 */
+static bool rec_replay_ex(bool emit_left) {
+    if (s_replaying || s_last_len == 0) return false; /* never re-enter '.' */
+    rec_clear();  /* 丢弃残留录制（例如 `. ` 前的计数），否则会在回放结束时被提交（P0-1） */
+    s_replaying = true;
+    rec_replay_keys(false);
+    s_replaying = false;
+    bool typed = false;
+    /* 回放完若仍在 INSERT 必须回 NORMAL（真实 Vim 的 `.` 结束后停在 Normal）。 */
+    if (s_mode == KV_MODE_INSERT) {
+        typed = s_ins_typed;
+        s_suppress_left = !emit_left;
+        kv_set_mode(KV_MODE_NORMAL);
+        s_suppress_left = false;
+    }
+    s_rec_len = 0;        /* 回放不产生新的录制（rec_push/rec_commit 在回放期已短路） */
+    s_rec_change = false;
+    return typed;
+}
+
+static void rec_replay(void) { (void)rec_replay_ex(true); }
+
+/* `N.` 的精确语义（design §4.14 #3，P2-2/D27）。分两类：
+ *   计数类（x/X/s/S/C/D/dw/dd/p/P/J/>/…）：删掉录制里**所有计数位**，前缀 N，重放**一次**
+ *     —— 等价于把原命令的计数换成 N 再执行一遍（`2x3.` ≡ `3x`，寄存器是 `cde`）。
+ *   插入类（i/a/I/A/o/O）：整段插入执行 N 次；Vim 在重复之间把光标留在插入文本**之后**，
+ *     只在末次落到最后插入字符上 ⇒ 中间次抑制 D26 的 `Left`（`iAB<Esc>2.`=`AABABB`，
+ *     而 `iAB<Esc>..`=`AAABBB`）。
+ * 键码预算（design §4.4）：计数类退化成一条 ≤99 的单命令，由各发射器按剩余预算截断；
+ * 插入类按每次插入的实际键数（含末次 `Left`）封顶，保证 256 格队列不到顶。 */
 static void rec_replay_n(int n) {
     if (s_last_len <= 0 || n < 1) return;
-    const int before = kv_emit_pending();
-    rec_replay();
-    const int per = kv_emit_pending() - before;   /* 单次回放实际发出的键数 */
-    if (per < 1) return;                          /* 该命令不发键（例如被吞掉） */
-    int maxrep = 99 / per;
-    if (maxrep < 1) maxrep = 1;
-    /* 预算（design §4.4）：第一次回放已经占掉 per 键，剩下的按剩余预算再限一次
-     * —— 否则 `99.` 压在非空队列上仍会把 256 格队列撑到顶并静默丢键。 */
-    const int fit = kv_emit_room() / per;
-    if (fit < maxrep) maxrep = fit;
-    for (int i = 1; i < n && i < maxrep; i++) rec_replay();
+    if (rec_is_insert_class()) {
+        if (n == 1) { (void)rec_replay_ex(true); return; }
+        const int before = kv_emit_pending();
+        bool typed = rec_replay_ex(false);            /* 第 1 次（中间次） */
+        const int per = kv_emit_pending() - before;   /* 单次插入实际发出的键数 */
+        if (per < 1) return;                          /* 该命令不发键（例如被吞掉） */
+        /* 预算（design §4.4）：末次还要多一个 Left，故按 per 留 1 格再封顶。 */
+        int maxrep = 98 / per;
+        if (maxrep < 1) maxrep = 1;
+        const int fit = (kv_emit_room() - 1) / per;
+        if (fit < 1) maxrep = 1;
+        else if (fit < maxrep) maxrep = fit;
+        const int reps = (n < maxrep) ? n : maxrep;
+        for (int i = 1; i < reps - 1; i++) (void)rec_replay_ex(false);
+        if (reps > 1) (void)rec_replay_ex(true);
+        else if (typed) kv_emit_tap(KV_LEFT);         /* 被预算截断到 1 次：仍要补那个 Left */
+        return;
+    }
+    /* 计数类：喂入 N 作为新的前缀计数，再回放**去掉计数位**的录制（重放一次）。 */
+    rec_clear();
+    s_replaying = true;
+    if (n >= 10) kv_kbd(digit_kc(n / 10));
+    kv_kbd(digit_kc(n % 10));
+    rec_replay_keys(true);
+    s_replaying = false;
+    if (s_mode == KV_MODE_INSERT) kv_set_mode(KV_MODE_NORMAL);
+    s_rec_len = 0;
+    s_rec_change = false;
 }
 
 /* ------------------------------------------------------------------ commands */
@@ -866,7 +944,7 @@ kv_result_t kv_kbd(kv_keycode_t kc) {
              * 才需要补偿 `Left`；经 Esc/开机路径进入的透传插入不是 Vim 插入，补 `Left` 会把一个
              * 光标键发给宿主（shell/编辑器），故不置位。Esc 本身也不算键入字符。 */
             if (KV_BASIC(kc) != KV_ESC && s_rec_change) s_ins_typed = true;
-            rec_push(kc);
+            rec_push(kc, false);   /* 插入期键入的字符不是计数位 */
             /* 这里**不置** s_rec_change：「是不是修改」由插入入口（T_INSERT）决定。
              * 若在此置位，经 Esc/开机路径进入的插入（录制里没有入口标记）会被提交，
              * 回放时那些字符会被当成**普通模式命令**执行（例如 `X` 变成删字符）——
@@ -880,6 +958,7 @@ kv_result_t kv_kbd(kv_keycode_t kc) {
             return KV_CONSUMED;
         }
 
+        const kv_state_t st_before = s_state;   /* 判定本键是不是计数位（P2-2/D27） */
         kv_feed_t r = feed_normal(kc);
         if (r == R_REIDENTIFY) {
             rec_clear(); /* the discarded prefix must not pollute repeat */
@@ -891,7 +970,7 @@ kv_result_t kv_kbd(kv_keycode_t kc) {
                 rec_clear();
             } else if (kv_is_vim_key(kc) && rec_should_record(kv_classify(kc))) {
                 if (rec_is_change(kv_classify(kc), kc)) s_rec_change = true;
-                rec_push(kc);
+                rec_push(kc, kc_is_count_digit(kc, st_before));
             }
             /* 命令结束（回到 Idle）才提交：只有含「修改」的录制才成为 `.` 的目标，
              * 否则**丢弃本次录制**（s_last 保留）—— 裸移动/复制不得夺走 `.` 的目标。 */

@@ -385,6 +385,8 @@ add('rep-ddp', B4, 1, 0, 'ddp')
 # whole insertion N times and compensates the D26 `Left` only on the LAST repeat,
 # so `iAB<Esc>2.` = AABABB (flat) while `iAB<Esc>..` = AAABBB (nested).
 BONE = 'one two three four\nfive six seven\n'
+B5  = 'L1\nL2\nL3\nL4\nL5\n'                 # long enough for `3dd2.` to stay meaningful
+B5W = 'one two\nthree four\nfive six\nseven eight\nnine ten\n'   # ditto for `2J3.`/`J3.`
 add('dot2x-dot',          BABC, 0, 0, '2x.')
 add('dot2x-2dot',         BABC, 0, 0, '2x2.')
 add('dot2x-3dot',         BABC, 0, 0, '2x3.')
@@ -392,22 +394,25 @@ add('dot3x-2dot',         BABC, 0, 0, '3x2.')
 add('dotx-3dot',          BABC, 0, 0, 'x3.')
 add('dot2x-1dot',         BABC, 0, 0, '2x1.')     # `1.` is NOT `.`
 add('dot4x-2dot',         BONE, 0, 0, '4x2.')
-add('dot2X-3dot',         BABC, 0, 2, '2X3.')
+add('dot2X-3dot',         BABC, 0, 2, '2X3.')     # xfail D16 (X at column 0)
 add('dotdw-3dot',         BW,   0, 0, 'dw3.')
 add('dot2dw-3dot',        BW,   0, 0, '2dw3.')
 add('dotd2w-3dot',        BW,   0, 0, 'd2w3.')
 add('dotdd-2dot',         B4,   0, 0, 'dd2.')
 add('dot2dd-3dot',        B4,   0, 0, '2dd3.')
-add('dot3dd-2dot',        B4,   0, 0, '3dd2.')
-add('dot2J-3dot',         B3,   0, 0, '2J3.')
-add('dotJ-3dot',          B3,   0, 0, 'J3.')
+add('dot3dd-2dot',        B5,   0, 0, '3dd2.')
+add('dot2J-3dot',         B5W,  0, 0, '2J3.')
+add('dotJ-3dot',          B5W,  0, 0, 'J3.')
 add('dot2>>-3dot',        B4,   0, 0, '2>>3.')
 add('dot>>-2dot',         B4,   0, 0, '>>2.')
-add('dot2p-3dot',         B4,   0, 0, 'yy2p3.')
-add('dotd0-3dot',         BABC, 0, 5, 'd03.')     # `0` is a MOTION, not a count
-add('dot2d0-3dot',        BABC, 0, 5, '2d03.')
+# NB: `dot2p-3dot` (`yy2p3.`) and `dot2CAB-2dot` (`2CAB\e2.`) are deliberately NOT here:
+# their EXPLICIT equivalents (`yy2p3p` / `2CAB\e2CAB\e`) fail identically in the engine
+# (counted paste interleaves on the 2nd repeat; `2C` on a 1-line buffer eats the line
+# break), i.e. they test pre-existing base-command defects, not the D27 count rule.
+# The count rule for `p`/`C` is pinned by test_main.c's test_dot_count_replace instead.
+add('dotd0-3dot',         BABC, 0, 5, 'd03.')     # `0` is a MOTION, not a count; xfail D16
+add('dot2d0-3dot',        BABC, 0, 5, '2d03.')    # xfail D16
 add('dot2s-3dot',         BABC, 0, 0, '2s\\e3.')
-add('dot2CAB-2dot',       BABC, 0, 0, '2CAB\\e2.')
 add('dotCAB-2dot',        BABC, 0, 0, 'CAB\\e2.')
 add('dotins-iAB-2dot',    BABC, 0, 0, 'iAB\\e2.')
 add('dotins-iAB-3dot',    BABC, 0, 0, 'iAB\\e3.')
@@ -416,7 +421,7 @@ add('dotins-iAB-1dot',    BABC, 0, 0, 'iAB\\e1.')
 add('dotins-iX-3dot',     BABC, 0, 0, 'iX\\e3.')
 add('dotins-iA-CR-B-2dot', BABC, 0, 0, 'iA\\rB\\e2.')
 add('dotins-oXY-2dot',    BABC, 0, 0, 'oXY\\e2.')
-add('dotins-OXY-2dot',    BABC, 0, 0, 'OXY\\e2.')
+add('dotins-OXY-2dot',    BABC, 0, 0, 'OXY\\e2.')  # xfail DOTINS (cursor-only, O entry)
 add('dotins-AX-2dot',     BABC, 0, 0, 'AX\\e2.')
 add('dotins-IX-2dot',     BABC, 0, 0, 'IX\\e2.')
 add('dotins-ccA-2dot',    B4,   0, 0, 'ccA\\e2.')
@@ -524,6 +529,11 @@ DEVIATIONS = {
     'D23': 'linewise VISUAL Esc lands on the first line/column 0 of the selection; the host used to stay at the active line end (fixed 2026-09, design §4.9)',
     'FAILMOT': 'a motion that FAILS in Vim (k on line 1, j on the last line) aborts the operator; the host arrow keys only clamp, so d/c/> still act (design §4.4)',
     'GPFX':   'only the g->gg prefix is implemented; other g/Z continuations are swallowed (design §4.4)',
+    # 2026-10 (P2-2/D27): the insert-class `O` (open-above) entry.  The BUFFER matches
+    # Vim (`OXY<Esc>2.` = 3 `XY` lines), but Vim's counted repeat leaves the cursor on
+    # line N-1 while the engine (like N explicit `OXY<Esc>`) leaves it on line 0; the
+    # other insert entries (i/a/A/I/o) match exactly.  Cursor-only (design §4.14 #3).
+    'DOTINS': 'insert-class `N.` via the `O` entry: buffer matches Vim, cursor lands N-1 lines higher than Vim (design §4.14 #3)',
 }
 
 XFAIL = {
@@ -566,6 +576,12 @@ XFAIL = {
     'ins-O-first-x': 'XEMPTY',
     'ins-o-p': 'PEMPTY',
     'ins-O-p': 'PEMPTY',
+    # 2026-10 (D27/P2-2): counted `.` where the REPLAYED COMMAND itself is already a declared
+    # deviation -- the count-replacement rule is right, the underlying command is not.
+    'dot2X-3dot': 'D16',      # `2X` at column 0: empty host selection cuts the whole line
+    'dotd0-3dot': 'D16',      # `d0` at column 0
+    'dot2d0-3dot': 'D16',
+    'dotins-OXY-2dot': 'DOTINS',  # O-entry counted insert: buffer matches, cursor N-1 lines off
     'mot-e': 'E-W',
     'mot-E': 'E-W',
     'probe-ex': 'E-W',
