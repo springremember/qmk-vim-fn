@@ -293,10 +293,12 @@ mutant d25-insert-change-flag
   file  = engine/src/engine.c
   suite = engine
   equiv = no
-  why   = 去掉 INSERT 分支的 s_rec_change 置位 ⇒ 经 Esc/开机路径进入的插入永不成为 . 目标（P1-3）
+  why   = 在 INSERT 分支置 s_rec_change（我犯过的错）⇒ 经 Esc/开机进入的插入被提交，回放时那些字符被当普通模式命令执行（数据损坏）
   old
-            if (!s_replaying) s_rec_change = true;
+            rec_push(kc);
   new
+            rec_push(kc);
+            if (!s_replaying) s_rec_change = true;
   end
 
 mutant d25-replay-leftover-record
