@@ -1856,6 +1856,17 @@ static void test_dot_repeat_insert(void) {
     CHECK(rec_count() == 8);
     CHECK(rec_at(7) == KV_H);                   /* 第 8 个字符不得被截断 */
 
+    /* ⑤b P0-2 的溢出守卫：插入长于 REC_MAX 时**不得提交**（否则静默截断的回放会改坏文档）。
+     * REC_MAX=64，这里喂 70 个字符。 */
+    fresh();
+    key(KV_I);
+    for (int i = 0; i < 70; i++) key(KV_A + (kv_keycode_t)(i % 26));
+    kv_cancel(); kv_set_mode(KV_MODE_NORMAL);
+    rec_start();
+    key(KV_DOT);
+    CHECK(rec_count() == 0);                    /* 超限 ⇒ 不提交，`. ` 无动作 */
+    CHECK(kv_get_mode() == KV_MODE_NORMAL);
+
     /* ⑥ 已知限制（保守）：经 Esc/开机路径进入的插入**不**成为 `.` 目标 —— 因为它的录制里
      * 没有插入入口标记，若提交则回放会把这些字符当普通模式命令执行（数据损坏）。 */
     fresh();
