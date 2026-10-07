@@ -1834,6 +1834,38 @@ static void test_dot_repeat_insert(void) {
     CHECK(rec_count() >= 1);
     CHECK(rec_at(rec_count() - 1) == KV_Z);
     CHECK(kv_get_mode() == KV_MODE_NORMAL);     /* 回放结束必须停在 Normal */
+
+    /* ④ P0-1：带计数的 `.` 不得把计数泄漏给下一条命令（审计发现的数据损坏） */
+    fresh();
+    key(KV_I); key(KV_X);
+    kv_cancel(); kv_set_mode(KV_MODE_NORMAL);
+    key(KV_9); key(KV_DOT);                     /* 9. ⇒ 再插 9 次 */
+    rec_start();
+    key(KV_X);                                  /* 之后按 x：只能删 1 个字符 */
+    CHECK(rec_count() == 2);                    /* Shift+Right ×1 + Ctrl+X ×1 */
+    CHECK(rec_at(0) == KV_LSFT_KC(KV_RGHT));
+    CHECK(rec_at(1) == KV_LCTL_KC(KV_X));
+
+    /* ⑤ P0-2：8 字符插入必须完整回放（REC_MAX 静默截断会丢字符） */
+    fresh();
+    key(KV_I);
+    for (kv_keycode_t c = KV_A; c <= KV_H; c++) key(c);
+    kv_cancel(); kv_set_mode(KV_MODE_NORMAL);
+    rec_start();
+    key(KV_DOT);
+    CHECK(rec_count() == 8);
+    CHECK(rec_at(7) == KV_H);                   /* 第 8 个字符不得被截断 */
+
+    /* ⑥ 已知限制（保守）：经 Esc/开机路径进入的插入**不**成为 `.` 目标 —— 因为它的录制里
+     * 没有插入入口标记，若提交则回放会把这些字符当普通模式命令执行（数据损坏）。 */
+    fresh();
+    kv_set_mode(KV_MODE_INSERT);
+    key(KV_X);
+    kv_cancel(); kv_set_mode(KV_MODE_NORMAL);
+    rec_start();
+    key(KV_DOT);
+    CHECK(rec_count() == 0);                    /* 不误执行 */
+    CHECK(kv_get_mode() == KV_MODE_NORMAL);
 }
 
 int main(void) {

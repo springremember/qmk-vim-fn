@@ -13,10 +13,11 @@ static kv_state_t s_state;
 static kv_ctx_t   s_ctx;
 
 /* repeat recording */
-#define REC_MAX 8
+#define REC_MAX 64
 static kv_keycode_t s_rec[REC_MAX];
 static int          s_rec_len;
 static bool         s_rec_change; /* 本次录制里是否含「修改缓冲区」的命令 */
+static bool         s_rec_overflow; /* 录制超 REC_MAX ⇒ 本次修改不得提交（§4.14 #6） */
 static kv_keycode_t s_last[REC_MAX];
 static int          s_last_len;
 static bool         s_replaying;
@@ -323,6 +324,7 @@ static kv_motion_t motion_of(kv_keycode_t kc) {
 static void rec_push(kv_keycode_t kc) {
     if (s_replaying) return;
     if (s_rec_len < REC_MAX) s_rec[s_rec_len++] = kc;
+    else s_rec_overflow = true; /* 静默丢弃会损坏数据（P0-2）：记下溢出，提交时拒绝 */
 }
 
 /* Only "change-like" commands are worth replaying with '.'.  Insert/visual
@@ -364,6 +366,7 @@ static void rec_commit(void) {
     }
     s_rec_len = 0;
     s_rec_change = false;
+    s_rec_overflow = false;
 }
 
 /* 离开 INSERT 时提交：整段插入（入口 + 键入）成为 `.` 的目标。
@@ -371,10 +374,10 @@ static void rec_commit(void) {
  * ⇒ 提交必须也在 kv_cancel() 里发生，否则录制在提交前被抹掉（D25 真因 B）。 */
 static void rec_commit_insert(void) {
     if (s_replaying) return;
-    if (s_mode == KV_MODE_INSERT && s_rec_len > 0 && s_rec_change) rec_commit();
+    if (s_mode == KV_MODE_INSERT && s_rec_len > 0 && s_rec_change && !s_rec_overflow) rec_commit();
 }
 
-static void rec_clear(void) { s_rec_len = 0; s_rec_change = false; }
+static void rec_clear(void) { s_rec_len = 0; s_rec_change = false; s_rec_overflow = false; }
 
 /* Shared abort path for every mode/enable transition (design #4.7):
  * drop the in-progress state machine AND the in-progress repeat recording.
@@ -387,6 +390,7 @@ static void abort_input(void) {
 
 static void rec_replay(void) {
     if (s_replaying || s_last_len == 0) return; /* never re-enter '.' */
+    rec_clear();  /* 丢弃残留录制（例如 `. ` 前的计数），否则会在回放结束时被提交（P0-1） */
     s_replaying = true;
     for (int i = 0; i < s_last_len; i++) {
         /* 真因 A：插入期录下的键必须由引擎**直接发进发射队列**。正常路径靠 kv_kbd() 返回
@@ -837,6 +841,10 @@ kv_result_t kv_kbd(kv_keycode_t kc) {
         if (s_mode == KV_MODE_INSERT) {
             /* 插入期键入的每个键都是这次「修改」的一部分（`. ` 重放整段插入）。 */
             rec_push(kc);
+            /* 这里**不置** s_rec_change：「是不是修改」由插入入口（T_INSERT）决定。
+             * 若在此置位，经 Esc/开机路径进入的插入（录制里没有入口标记）会被提交，
+             * 回放时那些字符会被当成**普通模式命令**执行（例如 `X` 变成删字符）——
+             * 那是数据损坏，比"不回放"更糟。故该类插入不成为 `.` 目标（已知限制）。 */
             return KV_PASSTHROUGH;
         }
         if (s_mode >= KV_MODE_MOUSE) return KV_PASSTHROUGH;
@@ -887,7 +895,9 @@ void      kv_visual_cancel(void) {
 }
 
 void kv_set_mode(kv_mode_t m) {
-    if (m != KV_MODE_INSERT) rec_commit_insert();
+    /* 只在**明确回到 NORMAL** 时提交：切到 MOUSE（鼠标层）不得把插入从中间劈开并
+     * 吞掉后半段（P1-2）。design §4.14：提交点是 INSERT→NORMAL 转换。 */
+    if (m == KV_MODE_NORMAL) rec_commit_insert();
     s_mode = m;
     vline_reset();
     abort_input();

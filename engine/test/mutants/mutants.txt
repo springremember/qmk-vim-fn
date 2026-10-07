@@ -288,3 +288,34 @@ old
 new
         s_esc_grace = s_esc_grace;   /* 变异：不重置窗口 */
 end
+
+mutant d25-insert-change-flag
+  file  = engine/src/engine.c
+  suite = engine
+  equiv = no
+  why   = 去掉 INSERT 分支的 s_rec_change 置位 ⇒ 经 Esc/开机路径进入的插入永不成为 . 目标（P1-3）
+  old
+            if (!s_replaying) s_rec_change = true;
+  new
+  end
+
+mutant d25-replay-leftover-record
+  file  = engine/src/engine.c
+  suite = engine
+  equiv = no
+  why   = 回放前不清残留录制 ⇒ 计数在回放结束时被提交并泄漏给下一条命令（P0-1 数据损坏）
+  old
+    rec_clear();  /* 丢弃残留录制（例如 `. ` 前的计数），否则会在回放结束时被提交（P0-1） */
+  new
+  end
+
+mutant d25-rec-overflow-guard
+  file  = engine/src/engine.c
+  suite = engine
+  equiv = no
+  why   = 去掉提交时的溢出拒绝 ⇒ 超 REC_MAX 的插入被静默截断后仍成为 . 目标（P0-2）
+  old
+    if (s_mode == KV_MODE_INSERT && s_rec_len > 0 && s_rec_change && !s_rec_overflow) rec_commit();
+  new
+    if (s_mode == KV_MODE_INSERT && s_rec_len > 0 && s_rec_change) rec_commit();
+  end
