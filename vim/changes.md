@@ -1014,6 +1014,8 @@ press 先吞、release 由配对表消费（短按另补发真 Esc）（已在�
 `if (s_rec_len > 0) rec_clear();`（"pass-through abandons a partial prefix"）被整段丢弃；
 进入插入时还有 `if (s_mode == KV_MODE_INSERT) rec_clear();` 再抹一次 ⇒ 插入类改动**永远提交不了**。
 
-**为什么长期未被发现**：`engine/test/host/matrix.py` 里 **`.` 用例 0 条**，四道门禁全都不覆盖 `.`。
+**为什么长期未被发现**：`engine/test/host/matrix.py` 里**没有插入类** `.` 用例（订正：该文件其实有 **15** 条 `.` 用例，
+如 `x-dot`/`dw-dot`/`rep-x-dot-x` 等，且都通过 —— 我最初写成「`. ` 用例 0 条、四道门禁全不覆盖」，是错的；
+缺的只是**插入类**覆盖）。
 
 **规范**见 `design.md` §4.14（含实测表与六条规则）。本提交为**文档先行**，实现与测试在后续提交。
