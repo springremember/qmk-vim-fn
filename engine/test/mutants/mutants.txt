@@ -319,7 +319,62 @@ mutant d25-rec-overflow-guard
   equiv = no
   why   = 去掉提交时的溢出拒绝 ⇒ 超 REC_MAX 的插入被静默截断后仍成为 . 目标（P0-2）
   old
-    if (s_mode == KV_MODE_INSERT && s_rec_len > 0 && s_rec_change && !s_rec_overflow) rec_commit();
+    if (s_rec_len > 0 && s_rec_change && !s_rec_overflow) rec_commit();
   new
-    if (s_mode == KV_MODE_INSERT && s_rec_len > 0 && s_rec_change) rec_commit();
+    if (s_rec_len > 0 && s_rec_change) rec_commit();
   end
+
+mutant d26-no-compensate
+file = engine/src/engine.c
+suite = engine
+equiv = no
+why = D26 的核心键码被去掉（离开插入不补 Left）⇒ 多字符插入后 `.` 从右一列重放、缓冲区被改坏。
+old
+    if (s_ins_typed) { kv_emit_tap(KV_LEFT); s_ins_typed = false; }
+new
+    s_ins_typed = false;   /* 变异：不补 Left */
+end
+
+mutant d26-always-compensate
+file = engine/src/engine.c
+suite = engine
+equiv = no
+why = 空插入也补 Left ⇒ 宿主 Left 在列 0 会回绕到上一行行尾（I<Esc>x 因此删错行）。
+old
+    if (s_ins_typed) { kv_emit_tap(KV_LEFT); s_ins_typed = false; }
+new
+    { kv_emit_tap(KV_LEFT); s_ins_typed = false; }   /* 变异：空插入也补 */
+end
+
+mutant d26-typed-mark-dropped
+file = engine/src/engine.c
+suite = engine
+equiv = no
+why = INSERT 分支不再记「键入了字符」⇒ 任何插入离开都不补 Left（no-compensate 的输入侧）。
+old
+            if (KV_BASIC(kc) != KV_ESC && s_rec_change) s_ins_typed = true;
+new
+            /* 变异：不记「键入了字符」 */
+end
+
+mutant d26-esc-passthrough-compensate
+file = engine/src/engine.c
+suite = engine
+equiv = no
+why = 去掉「引擎发起的插入」判据（s_rec_change）⇒ 经 Normal--Esc-->Insert 的透传插入离开时也补 Left，把一个光标键发给宿主 shell。
+old
+            if (KV_BASIC(kc) != KV_ESC && s_rec_change) s_ins_typed = true;
+new
+            if (KV_BASIC(kc) != KV_ESC) s_ins_typed = true;   /* 变异：Esc 透传插入也补 */
+end
+
+mutant d26-replay-mark-dropped
+file = engine/src/engine.c
+suite = engine
+equiv = no
+why = 回放期不记「键入了字符」⇒ 回放结束不补 Left，`. ` 第二次起又从右一列重放。
+old
+            if (s_rec_change) s_ins_typed = true;
+new
+            /* 变异：回放不记「键入了字符」 */
+end
