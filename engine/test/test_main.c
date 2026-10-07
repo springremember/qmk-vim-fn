@@ -1800,8 +1800,45 @@ static void test_visual_vertical_esc_cursor(void) {
               KV_LSFT_KC(KV_RGHT), KV_ESC, KV_LEFT);
 }
 
+
+/* D25：`.` 必须能重复插入类修改（design §4.14）。
+ * 关键：回放是引擎内部循环、没有 glue 转发，插入文本必须由引擎直接发进发射队列。 */
+static void test_dot_repeat_insert(void) {
+    /* ① 普通插入 iX<Esc> 后 `.` ⇒ 把插入文本再发一次 */
+    fresh();
+    key(KV_I);                                  /* 进入插入：不发键 */
+    key(KV_X);                                  /* 插入期键入：透传给宿主（引擎不发） */
+    kv_cancel(); kv_set_mode(KV_MODE_NORMAL);   /* glue 退出插入的真实顺序（D25 真因 B） */
+    rec_start();
+    key(KV_DOT);
+    CHECK(rec_count() == 1);
+    CHECK(rec_at(0) == KV_X);                   /* 回放把 X 直接发进队列（真因 A） */
+
+    /* ② 空插入 i<Esc> 也是「修改」，但它重放的是**空操作**，不得重复更早的 x */
+    fresh();
+    key(KV_X);
+    key(KV_I);
+    kv_cancel(); kv_set_mode(KV_MODE_NORMAL);
+    rec_start();
+    key(KV_DOT);
+    CHECK(rec_count() == 0);                    /* 实测：xi<Esc>. 时 Vim 没有重复 x */
+
+    /* ③ 行尾插入 A 后 `.` 同样回放（用户点名） */
+    fresh();
+    key(KV_C_A);                                /* A：光标到行尾 */
+    key(KV_Z);
+    kv_cancel(); kv_set_mode(KV_MODE_NORMAL);
+    rec_start();
+    key(KV_DOT);
+    /* 回放会先重发入口的落点（A ⇒ KV_END），再发插入文本；末键必须是 Z */
+    CHECK(rec_count() >= 1);
+    CHECK(rec_at(rec_count() - 1) == KV_Z);
+    CHECK(kv_get_mode() == KV_MODE_NORMAL);     /* 回放结束必须停在 Normal */
+}
+
 int main(void) {
     test_single();
+    test_dot_repeat_insert();
     test_count();
     test_op();
     test_line_change_and_join();

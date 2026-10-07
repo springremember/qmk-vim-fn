@@ -333,6 +333,7 @@ static bool rec_should_record(kv_token_t t) {
         case T_MOTION: case T_ZERO: case T_CARET: case T_DOLLAR: case T_G_BIG:
         case T_S_BIG: case T_X: case T_XUP: case T_s: case T_C_BIG:
         case T_D_BIG: case T_Y_BIG: case T_P: case T_PUP: case T_JOIN:
+        case T_INSERT: /* i I a A o O（design §4.14） */
             return true;
         default:
             return false;
@@ -346,7 +347,9 @@ static bool rec_is_change(kv_token_t t, kv_keycode_t kc) {
         case T_OP:     return kc == KV_D || kc == KV_C;   /* y 是复制，不是修改 */
         case T_INDENT: case T_X: case T_XUP: case T_s:
         case T_C_BIG: case T_D_BIG: case T_P: case T_PUP:
-        case T_JOIN: case T_S_BIG:
+        case T_JOIN: case T_S_BIG: case T_INSERT:
+            /* T_INSERT 也算修改：实测 `xi<Esc>.` 时 `.` **没有**重复 x，说明空插入
+             * 确实会成为 `.` 的目标（一个空操作）。design §4.14 订正。 */
             return true;
         default:
             return false;
@@ -363,6 +366,14 @@ static void rec_commit(void) {
     s_rec_change = false;
 }
 
+/* 离开 INSERT 时提交：整段插入（入口 + 键入）成为 `.` 的目标。
+ * glue 的顺序是 kv_cancel(); kv_set_mode(); 而 kv_cancel() 会 rec_clear()
+ * ⇒ 提交必须也在 kv_cancel() 里发生，否则录制在提交前被抹掉（D25 真因 B）。 */
+static void rec_commit_insert(void) {
+    if (s_replaying) return;
+    if (s_mode == KV_MODE_INSERT && s_rec_len > 0 && s_rec_change) rec_commit();
+}
+
 static void rec_clear(void) { s_rec_len = 0; s_rec_change = false; }
 
 /* Shared abort path for every mode/enable transition (design #4.7):
@@ -377,8 +388,16 @@ static void abort_input(void) {
 static void rec_replay(void) {
     if (s_replaying || s_last_len == 0) return; /* never re-enter '.' */
     s_replaying = true;
-    for (int i = 0; i < s_last_len; i++) kv_kbd(s_last[i]);
+    for (int i = 0; i < s_last_len; i++) {
+        /* 真因 A：插入期录下的键必须由引擎**直接发进发射队列**。正常路径靠 kv_kbd() 返回
+         * KV_PASSTHROUGH 让 glue 转发，但回放是引擎内部循环、没有 glue 参与，返回值会被
+         * 丢掉 ⇒ 插入文本永远到不了宿主。 */
+        if (s_mode == KV_MODE_INSERT) { kv_emit_tap(s_last[i]); continue; }
+        kv_kbd(s_last[i]);
+    }
     s_replaying = false;
+    /* 回放完若仍在 INSERT 必须回 NORMAL（真实 Vim 的 `.` 结束后停在 Normal）。 */
+    if (s_mode == KV_MODE_INSERT) kv_set_mode(KV_MODE_NORMAL);
     s_rec_len = 0;        /* 回放不产生新的录制（rec_push/rec_commit 在回放期已短路） */
     s_rec_change = false;
 }
@@ -816,6 +835,8 @@ kv_result_t kv_kbd(kv_keycode_t kc) {
          * MOUSE and any keyboard-layer mode (kv_mode_t >= KV_MODE_MOUSE) is
          * wholly delegated to the keyboard layer. */
         if (s_mode == KV_MODE_INSERT) {
+            /* 插入期键入的每个键都是这次「修改」的一部分（`. ` 重放整段插入）。 */
+            rec_push(kc);
             return KV_PASSTHROUGH;
         }
         if (s_mode >= KV_MODE_MOUSE) return KV_PASSTHROUGH;
@@ -840,10 +861,10 @@ kv_result_t kv_kbd(kv_keycode_t kc) {
             }
             /* 命令结束（回到 Idle）才提交：只有含「修改」的录制才成为 `.` 的目标，
              * 否则**丢弃本次录制**（s_last 保留）—— 裸移动/复制不得夺走 `.` 的目标。 */
-            if (s_state == ST_IDLE && s_rec_len > 0) {
+            if (s_state == ST_IDLE && s_rec_len > 0 && s_mode != KV_MODE_INSERT) {
                 if (s_rec_change) rec_commit(); else rec_clear();
             }
-            if (s_mode == KV_MODE_INSERT) rec_clear(); /* mode left NORMAL */
+            /* 进入 INSERT 时**不**清录制：留到退出插入时提交（design §4.14）。 */
             return KV_CONSUMED;
         }
         if (s_rec_len > 0) rec_clear(); /* pass-through abandons a partial prefix */
@@ -865,8 +886,16 @@ void      kv_visual_cancel(void) {
     kv_cancel();
 }
 
-void kv_set_mode(kv_mode_t m) { s_mode = m; vline_reset(); abort_input(); }
+void kv_set_mode(kv_mode_t m) {
+    if (m != KV_MODE_INSERT) rec_commit_insert();
+    s_mode = m;
+    vline_reset();
+    abort_input();
+}
 void kv_enable(void) { s_enabled = true; vline_reset(); abort_input(); s_mode = KV_MODE_INSERT; }
 void kv_disable(void) { s_enabled = false; abort_input(); kv_emit_clear(); }
 
-void kv_cancel(void) { abort_input(); }
+void kv_cancel(void) {
+    rec_commit_insert(); /* glue 先调 kv_cancel() 再 kv_set_mode()：提交必须在这里发生 */
+    abort_input();
+}

@@ -48,6 +48,9 @@ int main(int argc, char **argv) {
         /* keymap layer (§4.12 step 8): Insert + Esc is SWALLOWED and switches to
          * Normal; the host never sees that Esc. */
         if (keymap && kv_get_mode() == KV_MODE_INSERT && KV_BASIC(kc) == KV_ESC) {
+            /* 忠实模拟 glue 层 esc_process()：真实顺序是 kv_cancel(); kv_set_mode(NORMAL);
+             * 少了 kv_cancel() 就测不出「录制在提交前被抹掉」这类缺陷（D25 真因 B）。 */
+            kv_cancel();
             kv_set_mode(KV_MODE_NORMAL);
             continue;
         }
