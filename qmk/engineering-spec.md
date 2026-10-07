@@ -135,7 +135,7 @@ python3 test/mutants/run.py --quiet           # 只留汇总
 
 ### 1.3 缺陷编号与「已知偏差」引用链
 
-- **缺陷编号**：修复类缺陷用 `D1…D26`（`vim/changes.md` §7.14–§7.30 逐条登记）；**固有/声明类
+- **缺陷编号**：修复类缺陷用 `D1…D27`（`vim/changes.md` §7.14–§7.47 逐条登记）；**固有/声明类
   偏差**用独立编号（现有：`E-W`、`YCOL`、`VCUR`、`VPASTE`、`PASTEC`、`EOLDEL`、`GPFX`、
   `FAILMOT`、`D2`、`D14`–`D18`、`D23`、`VCAP`、`VBLOCK`、`IND`、`XEMPTY`、`PEMPTY`，以及
   `design.md` §4.9 的 ①–⑩）。编号一经使用**不得复用/改义**。
