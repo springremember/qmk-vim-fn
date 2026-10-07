@@ -1755,6 +1755,15 @@ static void test_count_queue_accumulation(void) {
     kv_kbd(KV_9); kv_kbd(KV_9); kv_kbd(KV_U);
     CHECK(kv_emit_pending() <= 250);
     budget_check(KV_LCTL_KC(KV_Z), 0);
+
+    /* (7) D26：插入回放的**每次成本含补的 `Left`**（design §4.15 第 9 条）。预填 240 后
+     * `iAB<Esc>` 再 `99.` 仍不得到顶，且尾部那个补偿 `Left` 必须真的发出来。 */
+    budget_prep(240); kv_set_mode(KV_MODE_NORMAL);
+    kv_kbd(KV_I); kv_kbd(KV_A); kv_kbd(KV_B);      /* 插入文本走透传，不入队 */
+    kv_cancel(); kv_set_mode(KV_MODE_NORMAL);      /* 建立 `.` 目标：补 1 个 Left（241） */
+    CHECK(kv_emit_pending() == 241);
+    kv_kbd(KV_9); kv_kbd(KV_9); kv_kbd(KV_DOT);    /* 每次回放 3 键：A、B、Left */
+    budget_check(KV_LEFT, 0);
 }
 
 /* D20：字符级 VISUAL 的 `y` / `Esc` 光标语义（真实 Vim 实测）。
@@ -1889,73 +1898,74 @@ static void test_dot_repeat_insert(void) {
 static void test_leave_insert_left(void) {
     /* 非空插入 iAB<Esc> ⇒ 一个 Left */
     fresh(); key(KV_I); key(KV_A); key(KV_B);
-    rec_start(); kv_cancel(); kv_set_mode(KV_MODE_NORMAL);
+    rec_start(); kv_cancel(); kv_set_mode(KV_MODE_NORMAL); flush_emit();
     CHECK_SEQ(KV_LEFT);
     /* glue 的真实顺序 kv_cancel(); kv_set_mode(); 只补一次；重复 kv_set_mode 也不得再补 */
     fresh(); key(KV_I); key(KV_A);
-    rec_start(); kv_cancel(); kv_set_mode(KV_MODE_NORMAL); kv_set_mode(KV_MODE_NORMAL);
+    rec_start(); kv_cancel(); kv_set_mode(KV_MODE_NORMAL); kv_set_mode(KV_MODE_NORMAL); flush_emit();
     CHECK_SEQ(KV_LEFT);
     /* 直接 kv_set_mode(NORMAL)（不经 kv_cancel）同样补一次 */
     fresh(); key(KV_I); key(KV_A);
-    rec_start(); kv_set_mode(KV_MODE_NORMAL);
+    rec_start(); kv_set_mode(KV_MODE_NORMAL); flush_emit();
     CHECK_SEQ(KV_LEFT);
 
-    /* 空插入不补：i / cc / s / C / A / o / O */
+    /* 空插入不补：i / cc / s / C / A / o / O。注意必须先 flush_emit()，
+     * 否则漏补的 Left 只是躺在队列里、rec_count() 仍为 0（会漏掉变异）。 */
     fresh(); key(KV_I);
-    rec_start(); kv_cancel(); kv_set_mode(KV_MODE_NORMAL);
+    rec_start(); kv_cancel(); kv_set_mode(KV_MODE_NORMAL); flush_emit();
     CHECK(rec_count() == 0);
     fresh(); key(KV_C); key(KV_C);
-    rec_start(); kv_cancel(); kv_set_mode(KV_MODE_NORMAL);
+    rec_start(); kv_cancel(); kv_set_mode(KV_MODE_NORMAL); flush_emit();
     CHECK(rec_count() == 0);
     fresh(); key(KV_S);
-    rec_start(); kv_cancel(); kv_set_mode(KV_MODE_NORMAL);
+    rec_start(); kv_cancel(); kv_set_mode(KV_MODE_NORMAL); flush_emit();
     CHECK(rec_count() == 0);
     fresh(); key(KV_C_C);
-    rec_start(); kv_cancel(); kv_set_mode(KV_MODE_NORMAL);
+    rec_start(); kv_cancel(); kv_set_mode(KV_MODE_NORMAL); flush_emit();
     CHECK(rec_count() == 0);
     fresh(); key(KV_C_A);
-    rec_start(); kv_cancel(); kv_set_mode(KV_MODE_NORMAL);
+    rec_start(); kv_cancel(); kv_set_mode(KV_MODE_NORMAL); flush_emit();
     CHECK(rec_count() == 0);
     fresh(); key(KV_O);
-    rec_start(); kv_cancel(); kv_set_mode(KV_MODE_NORMAL);
+    rec_start(); kv_cancel(); kv_set_mode(KV_MODE_NORMAL); flush_emit();
     CHECK(rec_count() == 0);
     fresh(); key(KV_C_O);
-    rec_start(); kv_cancel(); kv_set_mode(KV_MODE_NORMAL);
+    rec_start(); kv_cancel(); kv_set_mode(KV_MODE_NORMAL); flush_emit();
     CHECK(rec_count() == 0);
     /* 经原始 API 到达 INSERT 的 Esc 不算「键入了字符」 */
     fresh(); key(KV_I); key(KV_ESC);
-    rec_start(); kv_cancel(); kv_set_mode(KV_MODE_NORMAL);
+    rec_start(); kv_cancel(); kv_set_mode(KV_MODE_NORMAL); flush_emit();
     CHECK(rec_count() == 0);
 
     /* 非空的 s / C 也要补 */
     fresh(); key(KV_S); key(KV_X);
-    rec_start(); kv_cancel(); kv_set_mode(KV_MODE_NORMAL);
+    rec_start(); kv_cancel(); kv_set_mode(KV_MODE_NORMAL); flush_emit();
     CHECK_SEQ(KV_LEFT);
     fresh(); key(KV_C_C); key(KV_X);
-    rec_start(); kv_cancel(); kv_set_mode(KV_MODE_NORMAL);
+    rec_start(); kv_cancel(); kv_set_mode(KV_MODE_NORMAL); flush_emit();
     CHECK_SEQ(KV_LEFT);
 
     /* 与「能否回放」无关：70 字符溢出（REC_MAX 截断、不提交）仍然要补 Left */
     fresh(); key(KV_I);
     for (int i = 0; i < 70; i++) key(KV_A);
-    rec_start(); kv_cancel(); kv_set_mode(KV_MODE_NORMAL);
+    rec_start(); kv_cancel(); kv_set_mode(KV_MODE_NORMAL); flush_emit();
     CHECK_SEQ(KV_LEFT);
 
     /* 不得触发的路径 1：经 Esc/开机路径进入的插入（无入口标记、非「修改」）不补 */
     fresh(); kv_set_mode(KV_MODE_INSERT); key(KV_X);
-    rec_start(); kv_cancel(); kv_set_mode(KV_MODE_NORMAL);
+    rec_start(); kv_cancel(); kv_set_mode(KV_MODE_NORMAL); flush_emit();
     CHECK(rec_count() == 0);
     /* 不得触发的路径 2：鼠标层（INSERT -> MOUSE 不得补） */
     fresh(); key(KV_I); key(KV_A);
-    rec_start(); kv_set_mode(KV_MODE_MOUSE);
+    rec_start(); kv_set_mode(KV_MODE_MOUSE); flush_emit();
     CHECK(rec_count() == 0);
     /* 不得触发的路径 3：vim 关闭 */
     fresh(); key(KV_I); key(KV_A);
-    rec_start(); kv_disable();
+    rec_start(); kv_disable(); flush_emit();
     CHECK(rec_count() == 0);
     /* 不得触发的路径 4：初始化（kv_enable() 后合成的 kv_set_mode(NORMAL)，无键入） */
     kv_init(); kv_enable();
-    rec_start(); kv_set_mode(KV_MODE_NORMAL);
+    rec_start(); kv_set_mode(KV_MODE_NORMAL); flush_emit();
     CHECK(rec_count() == 0);
 }
 
