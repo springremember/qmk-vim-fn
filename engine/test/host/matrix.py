@@ -379,6 +379,52 @@ add('rep-dgg-dot', B4, 2, 0, 'dgg.')
 add('rep->>-dot', B4, 1, 0, '>>.')
 add('rep-ddp', B4, 1, 0, 'ddp')
 
+# ============ counted dot-repeat (P2-2/D27, design §4.14 #3) ============
+# `N.` REPLACES the recorded command's own count (a bare `.` replays it whole):
+# `2x3.` ≡ `3x`, `d2w3.` ≡ `3dw`, `>2j3.` ≡ `>3j`.  The insert class repeats the
+# whole insertion N times and compensates the D26 `Left` only on the LAST repeat,
+# so `iAB<Esc>2.` = AABABB (flat) while `iAB<Esc>..` = AAABBB (nested).
+BONE = 'one two three four\nfive six seven\n'
+add('dot2x-dot',          BABC, 0, 0, '2x.')
+add('dot2x-2dot',         BABC, 0, 0, '2x2.')
+add('dot2x-3dot',         BABC, 0, 0, '2x3.')
+add('dot3x-2dot',         BABC, 0, 0, '3x2.')
+add('dotx-3dot',          BABC, 0, 0, 'x3.')
+add('dot2x-1dot',         BABC, 0, 0, '2x1.')     # `1.` is NOT `.`
+add('dot4x-2dot',         BONE, 0, 0, '4x2.')
+add('dot2X-3dot',         BABC, 0, 2, '2X3.')
+add('dotdw-3dot',         BW,   0, 0, 'dw3.')
+add('dot2dw-3dot',        BW,   0, 0, '2dw3.')
+add('dotd2w-3dot',        BW,   0, 0, 'd2w3.')
+add('dotdd-2dot',         B4,   0, 0, 'dd2.')
+add('dot2dd-3dot',        B4,   0, 0, '2dd3.')
+add('dot3dd-2dot',        B4,   0, 0, '3dd2.')
+add('dot2J-3dot',         B3,   0, 0, '2J3.')
+add('dotJ-3dot',          B3,   0, 0, 'J3.')
+add('dot2>>-3dot',        B4,   0, 0, '2>>3.')
+add('dot>>-2dot',         B4,   0, 0, '>>2.')
+add('dot2p-3dot',         B4,   0, 0, 'yy2p3.')
+add('dotd0-3dot',         BABC, 0, 5, 'd03.')     # `0` is a MOTION, not a count
+add('dot2d0-3dot',        BABC, 0, 5, '2d03.')
+add('dot2s-3dot',         BABC, 0, 0, '2s\\e3.')
+add('dot2CAB-2dot',       BABC, 0, 0, '2CAB\\e2.')
+add('dotCAB-2dot',        BABC, 0, 0, 'CAB\\e2.')
+add('dotins-iAB-2dot',    BABC, 0, 0, 'iAB\\e2.')
+add('dotins-iAB-3dot',    BABC, 0, 0, 'iAB\\e3.')
+add('dotins-iAB-dotdot',  BABC, 0, 0, 'iAB\\e..')  # `..` nests, `2.` does not
+add('dotins-iAB-1dot',    BABC, 0, 0, 'iAB\\e1.')
+add('dotins-iX-3dot',     BABC, 0, 0, 'iX\\e3.')
+add('dotins-iA-CR-B-2dot', BABC, 0, 0, 'iA\\rB\\e2.')
+add('dotins-oXY-2dot',    BABC, 0, 0, 'oXY\\e2.')
+add('dotins-OXY-2dot',    BABC, 0, 0, 'OXY\\e2.')
+add('dotins-AX-2dot',     BABC, 0, 0, 'AX\\e2.')
+add('dotins-IX-2dot',     BABC, 0, 0, 'IX\\e2.')
+add('dotins-ccA-2dot',    B4,   0, 0, 'ccA\\e2.')
+# pending / partial input before `.` must not replay a stale target
+add('dot-pending-d',      BABC, 0, 5, 'd.')
+add('dot-pending-2d',     BABC, 0, 5, '2d.')
+add('dot-nolast-2dot',    BABC, 0, 0, '2.')
+
 # ============================ paste/register cases (audit pp.py) ============================
 # NB: the old list contained 'yl l p' — a **literal space** key.  The host model does not
 # implement space-as-motion, so that case tested the model, not the engine; and its generated

@@ -62,6 +62,10 @@ static void fresh_vline(void) {
     rec_start();
 }
 
+/* budget helpers are defined further down; the P2-2/D27 tests use them early. */
+static void budget_prep(int pre);
+static void budget_check(kv_keycode_t want_last, kv_keycode_t mut);
+
 /* ------------------------------------------------------------------ tests */
 static void test_single(void) {
     fresh(); key(KV_H); CHECK_SEQ(KV_LEFT);
@@ -386,28 +390,48 @@ static void test_repeat_change_only(void) {
     rec_start(); key(KV_DOT); CHECK_SEQ(S_X);
 }
 
-/* 真实 Vim 实测：`N.` 重复 N 次（dw 后 1./2./3./9. 分别重复 1/2/3/9 次）。
- * 本层按录制长度封顶：总键码数 ≤99（发送队列 256 格且溢出静默丢键）。 */
+/* P2-2/D27（design §4.14 #3）：`N.` 的显式计数**替换**录制里的计数，不是相乘。
+ * 最稳的判据：`N.` 发出的键码必须与「把原命令的计数换成 N 重新键入」**逐键相同**
+ * （`capture` 抓显式命令的发射流，再与 `.` 的发射流对照）。插入类是例外：整段插入
+ * 执行 N 次、且只在**末次**补 D26 的 `Left`（`2.` 平铺，与 `..` 的嵌套不同）。 */
+
+/* 把一串键喂进 fresh 引擎，返回实际发出的键码序列（"≡ 显式命令"对照用）。 */
+static int capture(kv_keycode_t *out, int cap, const kv_keycode_t *keys, int nk) {
+    fresh();
+    for (int i = 0; i < nk; i++) key(keys[i]);
+    int n = rec_count();
+    if (n > cap) n = cap;
+    for (int i = 0; i < n; i++) out[i] = rec_at(i);
+    return n;
+}
+
+/* 当前录制必须与 ref[0..nr) 逐键相同。 */
+static void check_same(const kv_keycode_t *ref, int nr) {
+    CHECK(rec_count() == nr);
+    CHECK(seq_eq(ref, nr));
+}
+
+/* 真实 Vim 实测（vim.tiny 9.1）：`N.` 的显式计数**替换**录制里的计数（design §4.14 #3）。
+ * 本层键码数由 §4.4 的发射器按剩余预算截断（单条命令 ≤250，256 格队列不溢出）。 */
 static void test_repeat_count(void) {
-    /* dw（2 键）后 3. => 6 键 */
+    /* dw 后 3. ≡ 3dw（4 键：Ctrl+Shift+Right×3 + Ctrl+X），不是 3 次 dw（6 键） */
     fresh(); key(KV_D); key(KV_W);
     rec_start(); key(KV_3); key(KV_DOT);
-    CHECK(rec_count() == 6);
-    CHECK(rec_at(0) == KV_CS(KV_RGHT) && rec_at(1) == KV_LCTL_KC(KV_X) &&
-          rec_at(4) == KV_CS(KV_RGHT) && rec_at(5) == KV_LCTL_KC(KV_X));
-    /* 1. 等价于 . */
+    CHECK(rec_count() == 4);
+    CHECK(rec_at(0) == KV_CS(KV_RGHT) && rec_at(3) == KV_LCTL_KC(KV_X));
+    /* 录制无计数时 1. 等价于 . */
     fresh(); key(KV_D); key(KV_W);
     rec_start(); key(KV_1); key(KV_DOT);
     CHECK(rec_count() == 2);
-    /* dw 后 99. => ⌊99/2⌋=49 次 = 98 键（封顶，不溢出） */
+    /* dw 后 99. ≡ 99dw（100 键） */
     fresh(); key(KV_D); key(KV_W);
     rec_start(); key(KV_9); key(KV_9); key(KV_DOT);
-    CHECK(rec_count() == 98);
-    /* dd（5 键）后 99. => ⌊99/5⌋=19 次 = 95 键 */
+    CHECK(rec_count() == 100);
+    /* dd 后 99. ≡ 99dd（103 键） */
     fresh(); key(KV_D); key(KV_D);
     rec_start(); key(KV_9); key(KV_9); key(KV_DOT);
-    CHECK(rec_count() == 95);
-    /* 计数不跨 `.` 泄漏：3. 之后再按 . 只重复一次 */
+    CHECK(rec_count() == 103);
+    /* 计数不跨 `.` 泄漏：3. 之后再按 . 只重复一次（≡ dw） */
     fresh(); key(KV_D); key(KV_W);
     key(KV_3); key(KV_DOT);
     rec_start(); key(KV_DOT);
@@ -415,11 +439,165 @@ static void test_repeat_count(void) {
     /* 没有 s_last 时 N. 无输出 */
     fresh(); rec_start(); key(KV_3); key(KV_DOT); CHECK(rec_count() == 0);
     fresh(); rec_start(); key(KV_DOT); CHECK(rec_count() == 0);
-    /* 未完成的 . 回放里不得递归：dd 后 99. 的总量有界 */
+    /* 回放不得递归；总量受 §4.4 单命令预算约束（不是旧的 99 键相乘封顶） */
     fresh(); key(KV_D); key(KV_D);
     rec_start(); key(KV_9); key(KV_9); key(KV_DOT);
-    CHECK(rec_count() <= 99);
+    CHECK(rec_count() == 103);
+    CHECK(rec_count() <= 250);
 }
+
+/* P2-2/D27 主用例：`N.` ≡「计数换成 N 的原命令」。 */
+static void test_dot_count_replace(void) {
+    kv_keycode_t ref[128];
+    int nr;
+
+    /* --- x：N. ≡ Nx（**一次**操作；寄存器是 N 个字符，不是 N 次裸 x） --- */
+    nr = capture(ref, 128, SEQ(KV_2, KV_X), 2);
+    fresh(); key(KV_2); key(KV_X); key(KV_2); key(KV_DOT); check_same(ref, nr);   /* 2x2. ≡ 2x */
+    nr = capture(ref, 128, SEQ(KV_3, KV_X), 2);
+    fresh(); key(KV_2); key(KV_X); key(KV_3); key(KV_DOT); check_same(ref, nr);   /* 2x3. ≡ 3x */
+    nr = capture(ref, 128, SEQ(KV_2, KV_X), 2);
+    fresh(); key(KV_3); key(KV_X); key(KV_2); key(KV_DOT); check_same(ref, nr);   /* 3x2. ≡ 2x */
+    nr = capture(ref, 128, SEQ(KV_3, KV_X), 2);
+    fresh(); key(KV_X); key(KV_3); key(KV_DOT); check_same(ref, nr);              /* x3.  ≡ 3x */
+    nr = capture(ref, 128, SEQ(KV_2, KV_X), 2);
+    fresh(); key(KV_2); key(KV_X); key(KV_DOT); check_same(ref, nr);              /* 2x.  ≡ 2x（裸 .） */
+    nr = capture(ref, 128, SEQ(KV_1, KV_X), 2);
+    fresh(); key(KV_2); key(KV_X); key(KV_1); key(KV_DOT); check_same(ref, nr);   /* 2x1. ≡ 1x */
+    nr = capture(ref, 128, SEQ(KV_2, KV_X), 2);
+    fresh(); key(KV_4); key(KV_X); key(KV_2); key(KV_DOT); check_same(ref, nr);   /* 4x2. ≡ 2x */
+    /* 显式计数 1 与裸 `.` 必须**不同**（旧实现两者都折到 n=1，是 P2-2 的一半根因） */
+    fresh(); key(KV_2); key(KV_X); key(KV_DOT);           int n_bare = rec_count();
+    fresh(); key(KV_2); key(KV_X); key(KV_1); key(KV_DOT); int n_one = rec_count();
+    CHECK(n_bare != n_one);
+    CHECK(n_bare == 3 && n_one == 2);
+
+    /* --- 操作符 + 运动：前缀/后缀计数都被替换（后缀被丢弃） --- */
+    nr = capture(ref, 128, SEQ(KV_3, KV_D, KV_W), 3);
+    fresh(); key(KV_D); key(KV_W); key(KV_3); key(KV_DOT); check_same(ref, nr);   /* dw3.  ≡ 3dw */
+    fresh(); key(KV_2); key(KV_D); key(KV_W); key(KV_3); key(KV_DOT); check_same(ref, nr); /* 2dw3. ≡ 3dw */
+    fresh(); key(KV_D); key(KV_2); key(KV_W); key(KV_3); key(KV_DOT); check_same(ref, nr); /* d2w3. ≡ 3dw */
+    nr = capture(ref, 128, SEQ(KV_D, KV_W), 2);
+    fresh(); key(KV_D); key(KV_W); key(KV_DOT); check_same(ref, nr);              /* dw.   ≡ dw */
+    /* d0：`0` 是**动作**不是计数位，删计数时必须保留（否则 3d 会留下待决操作符） */
+    nr = capture(ref, 128, SEQ(KV_D, KV_0), 2);
+    fresh(); key(KV_D); key(KV_0); key(KV_3); key(KV_DOT); check_same(ref, nr);   /* d03.  ≡ d0 */
+    fresh(); key(KV_2); key(KV_D); key(KV_0); key(KV_3); key(KV_DOT); check_same(ref, nr); /* 2d03. ≡ d0 */
+
+    /* --- dd / J / >> / p --- */
+    nr = capture(ref, 128, SEQ(KV_2, KV_D, KV_D), 3);
+    fresh(); key(KV_D); key(KV_D); key(KV_2); key(KV_DOT); check_same(ref, nr);   /* dd2.  ≡ 2dd */
+    nr = capture(ref, 128, SEQ(KV_3, KV_D, KV_D), 3);
+    fresh(); key(KV_2); key(KV_D); key(KV_D); key(KV_3); key(KV_DOT); check_same(ref, nr); /* 2dd3. ≡ 3dd */
+    nr = capture(ref, 128, SEQ(KV_2, KV_D, KV_D), 3);
+    fresh(); key(KV_3); key(KV_D); key(KV_D); key(KV_2); key(KV_DOT); check_same(ref, nr); /* 3dd2. ≡ 2dd */
+    nr = capture(ref, 128, SEQ(KV_D, KV_D), 2);
+    fresh(); key(KV_D); key(KV_D); key(KV_DOT); check_same(ref, nr);              /* dd.   ≡ dd */
+    nr = capture(ref, 128, SEQ(KV_3, KV_C_J), 2);
+    fresh(); key(KV_2); key(KV_C_J); key(KV_3); key(KV_DOT); check_same(ref, nr); /* 2J3.  ≡ 3J */
+    fresh(); key(KV_C_J); key(KV_3); key(KV_DOT); check_same(ref, nr);            /* J3.   ≡ 3J */
+    nr = capture(ref, 128, SEQ(KV_3, KV_C_GT, KV_C_GT), 3);
+    fresh(); key(KV_2); key(KV_C_GT); key(KV_C_GT); key(KV_3); key(KV_DOT); check_same(ref, nr); /* 2>>3. ≡ 3>> */
+    nr = capture(ref, 128, SEQ(KV_2, KV_C_GT, KV_C_GT), 3);
+    fresh(); key(KV_C_GT); key(KV_C_GT); key(KV_2); key(KV_DOT); check_same(ref, nr);            /* >>2.  ≡ 2>> */
+    nr = capture(ref, 128, SEQ(KV_Y, KV_Y, KV_3, KV_P), 4);
+    fresh(); key(KV_Y); key(KV_Y); key(KV_2); key(KV_P); key(KV_3); key(KV_DOT); check_same(ref, nr); /* 2p3. ≡ 3p */
+
+    /* --- 计数类但会进 Insert 的 s / C：前缀计数被替换，重放一次 --- */
+    /* 2s<Esc>3. ≡ 3s（空插入：显式命令与回放都不补 Left） */
+    fresh(); key(KV_3); key(KV_S);
+    nr = rec_count(); for (int i = 0; i < nr; i++) ref[i] = rec_at(i);
+    fresh(); key(KV_2); key(KV_S); kv_cancel(); kv_set_mode(KV_MODE_NORMAL);
+    rec_start(); key(KV_3); key(KV_DOT); check_same(ref, nr);                     /* 2s<Esc>3. ≡ 3s */
+    /* 2CAB<Esc>2. ≡ 2CAB（非空插入 ⇒ 显式命令的提交也补一个 Left） */
+    fresh(); key(KV_2); key(KV_C); key(KV_A); key(KV_B); kv_cancel(); kv_set_mode(KV_MODE_NORMAL);
+    nr = rec_count(); for (int i = 0; i < nr; i++) ref[i] = rec_at(i);
+    fresh(); key(KV_2); key(KV_C); key(KV_A); key(KV_B); kv_cancel(); kv_set_mode(KV_MODE_NORMAL);
+    rec_start(); key(KV_2); key(KV_DOT); check_same(ref, nr);                     /* 2CAB<Esc>2. ≡ 2CAB */
+    /* CAB<Esc>2. ≡ 2CAB */
+    fresh(); key(KV_2); key(KV_C); key(KV_A); key(KV_B); kv_cancel(); kv_set_mode(KV_MODE_NORMAL);
+    nr = rec_count(); for (int i = 0; i < nr; i++) ref[i] = rec_at(i);
+    fresh(); key(KV_C); key(KV_A); key(KV_B); kv_cancel(); kv_set_mode(KV_MODE_NORMAL);
+    rec_start(); key(KV_2); key(KV_DOT); check_same(ref, nr);                     /* CAB<Esc>2. ≡ 2CAB */
+
+    /* --- 插入类：整段插入执行 N 次；只有末次补 Left（`2.` 平铺 ≠ `..` 嵌套） --- */
+    fresh(); key(KV_I); key(KV_A); key(KV_B); kv_cancel(); kv_set_mode(KV_MODE_NORMAL);
+    rec_start(); key(KV_2); key(KV_DOT);
+    CHECK(rec_count() == 5);
+    CHECK(rec_at(0) == KV_A && rec_at(1) == KV_B && rec_at(2) == KV_A &&
+          rec_at(3) == KV_B && rec_at(4) == KV_LEFT);
+    fresh(); key(KV_I); key(KV_A); key(KV_B); kv_cancel(); kv_set_mode(KV_MODE_NORMAL);
+    rec_start(); key(KV_3); key(KV_DOT);
+    CHECK(rec_count() == 7);                     /* A,B,A,B,A,B,Left */
+    CHECK(rec_at(6) == KV_LEFT);
+    /* 两次独立 `.` 是嵌套（每次落到最后插入字符上）⇒ 与 `2.` 不同 */
+    fresh(); key(KV_I); key(KV_A); key(KV_B); kv_cancel(); kv_set_mode(KV_MODE_NORMAL);
+    rec_start(); key(KV_DOT); key(KV_DOT);
+    CHECK(rec_count() == 6);
+    CHECK(rec_at(2) == KV_LEFT && rec_at(5) == KV_LEFT);
+    /* 插入类 `1.` ≡ `.`（录制无计数） */
+    fresh(); key(KV_I); key(KV_A); key(KV_B); kv_cancel(); kv_set_mode(KV_MODE_NORMAL);
+    rec_start(); key(KV_1); key(KV_DOT);
+    CHECK(rec_count() == 3);
+    CHECK(rec_at(2) == KV_LEFT);
+    /* 单字符插入：平铺（缓冲区上与 `..` 偶然重合，但键码序列不同） */
+    fresh(); key(KV_I); key(KV_X); kv_cancel(); kv_set_mode(KV_MODE_NORMAL);
+    rec_start(); key(KV_2); key(KV_DOT);
+    CHECK(rec_count() == 3);                     /* X,X,Left */
+    CHECK(rec_at(0) == KV_X && rec_at(1) == KV_X && rec_at(2) == KV_LEFT);
+    /* 多行插入：末次仍只补一个 Left */
+    fresh(); key(KV_I); key(KV_A); key(KV_ENT); key(KV_B); kv_cancel(); kv_set_mode(KV_MODE_NORMAL);
+    rec_start(); key(KV_2); key(KV_DOT);
+    CHECK(rec_count() == 7);                     /* A,CR,B,A,CR,B,Left */
+    CHECK(rec_at(6) == KV_LEFT);
+    /* 行首/行尾/开行插入入口同样执行 N 次（入口落点键每次重发） */
+    fresh(); key(KV_O); key(KV_X); key(KV_Y); kv_cancel(); kv_set_mode(KV_MODE_NORMAL);
+    rec_start(); key(KV_2); key(KV_DOT);
+    CHECK(rec_count() == 9);                     /* (End,Shift+Enter,X,Y)×2 + Left */
+    CHECK(rec_at(8) == KV_LEFT);
+    /* REC_MAX 溢出（70 字符 > 64）不得提交 ⇒ `N.` 无目标、无输出 */
+    fresh(); key(KV_I);
+    for (int i = 0; i < 70; i++) key(KV_A);
+    kv_cancel(); kv_set_mode(KV_MODE_NORMAL);
+    rec_start(); key(KV_2); key(KV_DOT);
+    CHECK(rec_count() == 0);
+}
+
+/* P2-2/D27 的预算用例（design §4.4 不变式 (a)(b)）：计数类退化成一条 ≤99 的单命令；
+ * 插入类按每次插入的实际键数（含末次 Left）封顶。 */
+static void test_dot_count_budget(void) {
+    /* 计数类：预填 240 + `dd`（5）后 `99.` ≡ `99dd`，由发射器按剩余预算截断 */
+    budget_prep(240); kv_set_mode(KV_MODE_NORMAL);
+    kv_kbd(KV_D); kv_kbd(KV_D);
+    kv_kbd(KV_9); kv_kbd(KV_9); kv_kbd(KV_DOT);
+    budget_check(KV_LCTL_KC(KV_X), 0);
+
+    /* 计数类、无计数的录制：`99.` ≡ `99x` */
+    budget_prep(240); kv_set_mode(KV_MODE_NORMAL);
+    kv_kbd(KV_X);
+    kv_kbd(KV_9); kv_kbd(KV_9); kv_kbd(KV_DOT);
+    budget_check(KV_LCTL_KC(KV_X), 0);
+
+    /* 插入类：预填 240 + `iAB<Esc>` 提交（+1 个 Left = 241）后 `99.`
+     * 每次插入 2 键、末次多 1 个 Left；队列绝不到顶，末键必须是那个 Left。 */
+    budget_prep(240); kv_set_mode(KV_MODE_NORMAL);
+    kv_kbd(KV_I); kv_kbd(KV_A); kv_kbd(KV_B);
+    kv_cancel(); kv_set_mode(KV_MODE_NORMAL);
+    CHECK(kv_emit_pending() == 241);
+    kv_kbd(KV_9); kv_kbd(KV_9); kv_kbd(KV_DOT);
+    budget_check(KV_LEFT, 0);
+
+    /* 插入类、`N.` 被预算截断到 1 次时，仍要补那一个 Left */
+    budget_prep(249); kv_set_mode(KV_MODE_NORMAL);
+    kv_kbd(KV_I); kv_kbd(KV_A); kv_kbd(KV_B);
+    kv_cancel(); kv_set_mode(KV_MODE_NORMAL);
+    CHECK(kv_emit_pending() == 250);
+    kv_kbd(KV_9); kv_kbd(KV_9); kv_kbd(KV_DOT);
+    CHECK(kv_emit_pending() <= 250);
+    flush_emit();
+    CHECK(rec_at(rec_count() - 1) == KV_LEFT);
+}
+
 
 static void test_big_count(void) {
     fresh(); key(KV_9); key(KV_9); key(KV_W);
@@ -1988,6 +2166,8 @@ int main(void) {
     test_repeat();
     test_repeat_change_only();
     test_repeat_count();
+    test_dot_count_replace();       /* P2-2/D27：`N.` 替换计数 */
+    test_dot_count_budget();        /* P2-2/D27：预算不变式 */
     test_big_count();
     test_pass_through();
     test_mode_pending_clear();
