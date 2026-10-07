@@ -18,6 +18,7 @@ static kv_keycode_t s_rec[REC_MAX];
 static int          s_rec_len;
 static bool         s_rec_change; /* 本次录制里是否含「修改缓冲区」的命令 */
 static bool         s_rec_overflow; /* 录制超 REC_MAX ⇒ 本次修改不得提交（§4.14 #6） */
+static bool         s_ins_typed;    /* 本次插入里是否真的键入了字符（D26 补偿 Left 的判据） */
 static kv_keycode_t s_last[REC_MAX];
 static int          s_last_len;
 static bool         s_replaying;
@@ -369,15 +370,30 @@ static void rec_commit(void) {
     s_rec_overflow = false;
 }
 
-/* 离开 INSERT 时提交：整段插入（入口 + 键入）成为 `.` 的目标。
- * glue 的顺序是 kv_cancel(); kv_set_mode(); 而 kv_cancel() 会 rec_clear()
- * ⇒ 提交必须也在 kv_cancel() 里发生，否则录制在提交前被抹掉（D25 真因 B）。 */
-static void rec_commit_insert(void) {
-    if (s_replaying) return;
-    if (s_mode == KV_MODE_INSERT && s_rec_len > 0 && s_rec_change && !s_rec_overflow) rec_commit();
+static void rec_clear(void) {
+    s_rec_len = 0;
+    s_rec_change = false;
+    s_rec_overflow = false;
+    s_ins_typed = false;
 }
 
-static void rec_clear(void) { s_rec_len = 0; s_rec_change = false; s_rec_overflow = false; }
+/* 离开 INSERT 时提交：整段插入（入口 + 键入）成为 `.` 的目标。
+ * glue 的顺序是 kv_cancel(); kv_set_mode(); 而 kv_cancel() 会 rec_clear()
+ * ⇒ 提交必须也在 kv_cancel() 里发生，否则录制在提交前被抹掉（D25 真因 B）。
+ *
+ * D26（design §4.15）：宿主没有模态，插入期宿主光标停在**插入文本之后**，而真实 Vim 离开插入时
+ * 停在**最后一个插入字符**上 ⇒ 这里补**恰好一个** `Left`，否则紧跟的命令（含 `.` 的回放）会从
+ * 右一列开始、把缓冲区改坏。只在 `s_ins_typed`（本次真的键入了非 Esc 字符）时补：宿主 `Left`
+ * 在列 0 会**回绕到上一行行尾**，而空插入无从知道列号。补偿与「能否回放」无关：录制溢出导致
+ * 不提交时也要补。rec_commit()/rec_clear() 都会清掉 s_ins_typed ⇒ glue 的
+ * `kv_cancel(); kv_set_mode();` 两个调用点**只补一次**。 */
+static void rec_commit_insert(void) {
+    if (s_replaying) return;
+    if (s_mode != KV_MODE_INSERT) return;
+    if (s_ins_typed) { kv_emit_tap(KV_LEFT); s_ins_typed = false; }
+    if (s_rec_len > 0 && s_rec_change && !s_rec_overflow) rec_commit();
+    else rec_clear();
+}
 
 /* Shared abort path for every mode/enable transition (design #4.7):
  * drop the in-progress state machine AND the in-progress repeat recording.
@@ -396,7 +412,13 @@ static void rec_replay(void) {
         /* 真因 A：插入期录下的键必须由引擎**直接发进发射队列**。正常路径靠 kv_kbd() 返回
          * KV_PASSTHROUGH 让 glue 转发，但回放是引擎内部循环、没有 glue 参与，返回值会被
          * 丢掉 ⇒ 插入文本永远到不了宿主。 */
-        if (s_mode == KV_MODE_INSERT) { kv_emit_tap(s_last[i]); continue; }
+        if (s_mode == KV_MODE_INSERT) {
+            /* D26：回放里被 tap 的插入文本也是「键入了字符」⇒ 回放结束（下面的
+             * kv_set_mode(NORMAL)）自己补一个 `Left`，与首次执行逐键等价。 */
+            if (s_rec_change) s_ins_typed = true;
+            kv_emit_tap(s_last[i]);
+            continue;
+        }
         kv_kbd(s_last[i]);
     }
     s_replaying = false;
@@ -840,6 +862,10 @@ kv_result_t kv_kbd(kv_keycode_t kc) {
          * wholly delegated to the keyboard layer. */
         if (s_mode == KV_MODE_INSERT) {
             /* 插入期键入的每个键都是这次「修改」的一部分（`. ` 重放整段插入）。 */
+            /* D26：只有**引擎发起**的插入（`s_rec_change` = 录制里有插入入口，即 `i/a/o/s/C/cc…`）
+             * 才需要补偿 `Left`；经 Esc/开机路径进入的透传插入不是 Vim 插入，补 `Left` 会把一个
+             * 光标键发给宿主（shell/编辑器），故不置位。Esc 本身也不算键入字符。 */
+            if (KV_BASIC(kc) != KV_ESC && s_rec_change) s_ins_typed = true;
             rec_push(kc);
             /* 这里**不置** s_rec_change：「是不是修改」由插入入口（T_INSERT）决定。
              * 若在此置位，经 Esc/开机路径进入的插入（录制里没有入口标记）会被提交，
