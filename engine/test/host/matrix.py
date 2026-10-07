@@ -33,6 +33,7 @@ B4 = 'L1\nL2\nL3\nL4\n'
 B12 = ''.join('L%02d\n' % i for i in range(1, 13))
 BW = 'alpha beta gamma\ndelta epsilon zeta\n'
 BMIX = 'aaa bbb\ncc dddd e\nf\nggg hhh iii\n'
+BABC = 'abcdefghij\nklmnopqrst\n'   # P1-1/D26 report buffer (cursor 0,0)
 
 cases = []
 
@@ -163,6 +164,33 @@ for k in ['i', 'I', 'a', 'A', 'o', 'O']:
 add('ins-3i-x', B4, 1, 1, '3i\\ex')
 add('ins-o-last-x', B4, 3, 0, 'o\\ex')
 add('ins-O-first-x', B4, 0, 0, 'O\\ex')
+
+# ==================== insert + Esc + `.` (D26, design §4.15) ====================
+# Leaving INSERT after a NON-EMPTY insert must emit one `Left` (the host cursor sits
+# after the inserted text, Vim sits on the last inserted char); otherwise `.` replays
+# one column too far right and corrupts the buffer.  The Esc is written EXPLICITLY as
+# `\e` (not via the `esc=` suffix) so the engine itself sees it and runs the
+# INSERT->NORMAL commit.  `\r` is Enter (a real CR byte on the vim side).
+for nm, k, b, l, c in [
+    ('ins-iAB-dot',        'iAB\\e.',      B4, 1, 1),
+    ('ins-iABCDEFG-dot',   'iABCDEFG\\e.', B4, 1, 1),
+    ('ins-iA-CR-B-dot',    'iA\\rB\\e.',   B4, 1, 1),
+    ('ins-AX-dot',         'AX\\e.',       B4, 1, 1),
+    ('ins-IX-dot',         'IX\\e.',       B4, 1, 1),
+    ('ins-oXY-dot',        'oXY\\e.',      B4, 1, 1),
+    ('ins-oX-CR-Y-dot',    'oX\\rY\\e.',   B4, 1, 1),
+    ('ins-OX-CR-Y-dot',    'OX\\rY\\e.',   B4, 1, 1),
+    ('ins-sX-dot',         'sX\\e.',       B4, 1, 1),
+    ('ins-CX-dot',         'CX\\e.',       B4, 1, 1),
+    ('ins-ccX-dot',        'ccX\\e.',      B4, 1, 1),
+    # the exact buffer/cursor from the P1-1 report
+    ('ins-iAB-dot-b',      'iAB\\e.',      BABC, 0, 0),
+    ('ins-iABCDEFG-dot-b', 'iABCDEFG\\e.', BABC, 0, 0),
+    ('ins-iA-CR-B-dot-b',  'iA\\rB\\e.',   BABC, 0, 0),
+    # empty insert at column 0: Vim does not move, the host must not either
+    ('ins-i-first-x',      'i\\ex',        B4, 0, 0),
+]:
+    add(nm, b, l, c, k, note='D26: insert + Esc + dot')
 
 # ============================ prefixes ============================
 add('gx', B3, 0, 3, 'gx')
@@ -426,7 +454,16 @@ DEVIATIONS = {
     # RESOLVED (2026-09, historical): `cgg` on line 1/2/3 now matches real Vim exactly (verified).
     # No case cites it any more; kept so the numbering stays stable.
     'D17':    'RESOLVED/historical: cgg at line 0 used to cut the line instead of leaving a blank line (design §4.4)',
-    'D18':    'insert-entry + Esc off-by-one: a host insert cursor does not move left on Esc (design §4.4, keymap layer)',
+    # 2026-10 RE-CLASSIFIED (D26 audit): D18 was declared as "a host insert cursor does not
+    # move left on Esc" = cursor-only, keymap layer, outside the engine.  MEASURED: it is
+    # BUFFER/REGISTER visible -- after an EMPTY insert the next command acts one column to
+    # the right (ins-i-x is buf+reg, not cur).  The non-empty case is fixed in-engine by D26
+    # (design §4.15); the empty case is the remaining inherent deviation (design §4.9 15).
+    'D18':    'EMPTY-insert exit is not compensated: the next command acts one column right (buffer/register visible, not merely the cursor) (design §4.9 15, §4.15)',
+    # 2026-10 (D26 audit): the six ins-* entries below used to cite D18, but their real cause
+    # is unrelated to the insert cursor (verified: `o<Esc>` alone matches Vim, `x`/`p` do not).
+    'XEMPTY': 'x/s on an EMPTY line: Vim is a no-op, but the host Shift+Right selects the line break and Ctrl+X deletes it (design §4.9 16)',
+    'PEMPTY': 'p/P positioning on an EMPTY line: the charwise Right crosses the line break, so the host cursor lands on the next line (design §4.9 17)',
     'IND':    'indent leaves the cursor at the edit point, not the first non-blank of the range first line (design §4.4 ①②③)',
     'PASTEC': 'dd on the last line / linewise p,P leave the cursor at the pasted text end (design §4.4)',
     'EOLDEL': 'after deleting at EOL the host cursor sits on the newline; Vim moves left (design §4.4)',
@@ -466,19 +503,23 @@ XFAIL = {
     # ⑨ V then v keeps the whole-line selection
     'vl-v-y': '⑨', 'vl-v-y0': '⑨', 'vl-v-d': '⑨', 'vl-v-x': '⑨',
     # ---- migrated from known_failures.txt: each cites a written declaration ----
+    # D18: EMPTY-insert exit (non-empty inserts are fixed by D26, §4.15)
     'ins-i-x': 'D18',
     'ins-i-p': 'D18',
     'ins-a-x': 'D18',
     'ins-a-p': 'D18',
     'ins-A-x': 'D18',
     'ins-A-p': 'D18',
-    'ins-o-x': 'D18',
-    'ins-o-p': 'D18',
-    'ins-O-x': 'D18',
-    'ins-O-p': 'D18',
     'ins-3i-x': 'D18',
-    'ins-o-last-x': 'D18',
-    'ins-O-first-x': 'D18',
+    # 2026-10 (D26 audit): re-cited -- these six are NOT the insert-exit off-by-one.
+    # `o<Esc>`/`O<Esc>` alone match Vim; the failure comes from the FOLLOWING command
+    # acting on the empty line / its line break.
+    'ins-o-x': 'XEMPTY',
+    'ins-O-x': 'XEMPTY',
+    'ins-o-last-x': 'XEMPTY',
+    'ins-O-first-x': 'XEMPTY',
+    'ins-o-p': 'PEMPTY',
+    'ins-O-p': 'PEMPTY',
     'mot-e': 'E-W',
     'mot-E': 'E-W',
     'probe-ex': 'E-W',

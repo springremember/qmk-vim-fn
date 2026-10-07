@@ -97,12 +97,19 @@ def kc_of(ch):
 
 
 def parse_keys(s):
-    """vim key string -> keycode list.  `\\e` is a real ESC (0x29)."""
+    """vim key string -> keycode list.  `\\e` is a real ESC (0x29), `\\r` is Enter (0x28)."""
     out = []
     i = 0
     while i < len(s):
         if s[i] == '\\' and i + 1 < len(s) and s[i + 1] == 'e':
             out.append(ESC)
+            i += 2
+            continue
+        if s[i] == '\\' and i + 1 < len(s) and s[i + 1] == 'r':
+            # `\r` = Enter (needed by the multi-line insert cases `iA<CR>B`).  The vim
+            # side carries a REAL CR byte, so `:normal!` sees it as <CR> (a CR in the
+            # middle of the script line is NOT a line terminator; see vim_run()).
+            out.append(ENT)
             i += 2
             continue
         out.append(kc_of(s[i]))
@@ -526,6 +533,10 @@ def vim_run(buf, line, col, keys, esc_suffix=False):
         if os.path.exists(f):
             os.unlink(f)
     pos = 'gg%dG0' % (line + 1) + ('l' * col)
+    # A REAL CR byte inside `k` is part of the `:normal!` argument (Vim splits the
+    # script on NL, not on CR), which is how `\r`-encoded <CR> reaches Vim.  A
+    # TRAILING CR would instead be eaten as a DOS line ending, so no case may end
+    # with `\r` (all current `\r` cases have more keys after the Enter).
     k = keys + ('\x1b' if esc_suffix else '')
     lines = [
         'set nofixendofline',
@@ -576,8 +587,8 @@ class Case:
         self.line = line
         self.col = col
         self.vim = vim
-        # the vim side needs a REAL escape byte, not the two-char '\e' token
-        self.vim_keys = vim.replace('\\e', '\x1b')
+        # the vim side needs REAL bytes, not the two-char '\e' / '\r' tokens
+        self.vim_keys = vim.replace('\\e', '\x1b').replace('\\r', '\r')
         self.eng = parse_keys(eng if eng is not None else vim)
         self.esc = esc
         self.mode = mode

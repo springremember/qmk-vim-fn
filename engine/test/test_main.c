@@ -1811,8 +1811,9 @@ static void test_dot_repeat_insert(void) {
     kv_cancel(); kv_set_mode(KV_MODE_NORMAL);   /* glue 退出插入的真实顺序（D25 真因 B） */
     rec_start();
     key(KV_DOT);
-    CHECK(rec_count() == 1);
+    CHECK(rec_count() == 2);
     CHECK(rec_at(0) == KV_X);                   /* 回放把 X 直接发进队列（真因 A） */
+    CHECK(rec_at(1) == KV_LEFT);                /* D26：非空插入离开时补一个 Left */
 
     /* ② 空插入 i<Esc> 也是「修改」，但它重放的是**空操作**，不得重复更早的 x */
     fresh();
@@ -1821,7 +1822,7 @@ static void test_dot_repeat_insert(void) {
     kv_cancel(); kv_set_mode(KV_MODE_NORMAL);
     rec_start();
     key(KV_DOT);
-    CHECK(rec_count() == 0);                    /* 实测：xi<Esc>. 时 Vim 没有重复 x */
+    CHECK(rec_count() == 0);                    /* 实测：xi<Esc>. 时 Vim 没有重复 x（空插入不补 Left） */
 
     /* ③ 行尾插入 A 后 `.` 同样回放（用户点名） */
     fresh();
@@ -1830,9 +1831,11 @@ static void test_dot_repeat_insert(void) {
     kv_cancel(); kv_set_mode(KV_MODE_NORMAL);
     rec_start();
     key(KV_DOT);
-    /* 回放会先重发入口的落点（A ⇒ KV_END），再发插入文本；末键必须是 Z */
-    CHECK(rec_count() >= 1);
-    CHECK(rec_at(rec_count() - 1) == KV_Z);
+    /* 回放会先重发入口的落点（A ⇒ KV_END），再发插入文本，最后补一个 Left（D26）；
+     * 插入文本 Z 必须仍在，且末键是 Left。 */
+    CHECK(rec_count() >= 2);
+    CHECK(rec_at(rec_count() - 1) == KV_LEFT);
+    CHECK(rec_at(rec_count() - 2) == KV_Z);
     CHECK(kv_get_mode() == KV_MODE_NORMAL);     /* 回放结束必须停在 Normal */
 
     /* ④ P0-1：带计数的 `.` 不得把计数泄漏给下一条命令（审计发现的数据损坏） */
@@ -1853,8 +1856,9 @@ static void test_dot_repeat_insert(void) {
     kv_cancel(); kv_set_mode(KV_MODE_NORMAL);
     rec_start();
     key(KV_DOT);
-    CHECK(rec_count() == 8);
+    CHECK(rec_count() == 9);
     CHECK(rec_at(7) == KV_H);                   /* 第 8 个字符不得被截断 */
+    CHECK(rec_at(8) == KV_LEFT);                /* D26：回放结束补一个 Left */
 
     /* ⑤b P0-2 的溢出守卫：插入长于 REC_MAX 时**不得提交**（否则静默截断的回放会改坏文档）。
      * REC_MAX=64，这里喂 70 个字符。 */
@@ -1879,9 +1883,86 @@ static void test_dot_repeat_insert(void) {
     CHECK(kv_get_mode() == KV_MODE_NORMAL);
 }
 
+/* D26（design §4.15）：离开插入时，**非空**插入补**恰好一个** `Left`（宿主光标停在插入
+ * 文本之后，Vim 停在最后一个插入字符上）；**空插入不补**（宿主 `Left` 在列 0 会回绕到上一行
+ * 行尾，而空插入无从知道列号）。补偿与「能否回放」无关：录制溢出也要补。 */
+static void test_leave_insert_left(void) {
+    /* 非空插入 iAB<Esc> ⇒ 一个 Left */
+    fresh(); key(KV_I); key(KV_A); key(KV_B);
+    rec_start(); kv_cancel(); kv_set_mode(KV_MODE_NORMAL);
+    CHECK_SEQ(KV_LEFT);
+    /* glue 的真实顺序 kv_cancel(); kv_set_mode(); 只补一次；重复 kv_set_mode 也不得再补 */
+    fresh(); key(KV_I); key(KV_A);
+    rec_start(); kv_cancel(); kv_set_mode(KV_MODE_NORMAL); kv_set_mode(KV_MODE_NORMAL);
+    CHECK_SEQ(KV_LEFT);
+    /* 直接 kv_set_mode(NORMAL)（不经 kv_cancel）同样补一次 */
+    fresh(); key(KV_I); key(KV_A);
+    rec_start(); kv_set_mode(KV_MODE_NORMAL);
+    CHECK_SEQ(KV_LEFT);
+
+    /* 空插入不补：i / cc / s / C / A / o / O */
+    fresh(); key(KV_I);
+    rec_start(); kv_cancel(); kv_set_mode(KV_MODE_NORMAL);
+    CHECK(rec_count() == 0);
+    fresh(); key(KV_C); key(KV_C);
+    rec_start(); kv_cancel(); kv_set_mode(KV_MODE_NORMAL);
+    CHECK(rec_count() == 0);
+    fresh(); key(KV_S);
+    rec_start(); kv_cancel(); kv_set_mode(KV_MODE_NORMAL);
+    CHECK(rec_count() == 0);
+    fresh(); key(KV_C_C);
+    rec_start(); kv_cancel(); kv_set_mode(KV_MODE_NORMAL);
+    CHECK(rec_count() == 0);
+    fresh(); key(KV_C_A);
+    rec_start(); kv_cancel(); kv_set_mode(KV_MODE_NORMAL);
+    CHECK(rec_count() == 0);
+    fresh(); key(KV_O);
+    rec_start(); kv_cancel(); kv_set_mode(KV_MODE_NORMAL);
+    CHECK(rec_count() == 0);
+    fresh(); key(KV_C_O);
+    rec_start(); kv_cancel(); kv_set_mode(KV_MODE_NORMAL);
+    CHECK(rec_count() == 0);
+    /* 经原始 API 到达 INSERT 的 Esc 不算「键入了字符」 */
+    fresh(); key(KV_I); key(KV_ESC);
+    rec_start(); kv_cancel(); kv_set_mode(KV_MODE_NORMAL);
+    CHECK(rec_count() == 0);
+
+    /* 非空的 s / C 也要补 */
+    fresh(); key(KV_S); key(KV_X);
+    rec_start(); kv_cancel(); kv_set_mode(KV_MODE_NORMAL);
+    CHECK_SEQ(KV_LEFT);
+    fresh(); key(KV_C_C); key(KV_X);
+    rec_start(); kv_cancel(); kv_set_mode(KV_MODE_NORMAL);
+    CHECK_SEQ(KV_LEFT);
+
+    /* 与「能否回放」无关：70 字符溢出（REC_MAX 截断、不提交）仍然要补 Left */
+    fresh(); key(KV_I);
+    for (int i = 0; i < 70; i++) key(KV_A);
+    rec_start(); kv_cancel(); kv_set_mode(KV_MODE_NORMAL);
+    CHECK_SEQ(KV_LEFT);
+
+    /* 不得触发的路径 1：经 Esc/开机路径进入的插入（无入口标记、非「修改」）不补 */
+    fresh(); kv_set_mode(KV_MODE_INSERT); key(KV_X);
+    rec_start(); kv_cancel(); kv_set_mode(KV_MODE_NORMAL);
+    CHECK(rec_count() == 0);
+    /* 不得触发的路径 2：鼠标层（INSERT -> MOUSE 不得补） */
+    fresh(); key(KV_I); key(KV_A);
+    rec_start(); kv_set_mode(KV_MODE_MOUSE);
+    CHECK(rec_count() == 0);
+    /* 不得触发的路径 3：vim 关闭 */
+    fresh(); key(KV_I); key(KV_A);
+    rec_start(); kv_disable();
+    CHECK(rec_count() == 0);
+    /* 不得触发的路径 4：初始化（kv_enable() 后合成的 kv_set_mode(NORMAL)，无键入） */
+    kv_init(); kv_enable();
+    rec_start(); kv_set_mode(KV_MODE_NORMAL);
+    CHECK(rec_count() == 0);
+}
+
 int main(void) {
     test_single();
     test_dot_repeat_insert();
+    test_leave_insert_left();
     test_count();
     test_op();
     test_line_change_and_join();
