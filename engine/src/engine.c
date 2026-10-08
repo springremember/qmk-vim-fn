@@ -25,6 +25,7 @@ static bool         s_last_iscnt[REC_MAX];
 static int          s_last_len;
 static bool         s_replaying;
 static bool         s_suppress_left; /* 插入类 `N.` 的中间次：回放结束**不**补 D26 的 Left */
+static int          s_last_cost;   /* 上一次回放实测发出的键数（P2-4：整次回放的预算判据） */
 
 /* internal feed result: consumed / pass-through / needs re-identification */
 typedef enum { R_CONSUMED = 0, R_PASSTHROUGH, R_REIDENTIFY } kv_feed_t;
@@ -397,6 +398,7 @@ static void rec_commit(void) {
     s_rec_len = 0;
     s_rec_change = false;
     s_rec_overflow = false;
+    s_last_cost = 0;   /* 新目标 ⇒ 成本未知，下一次回放重新实测（P2-4） */
 }
 
 static void rec_clear(void) {
@@ -467,6 +469,11 @@ static void rec_replay_keys(bool strip_counts) {
  * Vim 在重复之间把光标留在插入文本之后）。返回本次回放是否键入了字符。 */
 static bool rec_replay_ex(bool emit_left) {
     if (s_replaying || s_last_len == 0) return false; /* never re-enter '.' */
+    /* 预算（design §4.4 不变式 b）：**整次回放**也要受剩余预算约束。只靠各发射器各自的夹取
+     * 不够 —— 一条命令由多个发射器组成，夹取之和仍可能超过 room（实测 `99dw` + 连续 `.`
+     * 把 256 格队列顶满并静默丢键）。判据是确定性截断：上次实测成本放不下就**不重放**。 */
+    if (s_last_cost > 0 && kv_emit_room() < s_last_cost) return false;
+    const int before = kv_emit_pending();
     rec_clear();  /* 丢弃残留录制（例如 `. ` 前的计数），否则会在回放结束时被提交（P0-1） */
     s_replaying = true;
     rec_replay_keys(false);
@@ -479,6 +486,7 @@ static bool rec_replay_ex(bool emit_left) {
         kv_set_mode(KV_MODE_NORMAL);
         s_suppress_left = false;
     }
+    s_last_cost = kv_emit_pending() - before;  /* 实测本次成本，供下一次回放夹取（P2-4） */
     s_rec_len = 0;        /* 回放不产生新的录制（rec_push/rec_commit 在回放期已短路） */
     s_rec_change = false;
     return typed;

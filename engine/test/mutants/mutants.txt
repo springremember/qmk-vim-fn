@@ -411,3 +411,14 @@ mutant d27-left-suppress
   new
     if (s_ins_typed ) { kv_emit_tap(KV_LEFT); s_ins_typed = false; }
   end
+
+mutant p24-no-whole-replay-clamp
+  file  = engine/src/engine.c
+  suite = engine
+  equiv = no
+  why   = 去掉整次回放的预算判据 ⇒ 多个发射器夹取之和仍可超 room，连按 `. ` 把 256 格队列顶满并静默丢键
+  old
+    if (s_last_cost > 0 && kv_emit_room() < s_last_cost) return false;
+  new
+
+  end

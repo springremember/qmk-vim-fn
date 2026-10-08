@@ -621,6 +621,19 @@ static void test_dot_count_budget(void) {
     CHECK(kv_emit_pending() <= 250);
     flush_emit();
     CHECK(rec_at(rec_count() - 1) == KV_LEFT);
+
+    /* P2-4：**裸** `.` 的整次回放也要夹取。目标 = `99dw`（一条命令约 100 键，由多个发射器
+     * 组成、各自夹取之和仍会超 room），预填队列后按 `.` 不得把 256 格队列顶满（修前顶满并
+     * 静默丢键）。判据是确定性截断：放不下就不重放。 */
+    fresh();
+    kv_kbd(KV_9); kv_kbd(KV_9); kv_kbd(KV_D); kv_kbd(KV_W);
+    budget_prep(240); kv_set_mode(KV_MODE_NORMAL);
+    kv_kbd(KV_DOT);
+    CHECK(kv_emit_pending() <= 250);
+    flush_emit();
+    kv_kbd(KV_DOT);
+    CHECK(kv_emit_pending() <= 250);
+    flush_emit();
 }
 
 
