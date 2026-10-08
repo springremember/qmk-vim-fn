@@ -422,3 +422,14 @@ mutant p24-no-whole-replay-clamp
   new
 
   end
+
+mutant p11-count-replay-no-clamp
+  file  = engine/src/engine.c
+  suite = engine
+  equiv = no
+  why   = 去掉计数类 N. 的整次回放预算判据 ⇒ 从空队列连按 99. 可把 256 格队列顶满并丢键
+  old
+    if (s_last_cost > 0 && kv_emit_room() < s_last_cost) return;
+  new
+
+  end

@@ -633,6 +633,16 @@ static void test_dot_count_budget(void) {
         CHECK(kv_emit_pending() <= 250);
     }
     flush_emit();
+    /* P1-1：**计数类** `N.` 的整次回放同样要夹取。目标 = `x`，但用 `99.` 时每次回放是
+     * 99 次删除（~200 键）⇒ 从空队列连按就会顶到 256 并丢键（修前 drops>0）。 */
+    fresh();
+    kv_kbd(KV_X);
+    kv_set_mode(KV_MODE_NORMAL);
+    for (int i = 0; i < 8; i++) {
+        kv_kbd(KV_9); kv_kbd(KV_9); kv_kbd(KV_DOT);   /* 99. */
+        CHECK(kv_emit_pending() <= 250);
+    }
+    flush_emit();
 }
 
 

@@ -522,7 +522,12 @@ static void rec_replay_n(int n) {
         else if (typed) kv_emit_tap(KV_LEFT);         /* 被预算截断到 1 次：仍要补那个 Left */
         return;
     }
-    /* 计数类：喂入 N 作为新的前缀计数，再回放**去掉计数位**的录制（重放一次）。 */
+    /* 计数类：喂入 N 作为新的前缀计数，再回放**去掉计数位**的录制（重放一次）。
+     * 预算（design §4.4 不变式 b，P1-1）：**整次回放**同样受剩余预算约束 —— 只靠各发射器
+     * 各自的夹取不够（一条命令由多个发射器组成，夹取之和仍可超 room；实测从空队列
+     * `x` 后连按 `99.` 可把 256 格队列顶满并丢键）。与裸 `. ` 同一判据：放不下就不重放。 */
+    if (s_last_cost > 0 && kv_emit_room() < s_last_cost) return;
+    const int before = kv_emit_pending();
     rec_clear();
     s_replaying = true;
     if (n >= 10) kv_kbd(digit_kc(n / 10));
@@ -530,6 +535,7 @@ static void rec_replay_n(int n) {
     rec_replay_keys(true);
     s_replaying = false;
     if (s_mode == KV_MODE_INSERT) kv_set_mode(KV_MODE_NORMAL);
+    if (kv_emit_pending() - before > s_last_cost) s_last_cost = kv_emit_pending() - before; /* 取最大，保守 */
     s_rec_len = 0;
     s_rec_change = false;
 }
@@ -562,6 +568,18 @@ static kv_feed_t feed_normal(kv_keycode_t kc) {
     if (KV_BASIC(kc) == KV_ESC) {
         if (s_state != ST_IDLE) { reset_pending(); return R_CONSUMED; }
         return R_PASSTHROUGH; /* real Esc handled by the caller */
+    }
+
+    /* 真实 Vim：`.` 不是合法的 motion/文本对象 ⇒ 待决的操作符/前缀被**中止**，且这个 `.`
+     * 被**丢弃**（不重复上一次修改）。若走 §4.5 的严格清空→在 IDLE 重新识别，`. ` 会被当成
+     * 重复命令执行；D25 让插入类也能回放后，这会把缓冲区改坏（实测 `iAB<Esc>d.`：引擎
+     * `AABB…`、Vim `AB…`；`y./g./>./<./Z./c./2d./d2.` 同类共 9 例）。
+     * 纯计数态（ST_CNT）除外：`2.` 是合法的「带计数的重复」，必须继续走重新识别。 */
+    /* 用 kv_classify（**不**经计数态的 digit 覆盖）判「是不是 `.`」：`>` 在 QMK 里是
+     * Shift+`.`，KV_BASIC 会把它也认成 KV_DOT，用 KV_BASIC 会误伤 `>>`（实测）。 */
+    if (kv_classify(kc) == T_REPEAT && s_state != ST_IDLE && s_state != ST_CNT) {
+        reset_pending();
+        return R_CONSUMED;
     }
 
     switch (s_state) {
