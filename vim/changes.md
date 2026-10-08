@@ -1179,3 +1179,47 @@ Vim 把**键入的文本重复 N 次**；引擎忽略该计数。缓冲区 `abcd
 `ARROWCNT`/`RECMAXCNT` 已登记进 `qmk/engineering-spec.md` §1.3 与 `matrix.py: DEVIATIONS`。
 
 本提交为**文档先行**，实现与测试在后续提交。
+
+### 7.49 缺陷 D28 的实现、红灯与门禁（2026-10）
+
+**提交链**（文档先行 → 红灯 → 实现 → 变异）：
+
+| 提交 | 内容 |
+|---|---|
+| `24fb960` | docs：design §4.16（P2-3 规范）、§4.14 第 3 条插入类表述、§4.9 ⑱⑲、changes §7.48、spec §1.3（D1…D28 + `ARROWCNT`/`RECMAXCNT`） |
+| `aed69ae` | test（红灯）：`test_insert_count_repeat`、matrix 28 条 `inscnt-*`、kvhost `\b`、probe.c 的 KM Esc 冲刷修正 |
+| `b0da85a` | fix：`s_ins_count` + `rec_commit_insert()` 的额外重复 + `rec_replay_n()` 统一；`kv_emit_enter_insert_cost()` |
+| `9c6e3b0` | test(mutation)：5 条 P2-3 变异；`d25-replay-leftover-record` 标等价；新增 `p23-replay-n-leftover-record`；D26 锚点漂移修正 |
+
+**红灯 → 绿灯（实测）**：实现前 `make test` = `pass=962 fail=18`、`make matrix-test` =
+`TOTAL 677 PASS 458 XFAIL 199 KNOWN-FAIL 0 NEW-FAIL 20`；实现后 `pass=980 fail=0`、
+`TOTAL 677 PASS 478 XFAIL 199 KNOWN-FAIL 0 NEW-FAIL 0`。
+
+**与真实 `vim.tiny` 对照（两种方法，逐例）**：`:normal!`（§1.2 配方）与 `pty.fork()` 交互
+运行在**全部非方向键用例**上一致；引擎模型与 **pty 30/30** 一致、与 `:normal!` **29/30**
+（唯一不一致是 `2iA<Left>B<Esc>`：`:normal!` 无法表达方向键 —— `vim.tiny` 无 `+eval`、
+`:normal!` 不翻译 `<>`、内嵌真 ESC 会退出插入；pty 真值 `BA`、引擎 `BA`、`:normal!` `AA`）。
+**没有发现"两种方法本身不一致"**：该分歧完全由 `:normal!` 的表达能力限制解释，测试基座有效。
+
+**探针修正（harness 自身缺陷）**：`engine/test/host/probe.c` 的 KM Insert+Esc 分支原来
+`continue` 跳过冲刷，于是插入是序列末键时，提交点发出的键（D26 的 `Left`、P2-3 的额外重复）
+整段丢失 —— 既有用例的插入后面都还有键，故长期掩盖。修正后**没有任何既有用例改变判定**
+（TOTAL +28、PASS +26、XFAIL +2，恰好等于新增用例；NEW-FAIL 0）。
+
+**门禁（干净工作区，HEAD 含本主题 4 个提交）**：
+
+| 门禁 | 实测 |
+|---|---|
+| `make test` | `pass=980 fail=0`，退出码 0 |
+| `make glue-test` | 10/10 套件 `fail=0`（760/250/68/24/153/441/414/493/48/67 = 2718 断言）；收尾已 `git checkout --` 还原两个已跟踪二进制 |
+| `make matrix-test` | `TOTAL 677 PASS 478 XFAIL 199 KNOWN-FAIL 0 NEW-FAIL 0`，退出码 0 |
+| `make mutation-test` | `CAUGHT 36 / EQUIVALENT 2 / SURVIVED 0 / ERROR 0`（共 38 条），退出码 0 |
+
+**变异**：新增 5 条 P2-3 变异全部 CAUGHT（`p23-never-repeat`、`p23-repeat-plus-one`、
+`p23-line-open-no-entry`、`p23-move-not-suppressed`、`p23-count-flag-lost`）；删除已不存在的
+`s_suppress_left` 机制对应的 `d27-left-suppress`；`d25-replay-leftover-record` 改标
+`equiv = yes`（等价论证见记录表），并新增 `p23-replay-n-leftover-record` 接住 P0-1 的实际保护点。
+
+**未验证 / 残余**：① `ARROWCNT`（no-op 移动与 Vim 的 `.` redo 语义不可复现，纯键码固有限制）；
+② `RECMAXCNT`（文本 > `REC_MAX` 的计数插入不重复/不提交）；③ 真机（`qmk/on-device-checklist.md`
+A1/A7：1 键/ms 排空节奏下大计数插入的实际接受度）。

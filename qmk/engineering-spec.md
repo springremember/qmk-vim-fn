@@ -202,6 +202,21 @@ python3 test/mutants/run.py --quiet           # 只留汇总
 > ④ `27` 条记录 ⇒ **CAUGHT 26 / EQUIVALENT 1 / SURVIVED 0 / ERROR 0**，退出码 0
 > （新增 5 条 D26 变异全部 CAUGHT；等价项仍是 `d19-outer-clamp-idempotent`）。
 
+> **复测（2026-10-08，HEAD `9c6e3b0`，D28（审查 P2-3）落地后；四条门禁逐条手跑）**：
+> ① `make test` = **`pass=980 fail=0`**（D26 的 825 之后又经 D27/P1-3/P2-4 增补；D28 新增
+> `test_insert_count_repeat` 51 条断言）；
+> ② `make glue-test` = 10/10 `fail=0`，逐套件 `760/250/68/24/153/441/414/493/48/67`，
+> 合计 **2718**（与 D26 复测同）；
+> ③ `make matrix-test` = **`TOTAL 677 PASS 478 XFAIL 199 KNOWN-FAIL 0 NEW-FAIL 0`**，退出码 0
+> （D28 新增 28 条 `inscnt-*`：26 PASS + 2 XFAIL（`inscnt-2OX`→`DOTINS`、
+> `inscnt-3i-70chars`→`RECMAXCNT`）；**没有既有用例改变判定** —— 其中还修掉了矩阵探针
+> `probe.c` 的一个自身缺陷：KM 的 Insert+Esc 分支漏冲刷提交点的发射，插入是序列末键时
+> D26 的 `Left` 与 P2-3 的额外重复会整段丢失）；
+> ④ `make mutation-test` = **38** 条记录 ⇒ **CAUGHT 36 / EQUIVALENT 2 / SURVIVED 0 /
+> ERROR 0**，退出码 0（新增 5 条 P2-3 变异全部 CAUGHT；`d25-replay-leftover-record` 因
+> P2-3 统一插入类/计数类而变为等价（论证见记录表），P0-1 覆盖迁到新增的
+> `p23-replay-n-leftover-record`；删除已不存在的 `d27-left-suppress`）。
+
 > ⚠️ **`make glue-test` 会改写两个已跟踪的二进制**：`engine/test/glue/test_adapter_regress`
 > 与 `engine/test/glue/test_adapter_regress2`（`engine/Makefile:21-27` 对 `GLUE_TESTS`
 > 逐个 `-o test/glue/$$t` 覆盖）。
