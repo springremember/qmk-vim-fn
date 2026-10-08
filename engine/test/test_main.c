@@ -626,13 +626,12 @@ static void test_dot_count_budget(void) {
      * 组成、各自夹取之和仍会超 room），预填队列后按 `.` 不得把 256 格队列顶满（修前顶满并
      * 静默丢键）。判据是确定性截断：放不下就不重放。 */
     fresh();
-    kv_kbd(KV_9); kv_kbd(KV_9); kv_kbd(KV_D); kv_kbd(KV_W);
-    budget_prep(240); kv_set_mode(KV_MODE_NORMAL);
-    kv_kbd(KV_DOT);
-    CHECK(kv_emit_pending() <= 250);
-    flush_emit();
-    kv_kbd(KV_DOT);
-    CHECK(kv_emit_pending() <= 250);
+    kv_kbd(KV_9); kv_kbd(KV_9); kv_kbd(KV_D); kv_kbd(KV_W);   /* 目标 = 99dw（~100 键） */
+    kv_set_mode(KV_MODE_NORMAL);
+    for (int i = 0; i < 5; i++) {                              /* 连续 `.`，队列不排空 */
+        kv_kbd(KV_DOT);
+        CHECK(kv_emit_pending() <= 250);
+    }
     flush_emit();
 }
 
