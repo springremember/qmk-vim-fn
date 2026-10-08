@@ -1128,5 +1128,54 @@ D25 让 `.` 能回放插入类修改之后，这个错位就从"看不出来"变
 | `d0.` / `d03.` | 均 ≡ `d0`（`0` 是动作，不是计数位） |
 | `2D.` / `D3.` | 既有偏差（`2D` 本身的行级寄存器/尾换行），与计数无关 |
 
-**残余（如实登记，不修）**：`Ni`（计数入口插入，如 `3iAB<Esc>`）仍是既有偏差 —— 引擎忽略
-插入入口的计数（Vim `3iAB<Esc>`=`ABABAB`，引擎=`AB`），其 `.` 亦然；不在 P2-2 范围。
+**残余（如实登记）**：`Ni`（计数入口插入，如 `3iAB<Esc>`）曾是既有偏差 —— 引擎忽略
+插入入口的计数（Vim `3iAB<Esc>`=`ABABAB`，引擎=`AB`），其 `.` 亦然。**已由 P2-3 修复**
+（`design.md` §4.16、本文件 §7.48）：`N` 重复键入的文本，且插入类 `N.` 与计数类统一为
+"替换计数"。
+
+### 7.48 缺陷 D28（审查 P2-3）：插入入口的计数不重复键入的文本（规范先行，2026-10）
+
+**现象**（用户报 P2-3；**两种**独立方法实测 —— `kvhost.py: vim_run()` 的 `:normal!` 配方与
+`pty.fork()` 交互运行；下表全部用例逐例一致，方向键一例只能用 pty 方法，因为 `vim.tiny`
+无 `+eval`、`:normal!` 不翻译 `<>` 也无法内嵌真实方向键）：Normal 的计数 `N` 加在插入入口 `i/a/I/A/o/O` 上时，
+Vim 把**键入的文本重复 N 次**；引擎忽略该计数。缓冲区 `abcdefghij\nklmnopqrst\n`、光标 (0,0)：
+
+| 按键 | 真实 Vim | 引擎（修前） |
+|---|---|---|
+| `3iX<Esc>` | `XXXabcdefghij` | `Xabcdefghij` ✗ |
+| `3iab<Esc>` | `ababababcdefghij` | `ababcdefghij` ✗ |
+| `2iAB<Esc>` | `ABABabcdefghij` | `ABabcdefghij` ✗ |
+| `3AX<Esc>` | `abcdefghijXXX` | `abcdefghijX` ✗ |
+| `2oX<Esc>` | `abcdefghij\nX\nX\n…` | `abcdefghij\nX\n…` ✗ |
+| `3iX<Esc>.` | `XXXXXX…`（3+3） | `XX…` ✗ |
+| `3iX<Esc>2.` | `XXXXX…`（3+**2**） | `XXX…` ✗ |
+| `2iAB<Esc>2.` | `ABAABABB…` | `AABABB…` ✗ |
+| `iAB<Esc>2..` | `AABAABABBB…`（5 次插入） | `AABAABBB…` ✗ |
+
+**补充实测（`vim.tiny`，两种方法一致）**：
+
+| 按键 | 结果 | 含义 |
+|---|---|---|
+| `3aX<Esc>` | `aXXXbcdefghij` | 只重复文本，**不**重发 `a` 的 `Right` |
+| `3IX<Esc>` | `XXXabcdefghij` | `I` 同理 |
+| `3Oab<Esc>` | `ab\nab\nab\nabcdefghij` | `O` 每次重复都开新行 |
+| `2oX<CR>Y<Esc>` | `X\nY\nX\nY\n` | 整个"开行+文本"重复 |
+| `2iA<BS>B<Esc>` | `BB` | `<BS>` 随文本重复 |
+| `2iA<CR>B<Esc>` | `A\nBA\nB` | `<CR>` 随文本重复 |
+| `3sX<Esc>` / `3ccX<Esc>` / `3CX<Esc>` | `Xdefghij` / `X\n` / `X\n` | `s/cc/C` 的计数是**范围**，不重复文本 |
+| `3i<Esc>` | 不变（no-op） | 空文本不重复、不补 `Left` |
+| `99iX<Esc>` | 99 个 `X`（光标列 98） | 计数上限 99 |
+| `2iA<Left>B<Esc>` | `BA` | 真实移动**取消**计数重复（pty 方法；`:normal!` 无 `+eval`、无法表达方向键） |
+| `2i<Left>AB<Esc>` | `ABAB` | 列 0 的 no-op `Left` **不**取消（残余 `ARROWCNT`） |
+| `iA<Left>B<Esc>.` | `BBA` | Vim 的 `.` 只重放最后一次移动之后的文本（残余 `ARROWCNT`） |
+
+**根因**：`engine/src/engine.c` 的 `ST_CNT` 分支里 `T_INSERT` 只调 `kv_emit_enter_insert(kc)`、
+**丢弃** `n`（`case T_INSERT: kv_emit_enter_insert(kc); s_mode = KV_MODE_INSERT; ...`）。
+文本本身走 pass-through 由 glue 转发，引擎只把入口 + 文本录进 `s_rec`，从未重复。
+
+**规范**见 `design.md` §4.16（含 9 条规则：计数语义、`o/O` 重发入口、`s/S/c/cc/C` 不变、
+与 `.`/`N.` 的统一、空文本、特殊键与 `ARROWCNT`、预算夹取、`REC_MAX` 溢出、D26 `Left`、计数 0），
+并同步修订 §4.14 第 3 条的插入类表述（插入类与计数类统一为"替换计数"）。两条新残余编号
+`ARROWCNT`/`RECMAXCNT` 已登记进 `qmk/engineering-spec.md` §1.3 与 `matrix.py: DEVIATIONS`。
+
+本提交为**文档先行**，实现与测试在后续提交。
