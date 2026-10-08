@@ -656,6 +656,160 @@ static void test_dot_count_budget(void) {
 }
 
 
+/* P2-3/D28（design §4.16）：Normal 的计数 N 加在插入入口 i/a/I/A/o/O 上 ⇒ **键入的文本重复 N 次**
+ * （平铺）。入口键只发**一次**（o/O 例外：每次重复都重发入口 = 每行一次）；末尾只补**一个** D26
+ * `Left`（重复之间不补）。计数位进录制 ⇒ 裸 `.` 重放整条**带计数**的插入、`N.` 替换计数（D27 统一
+ * 规则），故 §7.47 的插入类 P1-3 残余（`iAB<Esc>2..`）也随之修复。 */
+static void test_insert_count_repeat(void) {
+    /* --- i：文本重复 N 次，入口（空）一次，末尾一个 Left --- */
+    fresh(); key(KV_3); key(KV_I); key(KV_X);
+    kv_cancel(); kv_set_mode(KV_MODE_NORMAL); flush_emit();
+    CHECK_SEQ(KV_X, KV_X, KV_X, KV_LEFT);            /* 键入 1 个 + 额外 2 个 + Left */
+
+    fresh(); key(KV_3); key(KV_I); key(KV_A); key(KV_B);
+    kv_cancel(); kv_set_mode(KV_MODE_NORMAL); flush_emit();
+    CHECK_SEQ(KV_A, KV_B, KV_A, KV_B, KV_A, KV_B, KV_LEFT);
+
+    fresh(); key(KV_2); key(KV_I); key(KV_A); key(KV_B);
+    kv_cancel(); kv_set_mode(KV_MODE_NORMAL); flush_emit();
+    CHECK_SEQ(KV_A, KV_B, KV_A, KV_B, KV_LEFT);
+
+    /* --- a：只重复文本，**不**重发入口的 Right（否则 aXbXc 而非 aXXXb） --- */
+    fresh(); key(KV_3); key(KV_A); key(KV_X);
+    kv_cancel(); kv_set_mode(KV_MODE_NORMAL); flush_emit();
+    CHECK_SEQ(KV_RGHT, KV_X, KV_X, KV_X, KV_LEFT);
+
+    /* --- A / I：入口 End / Home 一次，文本 3 次 --- */
+    fresh(); key(KV_3); key(KV_C_A); key(KV_X);
+    kv_cancel(); kv_set_mode(KV_MODE_NORMAL); flush_emit();
+    CHECK_SEQ(KV_END, KV_X, KV_X, KV_X, KV_LEFT);
+
+    fresh(); key(KV_3); key(KV_C_I); key(KV_X);
+    kv_cancel(); kv_set_mode(KV_MODE_NORMAL); flush_emit();
+    CHECK_SEQ(KV_HOME, KV_X, KV_X, KV_X, KV_LEFT);
+
+    /* --- o / O：**每次重复都重发入口**（每行一次） --- */
+    fresh(); key(KV_2); key(KV_O); key(KV_X);
+    kv_cancel(); kv_set_mode(KV_MODE_NORMAL); flush_emit();
+    CHECK_SEQ(KV_END, KV_LSFT_KC(KV_ENT), KV_X,
+              KV_END, KV_LSFT_KC(KV_ENT), KV_X, KV_LEFT);
+
+    fresh(); key(KV_2); key(KV_C_O); key(KV_X);
+    kv_cancel(); kv_set_mode(KV_MODE_NORMAL); flush_emit();
+    CHECK_SEQ(KV_HOME, KV_LSFT_KC(KV_ENT), KV_UP, KV_X,
+              KV_HOME, KV_LSFT_KC(KV_ENT), KV_UP, KV_X, KV_LEFT);
+
+    /* --- 空文本：3i<Esc> 是 no-op（不重复、不补 Left） --- */
+    fresh(); key(KV_3); key(KV_I);
+    kv_cancel(); kv_set_mode(KV_MODE_NORMAL); flush_emit();
+    CHECK(rec_count() == 0);
+
+    /* --- 特殊键：BS / Enter 随文本重复 --- */
+    fresh(); key(KV_2); key(KV_I); key(KV_A); key(KV_BSPC); key(KV_B);
+    kv_cancel(); kv_set_mode(KV_MODE_NORMAL); flush_emit();
+    CHECK_SEQ(KV_A, KV_BSPC, KV_B, KV_A, KV_BSPC, KV_B, KV_LEFT);
+
+    fresh(); key(KV_2); key(KV_I); key(KV_A); key(KV_ENT); key(KV_B);
+    kv_cancel(); kv_set_mode(KV_MODE_NORMAL); flush_emit();
+    CHECK_SEQ(KV_A, KV_ENT, KV_B, KV_A, KV_ENT, KV_B, KV_LEFT);
+
+    /* --- 光标移动键：保守判据 ⇒ 不重复（ARROWCNT），但 D26 的 Left 仍补 --- */
+    fresh(); key(KV_2); key(KV_I); key(KV_A); key(KV_LEFT); key(KV_B);
+    kv_cancel(); kv_set_mode(KV_MODE_NORMAL); flush_emit();
+    CHECK_SEQ(KV_A, KV_LEFT, KV_B, KV_LEFT);
+
+    /* --- 计数 99：99 个 X + 1 个 Left（预算内） --- */
+    fresh(); key(KV_9); key(KV_9); key(KV_I); key(KV_X);
+    kv_cancel(); kv_set_mode(KV_MODE_NORMAL); flush_emit();
+    CHECK(rec_count() == 100);
+    CHECK(rec_at(0) == KV_X && rec_at(98) == KV_X && rec_at(99) == KV_LEFT);
+
+    /* --- REC_MAX 溢出：文本 > 64 ⇒ 不重复、不提交，但 Left 仍补（RECMAXCNT） --- */
+    fresh(); key(KV_3); key(KV_I);
+    for (int i = 0; i < 70; i++) key(KV_A);
+    rec_start();                                     /* 只看提交点的发射 */
+    kv_cancel(); kv_set_mode(KV_MODE_NORMAL); flush_emit();
+    CHECK_SEQ(KV_LEFT);
+    rec_start(); key(KV_DOT);
+    CHECK(rec_count() == 0);                         /* 不提交 ⇒ `.` 无目标 */
+
+    /* --- 与 `.`：计数位进录制 ⇒ 裸 `.` 重放整条带计数的插入 --- */
+    fresh(); key(KV_3); key(KV_I); key(KV_X);
+    kv_cancel(); kv_set_mode(KV_MODE_NORMAL); flush_emit();
+    rec_start(); key(KV_DOT); flush_emit();
+    CHECK_SEQ(KV_X, KV_X, KV_X, KV_LEFT);            /* 重放 3iX */
+
+    /* `2.` 替换计数（D27）⇒ 重放 2iX */
+    fresh(); key(KV_3); key(KV_I); key(KV_X);
+    kv_cancel(); kv_set_mode(KV_MODE_NORMAL); flush_emit();
+    rec_start(); key(KV_2); key(KV_DOT); flush_emit();
+    CHECK_SEQ(KV_X, KV_X, KV_LEFT);
+
+    /* 计数写回录制：`3iX<Esc>..` 两次都重放 3iX */
+    fresh(); key(KV_3); key(KV_I); key(KV_X);
+    kv_cancel(); kv_set_mode(KV_MODE_NORMAL); flush_emit();
+    rec_start(); key(KV_DOT); key(KV_DOT); flush_emit();
+    CHECK_SEQ(KV_X, KV_X, KV_X, KV_LEFT, KV_X, KV_X, KV_X, KV_LEFT);
+
+    /* --- P1-3 插入类残余：iAB<Esc>2.. = 1 + 2 + 2 次插入 --- */
+    fresh(); key(KV_I); key(KV_A); key(KV_B);
+    kv_cancel(); kv_set_mode(KV_MODE_NORMAL); flush_emit();
+    rec_start(); key(KV_2); key(KV_DOT); key(KV_DOT); flush_emit();
+    CHECK_SEQ(KV_A, KV_B, KV_A, KV_B, KV_LEFT,       /* 2. = 2 次 */
+              KV_A, KV_B, KV_A, KV_B, KV_LEFT);      /* 裸 . 重放 2iAB */
+
+    /* --- 回归守卫：既有插入/`.` 行为不变 --- */
+    fresh(); key(KV_I); key(KV_A); key(KV_B);
+    kv_cancel(); kv_set_mode(KV_MODE_NORMAL); flush_emit();
+    rec_start(); key(KV_DOT); flush_emit();
+    CHECK_SEQ(KV_A, KV_B, KV_LEFT);                  /* iAB<Esc>. ≡ iAB */
+    fresh(); key(KV_C_A); key(KV_X);
+    kv_cancel(); kv_set_mode(KV_MODE_NORMAL); flush_emit();
+    rec_start(); key(KV_DOT); flush_emit();
+    CHECK_SEQ(KV_END, KV_X, KV_LEFT);                /* AX<Esc>. */
+    /* 计数类不受影响：2x3.. / x3.. 仍重放 `3x`（P1-3） */
+    fresh(); key(KV_2); key(KV_X); key(KV_3); key(KV_DOT); flush_emit();
+    rec_start(); key(KV_DOT); flush_emit();
+    CHECK(rec_count() == 4);
+    CHECK(rec_at(0) == KV_LSFT_KC(KV_RGHT) && rec_at(3) == KV_LCTL_KC(KV_X));
+    fresh(); key(KV_X); key(KV_3); key(KV_DOT); flush_emit();
+    rec_start(); key(KV_DOT); flush_emit();
+    CHECK(rec_count() == 4);
+    CHECK(rec_at(0) == KV_LSFT_KC(KV_RGHT) && rec_at(3) == KV_LCTL_KC(KV_X));
+
+    /* --- 预算（design §4.4 不变式 a/b）：额外重复在提交点按 room 夹取，每次完整 --- */
+    budget_prep(240); kv_set_mode(KV_MODE_NORMAL);
+    kv_kbd(KV_I); kv_kbd(KV_A); kv_kbd(KV_B);
+    kv_cancel(); kv_set_mode(KV_MODE_NORMAL);
+    CHECK(kv_emit_pending() == 241);                 /* 计数 1：只有那个 Left */
+    budget_check(KV_LEFT, 0);
+
+    budget_prep(240); kv_set_mode(KV_MODE_NORMAL);
+    kv_kbd(KV_9); kv_kbd(KV_9); kv_kbd(KV_I); kv_kbd(KV_A); kv_kbd(KV_B);
+    kv_cancel(); kv_set_mode(KV_MODE_NORMAL);
+    CHECK(kv_emit_pending() == 249);                 /* room=10 ⇒ 额外 4 次 ×2 + Left */
+    budget_check(KV_LEFT, 0);
+
+    budget_prep(247); kv_set_mode(KV_MODE_NORMAL);
+    kv_kbd(KV_9); kv_kbd(KV_9); kv_kbd(KV_I); kv_kbd(KV_A); kv_kbd(KV_B);
+    kv_cancel(); kv_set_mode(KV_MODE_NORMAL);
+    CHECK(kv_emit_pending() == 250);                 /* room=3 ⇒ 额外 1 次 ×2 + Left */
+    budget_check(KV_LEFT, 0);
+
+    budget_prep(248); kv_set_mode(KV_MODE_NORMAL);
+    kv_kbd(KV_9); kv_kbd(KV_9); kv_kbd(KV_I); kv_kbd(KV_A); kv_kbd(KV_B);
+    kv_cancel(); kv_set_mode(KV_MODE_NORMAL);
+    CHECK(kv_emit_pending() == 249);                 /* room=2 ⇒ 放不下一次 ⇒ 只补 Left */
+    budget_check(KV_LEFT, 0);
+
+    /* o：每次重复 4 键（End,Shift+Enter,X,Y） */
+    budget_prep(240); kv_set_mode(KV_MODE_NORMAL);
+    kv_kbd(KV_9); kv_kbd(KV_9); kv_kbd(KV_O); kv_kbd(KV_X); kv_kbd(KV_Y);
+    kv_cancel(); kv_set_mode(KV_MODE_NORMAL);
+    CHECK(kv_emit_pending() == 247);                 /* 入口 2 + room=8 ⇒ 额外 1 次 ×4 + Left */
+    budget_check(KV_LEFT, 0);
+}
+
 static void test_big_count(void) {
     fresh(); key(KV_9); key(KV_9); key(KV_W);
     CHECK(rec_count() == 99); /* 99 motions fit in the emit queue */
@@ -2227,6 +2381,7 @@ int main(void) {
     test_repeat_count();
     test_dot_count_replace();       /* P2-2/D27：`N.` 替换计数 */
     test_dot_count_budget();        /* P2-2/D27：预算不变式 */
+    test_insert_count_repeat();     /* P2-3/D28：插入入口的计数重复键入文本 */
     test_big_count();
     test_pass_through();
     test_mode_pending_clear();

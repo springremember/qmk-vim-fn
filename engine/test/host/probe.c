@@ -49,13 +49,16 @@ int main(int argc, char **argv) {
          * Normal; the host never sees that Esc. */
         if (keymap && kv_get_mode() == KV_MODE_INSERT && KV_BASIC(kc) == KV_ESC) {
             /* 忠实模拟 glue 层 esc_process()：真实顺序是 kv_cancel(); kv_set_mode(NORMAL);
-             * 少了 kv_cancel() 就测不出「录制在提交前被抹掉」这类缺陷（D25 真因 B）。 */
+             * 少了 kv_cancel() 就测不出「录制在提交前被抹掉」这类缺陷（D25 真因 B）。
+             * 提交点会发射 D26 的 `Left` 与 P2-3 的额外重复；真实 glue 由排空定时器把它们
+             * 送到宿主，故这里必须**同样冲刷**——否则它们是序列末键时会被整段丢掉，
+             * 矩阵就会看不见这些键（P2-3 的 `3iX<Esc>` 首执行曾因此漏测）。 */
             kv_cancel();
             kv_set_mode(KV_MODE_NORMAL);
-            continue;
+        } else {
+            kv_result_t r = kv_kbd(kc);
+            if (r == KV_PASSTHROUGH) push_host(kc);
         }
-        kv_result_t r = kv_kbd(kc);
-        if (r == KV_PASSTHROUGH) push_host(kc);
         int p = kv_emit_pending();
         if (p > maxpend) maxpend = p;
         emn = 0;

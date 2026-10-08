@@ -430,6 +430,49 @@ add('dot-pending-d',      BABC, 0, 5, 'd.')
 add('dot-pending-2d',     BABC, 0, 5, '2d.')
 add('dot-nolast-2dot',    BABC, 0, 0, '2.')
 
+# ============ counted insert entry (P2-3/D28, design §4.16) ============
+# A count on `i/a/I/A/o/O` repeats the TYPED TEXT N times (flat, not nested); the entry
+# is emitted once (o/O re-emit it each repetition = one line per repetition).  A bare `.`
+# replays the whole COUNTED insert; `N.` replaces the count (D27 rule).  `s/S/c/cc/C`
+# keep the range meaning (text inserted once).  `\b` = Backspace, `\r` = Enter (real
+# bytes on the vim side).  The engine never repeats when the typed text contains a
+# cursor-movement key (ARROWCNT) -- the `:normal!` harness cannot express arrows at all
+# (vim.tiny has no `+eval`, and `:normal!` does not translate `<>`), so the arrow case
+# is covered at the engine level (`test_insert_count_repeat`) and by the pty run, not here.
+for nm, k, b, l, c in [
+    ('inscnt-3iX',        '3iX\\e',        BABC, 0, 0),
+    ('inscnt-3iab',       '3iab\\e',       BABC, 0, 0),
+    ('inscnt-2iAB',       '2iAB\\e',       BABC, 0, 0),
+    ('inscnt-3AX',        '3AX\\e',        BABC, 0, 0),
+    ('inscnt-3aX',        '3aX\\e',        BABC, 0, 0),
+    ('inscnt-3IX',        '3IX\\e',        BABC, 0, 0),
+    ('inscnt-2oX',        '2oX\\e',        BABC, 0, 0),
+    ('inscnt-2OX',        '2OX\\e',        BABC, 0, 0),
+    ('inscnt-3sX',        '3sX\\e',        BABC, 0, 0),
+    # 3C 的计数是**范围**（删到第 3 行行尾）；BABC 只有 2 行，`3C` 的尾换行是既有偏差
+    # （见 matrix 里 `key-3C` 用的是 B3@(0,3)），故这里用同一缓冲区/列。
+    ('inscnt-3CX',        '3CX\\e',        B3,   0, 3),
+    ('inscnt-3ccX',       '3ccX\\e',       B4,   0, 0),
+    ('inscnt-2sAB',       '2sAB\\e',       BABC, 0, 0),
+    ('inscnt-3i-empty',   '3i\\e',         BABC, 0, 0),
+    ('inscnt-3i-empty-x', '3i\\ex',        BABC, 0, 0),
+    ('inscnt-2iA-BS-B',   '2iA\\bB\\e',    BABC, 0, 0),
+    ('inscnt-2iA-CR-B',   '2iA\\rB\\e',    BABC, 0, 0),
+    ('inscnt-3iA-CR-B',   '3iA\\rB\\e',    BABC, 0, 0),
+    ('inscnt-2oX-CR-Y',   '2oX\\rY\\e',    BABC, 0, 0),
+    ('inscnt-99iX',       '99iX\\e',       BABC, 0, 0),
+    ('inscnt-3iX-dot',    '3iX\\e.',       BABC, 0, 0),
+    ('inscnt-3iX-2dot',   '3iX\\e2.',      BABC, 0, 0),
+    ('inscnt-2iAB-dot',   '2iAB\\e.',      BABC, 0, 0),
+    ('inscnt-2iAB-2dot',  '2iAB\\e2.',     BABC, 0, 0),
+    ('inscnt-3iXY-dot',   '3iXY\\e.',      BABC, 0, 0),
+    ('inscnt-3iXY-2dot',  '3iXY\\e2.',     BABC, 0, 0),
+    ('inscnt-2oX-dot',    '2oX\\e.',       BABC, 0, 0),
+    ('inscnt-iAB-2dotdot','iAB\\e2..',     BABC, 0, 0),   # P1-3 insert-class residual
+    ('inscnt-3i-70chars', '3i' + 'a' * 70 + '\\e', BABC, 0, 0),  # xfail RECMAXCNT
+]:
+    add(nm, b, l, c, k, note='P2-3: counted insert entry')
+
 # ============================ paste/register cases (audit pp.py) ============================
 # NB: the old list contained 'yl l p' — a **literal space** key.  The host model does not
 # implement space-as-motion, so that case tested the model, not the engine; and its generated
@@ -534,6 +577,14 @@ DEVIATIONS = {
     # line N-1 while the engine (like N explicit `OXY<Esc>`) leaves it on line 0; the
     # other insert entries (i/a/A/I/o) match exactly.  Cursor-only (design §4.14 #3).
     'DOTINS': 'insert-class `N.` via the `O` entry: buffer matches Vim, cursor lands N-1 lines higher than Vim (design §4.14 #3)',
+    # 2026-10 (P2-3/D28): counted insert entry (design §4.16).  ARROWCNT has no xfail case:
+    # the `:normal!` matrix harness cannot express an arrow key inside insert (vim.tiny has no
+    # `+eval`, `:normal!` does not translate `<>`), and a case that tests the harness rather
+    # than the engine must not be in the matrix (engineering-spec §3.4).  The engine contract is
+    # pinned by test_main.c: test_insert_count_repeat; the true Vim behaviour (`2iA<Left>B<Esc>`
+    # = `BA`) is verified by the pty.fork() method (see vim/changes.md §7.48/§7.49).
+    'ARROWCNT': 'a counted insert whose typed text contains a cursor-movement key: Vim cancels the repeat when the move really moves (and its `.` only replays the text after the last move); the engine cannot see the column/line, so it never repeats (design §4.9 18, §4.16 #5)',
+    'RECMAXCNT': 'a counted insert whose typed text exceeds REC_MAX (64): the engine neither repeats nor commits it; Vim has no such limit (design §4.9 19, §4.16 #7)',
 }
 
 XFAIL = {
@@ -582,6 +633,12 @@ XFAIL = {
     'dotd0-3dot': 'D16',      # `d0` at column 0
     'dot2d0-3dot': 'D16',
     'dotins-OXY-2dot': 'DOTINS',  # O-entry counted insert: buffer matches, cursor N-1 lines off
+    # 2026-10 (P2-3/D28): the SAME O-entry cursor residual on the first execution of `NO`
+    # (`2OX<Esc>` = `X\nX\n`): buffer/register match, cursor lands one line higher.
+    'inscnt-2OX': 'DOTINS',
+    # 2026-10 (P2-3/D28): a counted insert whose typed text exceeds REC_MAX (64) is not
+    # repeated (and not committed) by the engine; Vim repeats it.  Declared residual.
+    'inscnt-3i-70chars': 'RECMAXCNT',
     'mot-e': 'E-W',
     'mot-E': 'E-W',
     'probe-ex': 'E-W',

@@ -97,7 +97,8 @@ def kc_of(ch):
 
 
 def parse_keys(s):
-    """vim key string -> keycode list.  `\\e` is a real ESC (0x29), `\\r` is Enter (0x28)."""
+    """vim key string -> keycode list.  `\\e` is a real ESC (0x29), `\\r` is Enter (0x28),
+    `\\b` is Backspace (0x2A, used by the P2-3 counted-insert cases)."""
     out = []
     i = 0
     while i < len(s):
@@ -110,6 +111,12 @@ def parse_keys(s):
             # side carries a REAL CR byte, so `:normal!` sees it as <CR> (a CR in the
             # middle of the script line is NOT a line terminator; see vim_run()).
             out.append(ENT)
+            i += 2
+            continue
+        if s[i] == '\\' and i + 1 < len(s) and s[i + 1] == 'b':
+            # `\b` = Backspace.  The vim side carries a REAL 0x08 byte, which insert
+            # mode treats as <BS>.
+            out.append(BSPC)
             i += 2
             continue
         out.append(kc_of(s[i]))
@@ -587,8 +594,9 @@ class Case:
         self.line = line
         self.col = col
         self.vim = vim
-        # the vim side needs REAL bytes, not the two-char '\e' / '\r' tokens
-        self.vim_keys = vim.replace('\\e', '\x1b').replace('\\r', '\r')
+        # the vim side needs REAL bytes, not the two-char '\e' / '\r' / '\b' tokens
+        self.vim_keys = (vim.replace('\\e', '\x1b').replace('\\r', '\r')
+                         .replace('\\b', '\x08'))
         self.eng = parse_keys(eng if eng is not None else vim)
         self.esc = esc
         self.mode = mode
