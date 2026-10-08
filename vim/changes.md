@@ -1223,3 +1223,33 @@ Vim 把**键入的文本重复 N 次**；引擎忽略该计数。缓冲区 `abcd
 **未验证 / 残余**：① `ARROWCNT`（no-op 移动与 Vim 的 `.` redo 语义不可复现，纯键码固有限制）；
 ② `RECMAXCNT`（文本 > `REC_MAX` 的计数插入不重复/不提交）；③ 真机（`qmk/on-device-checklist.md`
 A1/A7：1 键/ms 排空节奏下大计数插入的实际接受度）。
+
+### 7.50 待办发现：host 模型三处缺陷（修好会暴露 11 条引擎偏差）
+
+独立对抗审计（HEAD `6b66f52`）指出矩阵用的宿主模型 `engine/test/host/kvhost.py` 自身有三处缺陷
+（**会让矩阵产生假绿** ✗ —— 比单个引擎 bug 更危险）：
+
+1. **Tab 无选区时插到行首** ✗：`Host('abcdefghij\n…',0,3).apply(TAB)` → `'\tabc…'`，
+   应为 `'abc\tdefghij…'`（真编辑器语义：无选区时 Tab 在**光标处**插入制表符；`>>` 是
+   `Home,Tab`，光标在行首，二者等价；有选区时才是缩进选中行）。
+2. **末行 `j` 会移到"幻影行"** ✗：`Host('…\n',1,5).apply(DOWN)` → 移到末尾换行**之后**的位置
+   （Vim 里那是 no-op；`move_v` 只判了 `le >= len(b)`，漏了"以换行结尾时 `le+1` 也不是一行"）。
+3. **`u` 恢复选区锚点** ✗：`x,u` 后 `anchor=0`，后续 `Shift+Right` 会扩选 ⇒ `xu.` 模型删 2 字符、
+   Vim 删 1 个（引擎发射流其实**正确**）。真编辑器 undo 不留选区。
+
+**我实测过这三处的修法**（都已验证有效）：
+- TAB：`if shift or self.has_sel(): self.indent(shift) else: self.insert('\t')`
+- `move_v`：`if le + 1 >= len(self.b): return`
+- undo：`self.anchor = None`（不恢复快照里的 anchor）
+
+**但修好后矩阵立刻变红** ✗ —— 模型变正确 ⇒ 之前被模型 bug 掩盖的**引擎偏差暴露**：
+- **3 条 XPASS**（XFAIL 登记过期，应删除）：`mot-j-last`、`mot-99j`、`mot-12j`
+  （它们引用 `FAILMOT`「宿主方向键只夹取」，模型修好后**确实夹取** ⇒ 引用失效）。
+- **11 条 NEW-FAIL**（已确认其中 6 条）：`3yy`[reg+cur]、`yy-last`[reg+cur]、`3cc`[buf+reg]、
+  `99dd`[buf+reg]、`dot2dd-3dot`[buf+reg]、`dot3dd-2dot`[buf+reg] —— 都是**多行操作在末行附近**。
+  这暗示引擎的 `Nyy`/`Ndd`/`Ncc` 在末行附近的选区大小可能与 Vim 差一行 ✗，需要逐条判定
+  「引擎错」还是「模型仍不对」。
+
+**结论**：这三处模型缺陷必须先修（否则矩阵会持续假绿 ✗），但修的同时必须**逐条处置**上述
+3 XPASS + 11 NEW-FAIL（分析后改引擎或补 XFAIL 引用），不能只改模型就放行。本轮因上下文耗尽
+先回退模型改动、保留本记录；下一轮按此清单处理。
