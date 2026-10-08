@@ -306,8 +306,8 @@ mutant d25-insert-change-flag
 mutant d25-replay-leftover-record
   file  = engine/src/engine.c
   suite = engine
-  equiv = no
-  why   = 回放前不清残留录制 ⇒ 计数在回放结束时被提交并泄漏给下一条命令（P0-1 数据损坏）
+  equiv = yes
+  why   = 等价（P2-3/D28 起）：rec_replay_ex 的唯一调用点现在是「ST_IDLE 的裸 `.`」，而 NORMAL 下到达 ST_IDLE 时 s_rec 恒为空（任何待决前缀都在 kv_kbd 底部被 commit/clear）⇒ 该 rec_clear 是 no-op。原覆盖来自 rec_replay_n 已删除的插入类分支；P0-1 的实际保护已移到 rec_replay_n 的 rec_clear（见 p23-replay-n-leftover-record，CAUGHT）。
   old
     rec_clear();  /* 丢弃残留录制（例如 `. ` 前的计数），否则会在回放结束时被提交（P0-1） */
   new
@@ -330,7 +330,7 @@ suite = engine
 equiv = no
 why = D26 的核心键码被去掉（离开插入不补 Left）⇒ 多字符插入后 `.` 从右一列重放、缓冲区被改坏。
 old
-    if (s_ins_typed && !s_suppress_left) { kv_emit_tap(KV_LEFT); s_ins_typed = false; }
+    if (s_ins_typed) { kv_emit_tap(KV_LEFT); s_ins_typed = false; }
 new
     s_ins_typed = false;   /* 变异：不补 Left */
 end
@@ -341,7 +341,7 @@ suite = engine
 equiv = no
 why = 空插入也补 Left ⇒ 宿主 Left 在列 0 会回绕到上一行行尾（I<Esc>x 因此删错行）。
 old
-    if (s_ins_typed && !s_suppress_left) { kv_emit_tap(KV_LEFT); s_ins_typed = false; }
+    if (s_ins_typed) { kv_emit_tap(KV_LEFT); s_ins_typed = false; }
 new
     { kv_emit_tap(KV_LEFT); s_ins_typed = false; }   /* 变异：空插入也补 */
 end
@@ -401,17 +401,6 @@ mutant d27-strip-d0
             return kv_classify(kc) == 0;
   end
 
-mutant d27-left-suppress
-  file  = engine/src/engine.c
-  suite = engine
-  equiv = no
-  why   = 插入类 N. 每次回放都补 Left（不再只补末次）⇒ 多次回放落点偏左
-  old
-    if (s_ins_typed && !s_suppress_left) { kv_emit_tap(KV_LEFT); s_ins_typed = false; }
-  new
-    if (s_ins_typed ) { kv_emit_tap(KV_LEFT); s_ins_typed = false; }
-  end
-
 mutant p24-no-whole-replay-clamp
   file  = engine/src/engine.c
   suite = engine
@@ -443,4 +432,73 @@ mutant p13-count-not-kept
     rec_set_last_count(n);   /* P1-3：`2x3..` ≡ `2x` + `3x` + `3x` = 8 删 */
   new
 
+  end
+
+mutant p23-never-repeat
+  file  = engine/src/engine.c
+  suite = engine
+  equiv = no
+  why   = 提交点不补发额外重复 ⇒ `3iX<Esc>` 只插一个 X（P2-3 的核心键码被去掉）
+  old
+    int extra = n - 1;
+  new
+    int extra = 0;
+  end
+
+mutant p23-repeat-plus-one
+  file  = engine/src/engine.c
+  suite = engine
+  equiv = no
+  why   = 额外重复多算一次（N+1 而非 N-1）⇒ `3iX<Esc>` 插 4 个 X
+  old
+    int extra = n - 1;
+  new
+    int extra = n;
+  end
+
+mutant p23-line-open-no-entry
+  file  = engine/src/engine.c
+  suite = engine
+  equiv = no
+  why   = o/O 的额外重复不重发入口 ⇒ `2oX<Esc>` 只有一行 XX（不是两行 X）
+  old
+        if (line_open) kv_emit_enter_insert(ekc);
+  new
+
+  end
+
+mutant p23-move-not-suppressed
+  file  = engine/src/engine.c
+  suite = engine
+  equiv = no
+  why   = 去掉移动键的保守判据 ⇒ `2iA<Left>B<Esc>` 被重复成 BABA（Vim 只做一次 = BA，ARROWCNT）
+  old
+    if (entry < 0 || move) return;         /* ARROWCNT：保守不重复 */
+  new
+    if (entry < 0) return;
+  end
+
+mutant p23-count-flag-lost
+  file  = engine/src/engine.c
+  suite = engine
+  equiv = no
+  why   = 提交时不写回计数位标记 ⇒ 插入的计数位在录制里丢失，`3iX<Esc>2.` 把 2 与 3 拼成 23
+  old
+        memcpy(s_last_iscnt, s_rec_iscnt, sizeof(bool) * (size_t)s_rec_len);
+  new
+        memset(s_last_iscnt, 0, sizeof(bool) * (size_t)s_rec_len);   /* 变异：计数位标记丢失 */
+  end
+
+mutant p23-replay-n-leftover-record
+  file  = engine/src/engine.c
+  suite = engine
+  equiv = no
+  why   = `N.` 回放前不清残留录制（计数 N 还在 s_rec 里）⇒ 回放结束把它提交成新目标，紧跟的裸 `.` 变成重放那个数字（P0-1 数据损坏；P2-3 后保护点从 rec_replay_ex 移到 rec_replay_n）
+  old
+    const int before = kv_emit_pending();
+    rec_clear();
+    s_replaying = true;
+  new
+    const int before = kv_emit_pending();
+    s_replaying = true;
   end
