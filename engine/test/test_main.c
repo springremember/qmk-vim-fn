@@ -431,11 +431,21 @@ static void test_repeat_count(void) {
     fresh(); key(KV_D); key(KV_D);
     rec_start(); key(KV_9); key(KV_9); key(KV_DOT);
     CHECK(rec_count() == 103);
-    /* 计数不跨 `.` 泄漏：3. 之后再按 . 只重复一次（≡ dw） */
+    /* P1-3（2026-10 审计订正）：`3.` 本身是一次**带计数 3** 的修改 ⇒ 紧跟的裸 `.` 重复的是
+     * `3dw`（4 键），**不是**原来的 `dw`（2 键）。真实 vim.tiny 实测 `dw3..` 删 7 个词
+     * （1+3+3），`2x3..` 删 8 个字符（2+3+3）。原断言写"只重复一次（≡ dw）"，编码了 bug。 */
     fresh(); key(KV_D); key(KV_W);
     key(KV_3); key(KV_DOT);
     rec_start(); key(KV_DOT);
-    CHECK(rec_count() == 2);
+    CHECK(rec_count() == 4);          /* ≡ 3dw（Ctrl+Shift+Right×3 + Ctrl+X） */
+    /* P1-3：`N.` 之后裸 `.` 保留计数（Vim：2x3.. = 2+3+3 = 8 删；x3.. = 1+3+3 = 7 删） */
+    fresh(); key(KV_2); key(KV_X); key(KV_3); key(KV_DOT);
+    rec_start(); key(KV_DOT);
+    CHECK(rec_count() == 4);          /* ≡ 3x：Shift+Right×3 + Ctrl+X */
+    fresh(); key(KV_X); key(KV_3); key(KV_DOT);
+    rec_start(); key(KV_DOT);
+    CHECK(rec_count() == 4);          /* ≡ 3x */
+
     /* 没有 s_last 时 N. 无输出 */
     fresh(); rec_start(); key(KV_3); key(KV_DOT); CHECK(rec_count() == 0);
     fresh(); rec_start(); key(KV_DOT); CHECK(rec_count() == 0);

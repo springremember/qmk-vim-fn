@@ -502,6 +502,28 @@ static void rec_replay(void) { (void)rec_replay_ex(true); }
  *     而 `iAB<Esc>..`=`AAABBB`）。
  * 键码预算（design §4.4）：计数类退化成一条 ≤99 的单命令，由各发射器按剩余预算截断；
  * 插入类按每次插入的实际键数（含末次 `Left`）封顶，保证 256 格队列不到顶。 */
+/* P1-3：`N.` 执行后要把 `s_last` 的计数改成 N。真实 Vim 里 `.` 重复的是「上一次**修改**」，
+ * 而 `3.` 本身已经是一次**带计数 3** 的修改 ⇒ 紧跟的裸 `.` 应重复 `3x`，不是原来的 `2x`。
+ * 实测：`2x3..` = 8 删（2+3+3），修前引擎 7（2+3+2）；`x3..` = 7 vs 5；`iAB<Esc>2..` = 5 次插入。 */
+static void rec_set_last_count(int n) {
+    if (n < 1 || s_last_len <= 0) return;
+    kv_keycode_t buf[REC_MAX];
+    bool         cnt[REC_MAX];
+    int len = 0;
+    if (n >= 10) { buf[len] = digit_kc(n / 10); cnt[len++] = true; }
+    if (n > 1)   { buf[len] = digit_kc(n % 10); cnt[len++] = true; }  /* n==1：裸命令，不写计数 */
+    for (int i = 0; i < s_last_len && len < REC_MAX; i++) {
+        if (s_last_iscnt[i]) continue;            /* 丢掉旧计数位 */
+        buf[len] = s_last[i];
+        cnt[len++] = false;
+    }
+    memcpy(s_last, buf, sizeof(kv_keycode_t) * (size_t)len);
+    memcpy(s_last_iscnt, cnt, sizeof(bool) * (size_t)len);
+    s_last_len  = len;
+    /* 注意：**不要**在这里清 s_last_cost —— 清了就等于关掉 P2-4 的整次回放预算守卫
+     * （实测会让 `99dw` 连按 `. ` 的 pending 重新越过 250）。成本由调用方按本次回放实测更新。 */
+}
+
 static void rec_replay_n(int n) {
     if (s_last_len <= 0 || n < 1) return;
     if (rec_is_insert_class()) {
@@ -520,6 +542,8 @@ static void rec_replay_n(int n) {
         for (int i = 1; i < reps - 1; i++) (void)rec_replay_ex(false);
         if (reps > 1) (void)rec_replay_ex(true);
         else if (typed) kv_emit_tap(KV_LEFT);         /* 被预算截断到 1 次：仍要补那个 Left */
+        /* 插入类的计数要重复 N 次插入，而"计数插入"本身未实现（P2-3）⇒ 这里**不**把计数写进
+         * s_last：否则裸 `.` 会把那个数字当按键喂进去。插入类的 P1-3 仍是已知偏差。 */
         return;
     }
     /* 计数类：喂入 N 作为新的前缀计数，再回放**去掉计数位**的录制（重放一次）。
@@ -536,6 +560,7 @@ static void rec_replay_n(int n) {
     s_replaying = false;
     if (s_mode == KV_MODE_INSERT) kv_set_mode(KV_MODE_NORMAL);
     if (kv_emit_pending() - before > s_last_cost) s_last_cost = kv_emit_pending() - before; /* 取最大，保守 */
+    rec_set_last_count(n);   /* P1-3：`2x3..` ≡ `2x` + `3x` + `3x` = 8 删 */
     s_rec_len = 0;
     s_rec_change = false;
 }

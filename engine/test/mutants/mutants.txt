@@ -433,3 +433,14 @@ mutant p11-count-replay-no-clamp
   new
 
   end
+
+mutant p13-count-not-kept
+  file  = engine/src/engine.c
+  suite = engine
+  equiv = no
+  why   = `N.` 之后不把计数写回目标 ⇒ 紧跟的裸 `.` 用原计数（2x3.. 删 7 而非 Vim 的 8）
+  old
+    rec_set_last_count(n);   /* P1-3：`2x3..` ≡ `2x` + `3x` + `3x` = 8 删 */
+  new
+
+  end
