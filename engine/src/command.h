@@ -102,6 +102,9 @@ void kv_emit_join(void);            /* J  */
 void kv_emit_undo(void);            /* u  */
 void kv_emit_save(void);            /* ZZ */
 void kv_emit_enter_insert(kv_keycode_t kc); /* i I a A o O */
+/* 入口键的键码成本（P2-3/D28，design §4.16 #6）：`kv_emit_enter_insert()` 会发出的键数。
+ * 计数插入在提交点**重发入口**（`o`/`O`）时用它夹取额外重复次数，保证每次重复完整。 */
+int  kv_emit_enter_insert_cost(kv_keycode_t kc);
 
 /* 无名寄存器类型（行级/字符级）跟踪：由所有写宿主剪贴板的 emitter 维护，
  * `kv_emit_paste` 据此选择定位键码；`kv_init` 复位。 */

@@ -633,3 +633,16 @@ void kv_emit_enter_insert(kv_keycode_t kc) {
         default: break;
     }
 }
+
+/* 与 kv_emit_enter_insert() 逐分支一致的成本（P2-3/D28，design §4.16 #6）。 */
+int kv_emit_enter_insert_cost(kv_keycode_t kc) {
+    switch (kc) {
+        case KV_I:     return 0;
+        case KV_C_I:   return 1;   /* Home */
+        case KV_A:     return 1;   /* Right */
+        case KV_C_A:   return 1;   /* End */
+        case KV_O:     return 2;   /* End, Shift+Enter */
+        case KV_C_O:   return 3;   /* Home, Shift+Enter, Up */
+        default:       return 0;
+    }
+}

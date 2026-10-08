@@ -20,11 +20,11 @@ static int          s_rec_len;
 static bool         s_rec_change; /* 本次录制里是否含「修改缓冲区」的命令 */
 static bool         s_rec_overflow; /* 录制超 REC_MAX ⇒ 本次修改不得提交（§4.14 #6） */
 static bool         s_ins_typed;    /* 本次插入里是否真的键入了字符（D26 补偿 Left 的判据） */
+static int          s_ins_count;    /* 插入入口的计数（P2-3/D28，design §4.16；默认 1） */
 static kv_keycode_t s_last[REC_MAX];
 static bool         s_last_iscnt[REC_MAX];
 static int          s_last_len;
 static bool         s_replaying;
-static bool         s_suppress_left; /* 插入类 `N.` 的中间次：回放结束**不**补 D26 的 Left */
 static int          s_last_cost;   /* 上一次回放实测发出的键数（P2-4：整次回放的预算判据） */
 
 /* internal feed result: consumed / pass-through / needs re-identification */
@@ -406,6 +406,66 @@ static void rec_clear(void) {
     s_rec_change = false;
     s_rec_overflow = false;
     s_ins_typed = false;
+    s_ins_count = 1;
+}
+
+/* P2-3/D28（design §4.16 #5）：光标移动键。Vim 在插入期发生**真实移动**时取消计数重复
+ * （`2iA<Left>B<Esc>`=`BA`），而 no-op 移动不取消（列 0 的 `2i<Left>AB<Esc>`=`ABAB`）。
+ * 引擎读不到列号/行号，无法区分二者，故采用保守判据：录制里出现任一移动键就不重复
+ * （残余 `ARROWCNT`）。`<BS>`/`<CR>`/`Tab`/`Del` 是编辑键，随文本重复。 */
+static bool kc_is_cursor_move(kv_keycode_t kc) {
+    switch (KV_BASIC(kc)) {
+        case KV_LEFT: case KV_RGHT: case KV_UP: case KV_DOWN:
+        case KV_HOME: case KV_END: case KV_PGUP: case KV_PGDN:
+            return true;
+        default:
+            return false;
+    }
+}
+
+/* 取出本次插入的「入口 + 键入文本」：活插入在 s_rec（提交前），回放在 s_last
+ * （回放期 rec_push 短路、s_rec 为空）。跳过前缀计数位后，第一个非计数位就是入口。
+ * 成功返回入口下标（文本 = keys[entry+1 .. *len-1]），失败返回 -1；*move 收是否含移动键。 */
+static int rec_insert_entry(const kv_keycode_t **keys, int *len, bool *move) {
+    const bool *iscnt;
+    if (s_rec_len > 0) { *keys = s_rec; iscnt = s_rec_iscnt; *len = s_rec_len; }
+    else if (s_last_len > 0) { *keys = s_last; iscnt = s_last_iscnt; *len = s_last_len; }
+    else return -1;
+    int e = 0;
+    while (e < *len && iscnt[e]) e++;      /* 跳过前缀计数位（`Ni` 的 N） */
+    if (e >= *len) return -1;
+    *move = false;
+    for (int i = e + 1; i < *len; i++) {
+        if (kc_is_cursor_move((*keys)[i])) { *move = true; break; }
+    }
+    return e;
+}
+
+/* P2-3/D28（design §4.16 #6）：在提交点补发 (N-1) 次额外重复。
+ * 每次重复的成本 per = 文本键数（`i/a/I/A`，入口不重发）或 入口键数 + 文本键数
+ * （`o`/`O`，入口每次重发 = 每行一次）；按剩余预算夹取并给末尾那个 D26 `Left` 预留 1 格。
+ * 每次重复都是**完整**的（绝不半截文本）；`pending ≤ 250 < 256`。 */
+static void rec_emit_extra_insert_reps(int n) {
+    const kv_keycode_t *keys;
+    int len, entry;
+    bool move;
+    entry = rec_insert_entry(&keys, &len, &move);
+    if (entry < 0 || move) return;         /* ARROWCNT：保守不重复 */
+    const kv_keycode_t ekc = keys[entry];
+    const bool line_open = (KV_BASIC(ekc) == KV_O);   /* o / O：每次重复重开一行 */
+    const int ekeys = kv_emit_enter_insert_cost(ekc);
+    const int text_len = len - entry - 1;
+    if (text_len < 1) return;              /* 空文本：no-op */
+    const int per = ekeys + text_len;
+    int extra = n - 1;
+    int room = kv_emit_room() - 1;         /* 预留末尾的 D26 Left */
+    if (room < 0) room = 0;
+    int maxextra = room / per;
+    if (extra > maxextra) extra = maxextra;
+    for (int r = 0; r < extra; r++) {
+        if (line_open) kv_emit_enter_insert(ekc);
+        for (int i = entry + 1; i < len; i++) kv_emit_tap(keys[i]);
+    }
 }
 
 /* 离开 INSERT 时提交：整段插入（入口 + 键入）成为 `.` 的目标。
@@ -417,15 +477,20 @@ static void rec_clear(void) {
  * 右一列开始、把缓冲区改坏。只在 `s_ins_typed`（本次真的键入了非 Esc 字符）时补：宿主 `Left`
  * 在列 0 会**回绕到上一行行尾**，而空插入无从知道列号。补偿与「能否回放」无关：录制溢出导致
  * 不提交时也要补。rec_commit()/rec_clear() 都会清掉 s_ins_typed ⇒ glue 的
- * `kv_cancel(); kv_set_mode();` 两个调用点**只补一次**。 */
+ * `kv_cancel(); kv_set_mode();` 两个调用点**只补一次**。
+ *
+ * P2-3/D28（design §4.16）：计数 `N` 加在插入入口上 ⇒ 先补发 (N-1) 次键入文本，再补那**一个**
+ * `Left`（重复之间不补）。`REC_MAX` 溢出时文本已被截断，重复它会插入错误内容 ⇒ 不重复
+ * （残余 `RECMAXCNT`），但 `Left` 仍补。 */
 static void rec_commit_insert(void) {
     if (s_replaying) return;
     if (s_mode != KV_MODE_INSERT) return;
-    /* P2-2/D27：插入类 `N.` 的中间次抑制补偿（Vim 在重复之间把光标留在插入文本之后），
-     * 只在末次补这一个 `Left`。s_ins_typed 由随后的 abort_input()/rec_clear() 清掉。 */
-    if (s_ins_typed && !s_suppress_left) { kv_emit_tap(KV_LEFT); s_ins_typed = false; }
+    if (s_ins_typed && s_ins_count > 1 && !s_rec_overflow)
+        rec_emit_extra_insert_reps(s_ins_count);
+    if (s_ins_typed) { kv_emit_tap(KV_LEFT); s_ins_typed = false; }
     if (s_rec_len > 0 && s_rec_change && !s_rec_overflow) rec_commit();
     else rec_clear();
+    s_ins_count = 1;
 }
 
 /* Shared abort path for every mode/enable transition (design #4.7):
@@ -435,16 +500,6 @@ static void rec_commit_insert(void) {
 static void abort_input(void) {
     reset_pending();
     rec_clear();
-}
-
-/* 录制是否为**插入类**（`i/a/I/A/o/O` 入口，design §4.14 #3）：跳过前缀计数位，
- * 看第一个真正的命令键是不是 T_INSERT。插入类与计数类的 `N.` 语义不同。 */
-static bool rec_is_insert_class(void) {
-    for (int i = 0; i < s_last_len; i++) {
-        if (s_last_iscnt[i]) continue;           /* 跳过前缀计数（如 `3i` 的 3） */
-        return kv_classify(s_last[i]) == T_INSERT;
-    }
-    return false;
 }
 
 /* 回放录制的键。strip_counts=true 时跳过计数位（P2-2/D27 的计数类 `N.` 用）。 */
@@ -465,9 +520,8 @@ static void rec_replay_keys(bool strip_counts) {
     }
 }
 
-/* 回放一次录制。emit_left=false 抑制结束时的 D26 `Left`（插入类 `N.` 的中间次；
- * Vim 在重复之间把光标留在插入文本之后）。返回本次回放是否键入了字符。 */
-static bool rec_replay_ex(bool emit_left) {
+/* 回放一次录制（P2-3/D28 起插入类与计数类共用这一条路径）。返回本次回放是否键入了字符。 */
+static bool rec_replay_ex(void) {
     if (s_replaying || s_last_len == 0) return false; /* never re-enter '.' */
     /* 预算（design §4.4 不变式 b）：**整次回放**也要受剩余预算约束。只靠各发射器各自的夹取
      * 不够 —— 一条命令由多个发射器组成，夹取之和仍可能超过 room（实测 `99dw` + 连续 `.`
@@ -479,12 +533,11 @@ static bool rec_replay_ex(bool emit_left) {
     rec_replay_keys(false);
     s_replaying = false;
     bool typed = false;
-    /* 回放完若仍在 INSERT 必须回 NORMAL（真实 Vim 的 `.` 结束后停在 Normal）。 */
+    /* 回放完若仍在 INSERT 必须回 NORMAL（真实 Vim 的 `.` 结束后停在 Normal）。
+     * P2-3：计数插入的额外重复由 rec_commit_insert() 在这里发射，末尾恰好一个 Left。 */
     if (s_mode == KV_MODE_INSERT) {
         typed = s_ins_typed;
-        s_suppress_left = !emit_left;
         kv_set_mode(KV_MODE_NORMAL);
-        s_suppress_left = false;
     }
     s_last_cost = kv_emit_pending() - before;  /* 实测本次成本，供下一次回放夹取（P2-4） */
     s_rec_len = 0;        /* 回放不产生新的录制（rec_push/rec_commit 在回放期已短路） */
@@ -492,16 +545,14 @@ static bool rec_replay_ex(bool emit_left) {
     return typed;
 }
 
-static void rec_replay(void) { (void)rec_replay_ex(true); }
+static void rec_replay(void) { (void)rec_replay_ex(); }
 
-/* `N.` 的精确语义（design §4.14 #3，P2-2/D27）。分两类：
- *   计数类（x/X/s/S/C/D/dw/dd/p/P/J/>/…）：删掉录制里**所有计数位**，前缀 N，重放**一次**
- *     —— 等价于把原命令的计数换成 N 再执行一遍（`2x3.` ≡ `3x`，寄存器是 `cde`）。
- *   插入类（i/a/I/A/o/O）：整段插入执行 N 次；Vim 在重复之间把光标留在插入文本**之后**，
- *     只在末次落到最后插入字符上 ⇒ 中间次抑制 D26 的 `Left`（`iAB<Esc>2.`=`AABABB`，
- *     而 `iAB<Esc>..`=`AAABBB`）。
- * 键码预算（design §4.4）：计数类退化成一条 ≤99 的单命令，由各发射器按剩余预算截断；
- * 插入类按每次插入的实际键数（含末次 `Left`）封顶，保证 256 格队列不到顶。 */
+/* `N.` 的精确语义（design §4.14 #3，P2-2/D27 + P2-3/D28）。插入类与计数类**统一**为：
+ *   删掉录制里**所有计数位**，前缀 N，重放**一次** —— 等价于把原命令的计数换成 N 再执行一遍
+ *   （`2x3.` ≡ `3x`，寄存器是 `cde`；`iAB<Esc>2.` ≡ `2iAB` = `AABABB`）。
+ *   插入类的额外重复（N 次键入文本）由 `rec_commit_insert()` 在回放的提交点发射，末尾恰好一个
+ *   D26 `Left`；`o`/`O` 每次重复重发入口。键码预算（design §4.4）：整条退化成一条 ≤99 的单命令，
+ *   由提交点的夹取与各发射器共同保证 256 格队列不到顶。 */
 /* P1-3：`N.` 执行后要把 `s_last` 的计数改成 N。真实 Vim 里 `.` 重复的是「上一次**修改**」，
  * 而 `3.` 本身已经是一次**带计数 3** 的修改 ⇒ 紧跟的裸 `.` 应重复 `3x`，不是原来的 `2x`。
  * 实测：`2x3..` = 8 删（2+3+3），修前引擎 7（2+3+2）；`x3..` = 7 vs 5；`iAB<Esc>2..` = 5 次插入。 */
@@ -526,27 +577,7 @@ static void rec_set_last_count(int n) {
 
 static void rec_replay_n(int n) {
     if (s_last_len <= 0 || n < 1) return;
-    if (rec_is_insert_class()) {
-        if (n == 1) { (void)rec_replay_ex(true); return; }
-        const int before = kv_emit_pending();
-        bool typed = rec_replay_ex(false);            /* 第 1 次（中间次） */
-        const int per = kv_emit_pending() - before;   /* 单次插入实际发出的键数 */
-        if (per < 1) return;                          /* 该命令不发键（例如被吞掉） */
-        /* 预算（design §4.4）：末次还要多一个 Left，故按 per 留 1 格再封顶。 */
-        int maxrep = 98 / per;
-        if (maxrep < 1) maxrep = 1;
-        const int fit = (kv_emit_room() - 1) / per;
-        if (fit < 1) maxrep = 1;
-        else if (fit < maxrep) maxrep = fit;
-        const int reps = (n < maxrep) ? n : maxrep;
-        for (int i = 1; i < reps - 1; i++) (void)rec_replay_ex(false);
-        if (reps > 1) (void)rec_replay_ex(true);
-        else if (typed) kv_emit_tap(KV_LEFT);         /* 被预算截断到 1 次：仍要补那个 Left */
-        /* 插入类的计数要重复 N 次插入，而"计数插入"本身未实现（P2-3）⇒ 这里**不**把计数写进
-         * s_last：否则裸 `.` 会把那个数字当按键喂进去。插入类的 P1-3 仍是已知偏差。 */
-        return;
-    }
-    /* 计数类：喂入 N 作为新的前缀计数，再回放**去掉计数位**的录制（重放一次）。
+    /* 插入类与计数类共用：喂入 N 作为新的前缀计数，再回放**去掉计数位**的录制（重放一次）。
      * 预算（design §4.4 不变式 b，P1-1）：**整次回放**同样受剩余预算约束 —— 只靠各发射器
      * 各自的夹取不够（一条命令由多个发射器组成，夹取之和仍可超 room；实测从空队列
      * `x` 后连按 `99.` 可把 256 格队列顶满并丢键）。与裸 `. ` 同一判据：放不下就不重放。 */
@@ -619,7 +650,7 @@ static kv_feed_t feed_normal(kv_keycode_t kc) {
                     kv_emit_motion(motion_of(kc), 1); return R_CONSUMED;
                 case T_G_BIG:  kv_emit_motion(M_G_BIG, 1); return R_CONSUMED;
                 case T_S_BIG:  kv_emit_line_op(KV_C, 1); s_mode = KV_MODE_INSERT; return R_CONSUMED;
-                case T_INSERT: kv_emit_enter_insert(kc); s_mode = KV_MODE_INSERT; return R_CONSUMED;
+                case T_INSERT: kv_emit_enter_insert(kc); s_mode = KV_MODE_INSERT; s_ins_count = 1; return R_CONSUMED;
                 case T_VISUAL:
                     s_mode = (kc == KV_C_V) ? KV_MODE_VISUAL_LINE : KV_MODE_VISUAL;
                     vline_reset();
@@ -670,7 +701,8 @@ static kv_feed_t feed_normal(kv_keycode_t kc) {
                 case T_C_BIG: kv_emit_change_to_eol_n(n); s_mode = KV_MODE_INSERT; reset_pending(); return R_CONSUMED;
                 case T_Y_BIG: kv_emit_line_op(KV_Y, n);                         reset_pending(); return R_CONSUMED; /* Y ≡ yy */
                 case T_S_BIG:  kv_emit_line_op(KV_C, n); s_mode = KV_MODE_INSERT; reset_pending(); return R_CONSUMED;
-                case T_INSERT: kv_emit_enter_insert(kc); s_mode = KV_MODE_INSERT; reset_pending(); return R_CONSUMED;
+                /* P2-3/D28（design §4.16）：插入入口的计数 N ⇒ 键入文本重复 N 次。 */
+                case T_INSERT: kv_emit_enter_insert(kc); s_mode = KV_MODE_INSERT; s_ins_count = n; reset_pending(); return R_CONSUMED;
                 case T_VISUAL:
                     s_mode = (kc == KV_C_V) ? KV_MODE_VISUAL_LINE : KV_MODE_VISUAL;
                     vline_reset();
