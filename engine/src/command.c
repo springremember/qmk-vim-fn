@@ -207,13 +207,18 @@ void kv_emit_line_op(kv_keycode_t op, int n) {
     s_reg_linewise = true;      /* dd/yy/cc/Y/S 都是行级 */
     if (op == KV_Y) {
         /* 2(Home,Home) + n(Shift+Down) + 2(Ctrl+C,Esc) + n(Up) = 4 + 2×n */
-        n = kv_emit_clamp_n(n, 4, 2);
+        n = kv_emit_clamp_n(n, 6, 2);
         kv_emit_tap(KV_HOME);
         kv_emit_tap(KV_HOME);
-        kv_emit_taps(KV_LSFT_KC(KV_DOWN), n);
+        /* 下移 (n−1) 次后**再**补 Shift+End/Shift+→：若先补，光标被末行夹取到行首，
+         * 计数超过末行时会少选最后一行（`99yy` 复制不到最后一行）。 */
+        if (n > 1) kv_emit_taps(KV_LSFT_KC(KV_DOWN), n - 1);
+        kv_emit_tap(KV_LSFT_KC(KV_END));
+        kv_emit_tap(KV_LSFT_KC(KV_RGHT));
         kv_emit_tap(KV_LCTL_KC(KV_C));
         kv_emit_tap(KV_ESC);   /* 取消宿主残留选区（否则下一个键会替换刚复制的内容） */
-        kv_emit_taps(KV_UP, n); /* Vim 的 y 不移动光标：把宿主光标拉回原行 */
+        /* 回位：新顺序下 `Shift+Right` 会把光标推到**下一行行首**（第 n 行）⇒ 需上移 n 次。 */
+        kv_emit_taps(KV_UP, n);
         return;
     }
     /* 骨架 4 键（Home,Home,Shift+End,Shift+Right）+ (n−1) 次 Shift+Down + Ctrl+X；
@@ -221,15 +226,17 @@ void kv_emit_line_op(kv_keycode_t op, int n) {
     n = kv_emit_clamp_n(n, (op == KV_C) ? 6 : 4, 1);
     kv_emit_tap(KV_HOME);
     kv_emit_tap(KV_HOME);
-    kv_emit_tap(KV_LSFT_KC(KV_END));
     /* 两者都必须把**行尾换行**纳入选区（`Shift+End` 只到末字符之前）：
      *   `dd`：否则删不掉换行，在**首行**会留下一个空行（数据损坏）；
      *   `cc`/`S`：否则无名寄存器里只有**行内容而无换行**（Vim 是行级），
      *     随后的 `p` 会当成字符级往行内粘 —— `cc<Esc>p` 模型 `L1\n\nL2L3\nL4`、Vim `L1\n\nL2\nL3\nL4`。
      *     选区含换行后再补 `Shift+Enter` 造出 Vim 要求的那个空行（寄存器同时是行级），
      *     并补 `←` 把光标退回空行。 */
-    kv_emit_tap(KV_LSFT_KC(KV_RGHT));
+    /* 顺序关键：先下移 (n−1) 次、**再** Shift+End/Shift+→。若先补行尾，光标被末行夹取到
+     * 行首 ⇒ 计数超过末行时少删最后一行（`99dd` 清文件会留下最后一行）。 */
     if (n > 1) kv_emit_taps(KV_LSFT_KC(KV_DOWN), n - 1);
+    kv_emit_tap(KV_LSFT_KC(KV_END));
+    kv_emit_tap(KV_LSFT_KC(KV_RGHT));
     kv_emit_tap(KV_LCTL_KC(KV_X));
     if (op == KV_C) {
         kv_emit_tap(KV_LSFT_KC(KV_ENT));

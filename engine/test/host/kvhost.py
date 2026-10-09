@@ -253,7 +253,7 @@ class Host:
         ls, le = self.ls(self.cur), self.le(self.cur)
         col = self.cur - ls
         if down:
-            if le >= len(self.b):
+            if le + 1 >= len(self.b):
                 return
             nls = le + 1
             nle = self.le(nls)
@@ -474,7 +474,7 @@ class Host:
                 b, c, a, cl = self.undo.pop()
                 self.b = list(b)
                 self.cur = c
-                self.anchor = a
+                self.anchor = None
                 self.clip = cl
             return
         if basic == DEL:
@@ -495,7 +495,10 @@ class Host:
             self.insert(' ')
             return
         if basic == TAB:
-            self.indent(shift)
+            if shift or self.has_sel():
+                self.indent(shift)
+            else:
+                self.insert('\t')
             return
         # generic text passthrough (lowercase ascii)
         if not ctrl and 0x04 <= basic <= 0x1D:
