@@ -206,8 +206,14 @@ void kv_emit_line_op(kv_keycode_t op, int n) {
     if (n < 1) n = 1;
     s_reg_linewise = true;      /* dd/yy/cc/Y/S 都是行级 */
     if (op == KV_Y) {
-        /* 2(Home,Home) + n(Shift+Down) + 2(Ctrl+C,Esc) + n(Up) = 4 + 2×n */
-        n = kv_emit_clamp_n(n, 6, 2);
+        /* 逐键成本（design §4.4 表 `yy`/`Nyy` 行）：
+         *   2(Home,Home) + (n−1)(Shift+Down) + 1(Shift+End) + 1(Shift+→)
+         *   + 1(Ctrl+C) + 1(Esc) + n(Up) = 5 + 2×n
+         * `fixed` 必须是**与 n 无关**的固定骨架 = 5（Home×2 + Shift+End + Shift+→ + Ctrl+C + Esc），
+         * `per` = 2（每次重复的 Shift+Down 与回位 Up）。旧实现的 `4 + 2n` 随下移次数改为 n−1
+         * 且新增 Shift+End/Shift+→ 而失效；`6` 则是把下移次数误算成 n 的旧口径，会把可用计数
+         * 少算 1 行。截断保证 `5 + 2n ≤ room` ⇒ `pending ≤ 250 < 256`（不变式 a/b）。 */
+        n = kv_emit_clamp_n(n, 5, 2);
         kv_emit_tap(KV_HOME);
         kv_emit_tap(KV_HOME);
         /* 下移 (n−1) 次后**再**补 Shift+End/Shift+→：若先补，光标被末行夹取到行首，
@@ -217,7 +223,7 @@ void kv_emit_line_op(kv_keycode_t op, int n) {
         kv_emit_tap(KV_LSFT_KC(KV_RGHT));
         kv_emit_tap(KV_LCTL_KC(KV_C));
         kv_emit_tap(KV_ESC);   /* 取消宿主残留选区（否则下一个键会替换刚复制的内容） */
-        /* 回位：新顺序下 `Shift+Right` 会把光标推到**下一行行首**（第 n 行）⇒ 需上移 n 次。 */
+        /* 回位：新顺序下 `Shift+Right` 会把光标推到**下一行行首**（第 n+1 行）⇒ 需上移 n 次。 */
         kv_emit_taps(KV_UP, n);
         return;
     }
@@ -302,12 +308,16 @@ void kv_emit_indent_motion(kv_keycode_t ang, kv_motion_t m, int n) {
 void kv_emit_indent_line(kv_keycode_t ang, int n) {
     if (n < 1) n = 1;
     kv_keycode_t tab = (ang == KV_C_GT) ? KV_TAB : KV_LSFT_KC(KV_TAB);
-    /* 多行成本：2(Home,Home) + n(Shift+Down) + 1(tab) + 1(Esc) + n(Up) + 1(Home)
-     *           + [1(Right) 仅 `>`] = (5 或 6) + 2×n。
+    /* 多行成本：2(Home,Home) + (n−1)(Shift+Down) + 1(Shift+End) + 1(Shift+→)
+     *           + 1(tab) + 1(Esc) + n(Up) + 1(Home) + [1(Right) 仅 `>`]
+     *           = (6 或 7) + 2×n。
      * 截断到 1 时退化为下面的单行分支（无选区，行首插 Tab），仍是完整命令。 */
-    n = kv_emit_clamp_n(n, (ang == KV_C_GT) ? 6 : 5, 2);
-    /* 真实 Vim：`>>` 1 行、`2>>` 2 行、`3>>` 3 行；旧实现用 ×(n-1) 会少缩进一行。
-     * 宿主选区是半开区间：n 行 = Shift+Down×n。 */
+    n = kv_emit_clamp_n(n, (ang == KV_C_GT) ? 7 : 6, 2);
+    /* 真实 Vim：`>>` 1 行、`2>>` 2 行、`3>>` 3 行。
+     * 顺序关键（同 `dd`/`yy`/`cc`）：先下移 (n−1) 次、**再** Shift+End/Shift+→ 把行尾换行纳入
+     * 半开选区。若用旧的 `Shift+Down×n`（或把 End/→ 放在下移之前），宿主在**末行**会把下移
+     * 夹取到行首/行首之后 ⇒ 计数触到缓冲区末尾时**少缩进最后一行**（`3>>`@L2 只缩进 2 行，
+     * Vim 缩进 3 行）。下移 (n−1) 次后补 End/→ 不依赖"再下一行存在"，故末行也能选全。 */
     if (n == 1) {
         /* 单行：`Home, Tab`（**无选区** = 在行首插入一个 Tab）。宿主插入后光标停在插入点
          * 之后 = 未缩进行的"首个非空白"，与真实 Vim 的 `>>x` ⇒ `\t2` 完全一致；且不会
@@ -318,10 +328,12 @@ void kv_emit_indent_line(kv_keycode_t ang, int n) {
     }
     kv_emit_tap(KV_HOME);
     kv_emit_tap(KV_HOME);
-    kv_emit_taps(KV_LSFT_KC(KV_DOWN), n);
+    if (n > 1) kv_emit_taps(KV_LSFT_KC(KV_DOWN), n - 1);
+    kv_emit_tap(KV_LSFT_KC(KV_END));
+    kv_emit_tap(KV_LSFT_KC(KV_RGHT));
     kv_emit_tap(tab);
     kv_emit_tap(KV_ESC);          /* 取消宿主残留选区（D6：否则 x/p/. 替换整段 = 数据损坏） */
-    kv_emit_taps(KV_UP, n);       /* 回到范围内首行 */
+    kv_emit_taps(KV_UP, n);       /* 回到范围内首行（Shift+→ 已把活动端带到第 n+1 行行首） */
     kv_emit_tap(KV_HOME);
     if (ang == KV_C_GT) kv_emit_tap(KV_RGHT);  /* 首个非空白（刚插入的 Tab 之后） */
 }

@@ -79,7 +79,9 @@ static void test_single(void) {
     fresh(); key(KV_X); CHECK_SEQ(S_X);
     fresh(); key(KV_C_X); CHECK_SEQ(S_XUP);
     fresh(); key(KV_C_D); CHECK_SEQ(KV_LSFT_KC(KV_END), KV_LCTL_KC(KV_X));
-    fresh(); key(KV_C_Y); CHECK_SEQ(KV_HOME, KV_HOME, KV_LSFT_KC(KV_DOWN), KV_LCTL_KC(KV_C), KV_ESC, KV_UP);
+    /* D29：行操作的 Shift+End/Shift+→ 移到了下移**之后**（见 test_op 注释）。
+     * `Y`（n=1）没有下移键，故新序列 = Home×2, Shift+End, Shift+→, Ctrl+C, Esc, Up×1。 */
+    fresh(); key(KV_C_Y); CHECK_SEQ(KV_HOME, KV_HOME, KV_LSFT_KC(KV_END), KV_LSFT_KC(KV_RGHT), KV_LCTL_KC(KV_C), KV_ESC, KV_UP);
     fresh(); key(KV_P); CHECK_SEQ(S_P);
     fresh(); key(KV_C_P); CHECK_SEQ(S_PUP);
     fresh(); key(KV_C_J); CHECK_SEQ(S_JOIN);
@@ -107,7 +109,7 @@ static void test_count(void) {
     fresh(); key(KV_3); key(KV_C_G); CHECK_SEQ(KV_LCTL_KC(KV_END));
     fresh(); key(KV_3); key(KV_G); key(KV_G); CHECK_SEQ(KV_LCTL_KC(KV_HOME));
     fresh(); key(KV_3); key(KV_C_S);
-    CHECK_SEQ(KV_HOME, KV_HOME, KV_LSFT_KC(KV_END), KV_LSFT_KC(KV_RGHT), KV_LSFT_KC(KV_DOWN), KV_LSFT_KC(KV_DOWN),
+    CHECK_SEQ(KV_HOME, KV_HOME, KV_LSFT_KC(KV_DOWN), KV_LSFT_KC(KV_DOWN), KV_LSFT_KC(KV_END), KV_LSFT_KC(KV_RGHT),
               KV_LCTL_KC(KV_X), KV_LSFT_KC(KV_ENT), KV_LEFT);
 }
 
@@ -127,14 +129,14 @@ static void test_op(void) {
     fresh(); key(KV_D); key(KV_2); key(KV_C_G); CHECK_SEQ(KV_HOME, KV_CS(KV_END), KV_LCTL_KC(KV_X));
     fresh(); key(KV_D); key(KV_G); key(KV_G); CHECK_SEQ(KV_END, KV_RGHT, KV_CS(KV_HOME), KV_LCTL_KC(KV_X));
 
-    /* line ops */
+    /* line ops（D29：`Shift+End/Shift+→` 在下移**之后**，否则计数超末行时少选最后一行） */
     fresh(); key(KV_D); key(KV_D);
     CHECK_SEQ(KV_HOME, KV_HOME, KV_LSFT_KC(KV_END), KV_LSFT_KC(KV_RGHT), KV_LCTL_KC(KV_X));
     fresh(); key(KV_3); key(KV_D); key(KV_D);
-    CHECK_SEQ(KV_HOME, KV_HOME, KV_LSFT_KC(KV_END), KV_LSFT_KC(KV_RGHT), KV_LSFT_KC(KV_DOWN),
-              KV_LSFT_KC(KV_DOWN), KV_LCTL_KC(KV_X));
+    CHECK_SEQ(KV_HOME, KV_HOME, KV_LSFT_KC(KV_DOWN), KV_LSFT_KC(KV_DOWN), KV_LSFT_KC(KV_END),
+              KV_LSFT_KC(KV_RGHT), KV_LCTL_KC(KV_X));
     fresh(); key(KV_Y); key(KV_Y);
-    CHECK_SEQ(KV_HOME, KV_HOME, KV_LSFT_KC(KV_DOWN), KV_LCTL_KC(KV_C), KV_ESC, KV_UP);
+    CHECK_SEQ(KV_HOME, KV_HOME, KV_LSFT_KC(KV_END), KV_LSFT_KC(KV_RGHT), KV_LCTL_KC(KV_C), KV_ESC, KV_UP);
 }
 
 /* 全面审核（对照 vim.tiny 9.1）：`cc`/`S`/`Ncc` 必须**留一个空行**
@@ -176,11 +178,11 @@ static void test_line_change_and_join(void) {
     fresh(); key(KV_C_S);
     CHECK_SEQ(KV_HOME, KV_HOME, KV_LSFT_KC(KV_END), KV_LSFT_KC(KV_RGHT), KV_LCTL_KC(KV_X), KV_LSFT_KC(KV_ENT), KV_LEFT);
     CHECK(kv_get_mode() == KV_MODE_INSERT);
-    /* 2cc / 3S：单次选区覆盖 N 行，同样不发 BSPC */
+    /* 2cc / 3S：单次选区覆盖 N 行，同样不发 BSPC（D29：下移在前、行尾在后） */
     fresh(); key(KV_2); key(KV_C); key(KV_C);
-    CHECK_SEQ(KV_HOME, KV_HOME, KV_LSFT_KC(KV_END), KV_LSFT_KC(KV_RGHT), KV_LSFT_KC(KV_DOWN), KV_LCTL_KC(KV_X), KV_LSFT_KC(KV_ENT), KV_LEFT);
+    CHECK_SEQ(KV_HOME, KV_HOME, KV_LSFT_KC(KV_DOWN), KV_LSFT_KC(KV_END), KV_LSFT_KC(KV_RGHT), KV_LCTL_KC(KV_X), KV_LSFT_KC(KV_ENT), KV_LEFT);
     fresh(); key(KV_3); key(KV_C_S);
-    CHECK_SEQ(KV_HOME, KV_HOME, KV_LSFT_KC(KV_END), KV_LSFT_KC(KV_RGHT), KV_LSFT_KC(KV_DOWN), KV_LSFT_KC(KV_DOWN),
+    CHECK_SEQ(KV_HOME, KV_HOME, KV_LSFT_KC(KV_DOWN), KV_LSFT_KC(KV_DOWN), KV_LSFT_KC(KV_END), KV_LSFT_KC(KV_RGHT),
               KV_LCTL_KC(KV_X), KV_LSFT_KC(KV_ENT), KV_LEFT);
     /* dd 仍保留 BSPC（删整行）——两者必须可区分 */
     fresh(); key(KV_D); key(KV_D);
@@ -192,24 +194,25 @@ static void test_line_change_and_join(void) {
 }
 
 static void test_indent(void) {
-    /* >j 是**行选**（Vim：缩进当前行 + 下一行 = 2 行）。Tab 之后：
-     * Esc 取消宿主残留选区（D6：否则 x/p/. 会替换整段），Up×n + Home + Right 把光标
-     * 拉回范围内首行的**首个非空白**（Vim 实测 >>x ⇒ \t2）。 */
+    /* >j 是**行选**（Vim：缩进当前行 + 下一行 = 2 行）。D29 起发射序与 `dd`/`yy`/`cc` 统一：
+     * 先 `Shift+Down×(n−1)`、再 `Shift+End,Shift+→` 把行尾换行纳入半开选区（否则计数触到
+     * 缓冲区末尾时末行不会被缩进）。Tab 之后：Esc 取消宿主残留选区（D6：否则 x/p/. 会替换
+     * 整段），Up×n + Home + Right 把光标拉回范围内首行的**首个非空白**（Vim 实测 >>x ⇒ \t2）。 */
     fresh(); key(KV_C_GT); key(KV_J);
-    CHECK_SEQ(KV_HOME, KV_HOME, KV_LSFT_KC(KV_DOWN), KV_LSFT_KC(KV_DOWN), KV_TAB,
-              KV_ESC, KV_UP, KV_UP, KV_HOME, KV_RGHT);
+    CHECK_SEQ(KV_HOME, KV_HOME, KV_LSFT_KC(KV_DOWN), KV_LSFT_KC(KV_END), KV_LSFT_KC(KV_RGHT),
+              KV_TAB, KV_ESC, KV_UP, KV_UP, KV_HOME, KV_RGHT);
     /* >> 单行：Home + Tab（**无选区** = 行首插一个 Tab，插入把光标顶到首个非空白） */
     fresh(); key(KV_C_GT); key(KV_C_GT); CHECK_SEQ(KV_HOME, KV_TAB);
     /* 3<< 反缩进：不发 Right（反缩进后首个非空白在剩余缩进之后，宿主无法表达） */
     fresh(); key(KV_3); key(KV_C_LT); key(KV_C_LT);
-    CHECK_SEQ(KV_HOME, KV_HOME, KV_LSFT_KC(KV_DOWN), KV_LSFT_KC(KV_DOWN), KV_LSFT_KC(KV_DOWN),
-              KV_LSFT_KC(KV_TAB), KV_ESC, KV_UP, KV_UP, KV_UP, KV_HOME);
-    /* >10j = 11 行：HOME×2 + 11×Shift+Down + TAB + ESC + UP×11 + HOME + RIGHT */
+    CHECK_SEQ(KV_HOME, KV_HOME, KV_LSFT_KC(KV_DOWN), KV_LSFT_KC(KV_DOWN), KV_LSFT_KC(KV_END),
+              KV_LSFT_KC(KV_RGHT), KV_LSFT_KC(KV_TAB), KV_ESC, KV_UP, KV_UP, KV_UP, KV_HOME);
+    /* >10j = 11 行：HOME×2 + 10×Shift+Down + Shift+End + Shift+→ + TAB + ESC + UP×11 + HOME + RIGHT */
     fresh(); key(KV_C_GT); key(KV_1); key(KV_0); key(KV_J);
-    CHECK(rec_count() == 2 + 11 + 1 + 1 + 11 + 1 + 1);
-    /* 2>3j = 7 行：HOME×2 + 7×Shift+Down + TAB + ESC + UP×7 + HOME + RIGHT */
+    CHECK(rec_count() == 2 + 10 + 1 + 1 + 1 + 1 + 11 + 1 + 1);
+    /* 2>3j = 7 行：HOME×2 + 6×Shift+Down + Shift+End + Shift+→ + TAB + ESC + UP×7 + HOME + RIGHT */
     fresh(); key(KV_2); key(KV_C_GT); key(KV_3); key(KV_J);
-    CHECK(rec_count() == 2 + 7 + 1 + 1 + 7 + 1 + 1);
+    CHECK(rec_count() == 2 + 6 + 1 + 1 + 1 + 1 + 7 + 1 + 1);
     /* >0/<0：恒为整行（计数不改变行范围） */
     fresh(); key(KV_C_GT); key(KV_0); CHECK_SEQ(KV_HOME, KV_TAB);
     fresh(); key(KV_C_LT); key(KV_0); CHECK_SEQ(KV_HOME, KV_LSFT_KC(KV_TAB));
@@ -1014,12 +1017,13 @@ static void test_yank_motion(void) {
     CHECK_SEQ(KV_LSFT_KC(KV_END), KV_LCTL_KC(KV_C), KV_ESC, KV_HOME);
     fresh(); key(KV_Y); key(KV_C_CARET);
     CHECK_SEQ(KV_LSFT_KC(KV_HOME), KV_LCTL_KC(KV_C), KV_ESC);
-    /* yy / 3yy (line yank, n lines in one selection) */
+    /* yy / 3yy (line yank, n lines in one selection)。D29：下移 (n−1) 在前、
+     * Shift+End/Shift+→ 在后；回位仍是 Up×n（Shift+→ 把光标推到第 n+1 行行首）。 */
     fresh(); key(KV_Y); key(KV_Y);
-    CHECK_SEQ(KV_HOME, KV_HOME, KV_LSFT_KC(KV_DOWN), KV_LCTL_KC(KV_C), KV_ESC, KV_UP);
+    CHECK_SEQ(KV_HOME, KV_HOME, KV_LSFT_KC(KV_END), KV_LSFT_KC(KV_RGHT), KV_LCTL_KC(KV_C), KV_ESC, KV_UP);
     fresh(); key(KV_3); key(KV_Y); key(KV_Y);
     CHECK_SEQ(KV_HOME, KV_HOME, KV_LSFT_KC(KV_DOWN), KV_LSFT_KC(KV_DOWN),
-              KV_LSFT_KC(KV_DOWN), KV_LCTL_KC(KV_C), KV_ESC, KV_UP, KV_UP, KV_UP);
+              KV_LSFT_KC(KV_END), KV_LSFT_KC(KV_RGHT), KV_LCTL_KC(KV_C), KV_ESC, KV_UP, KV_UP, KV_UP);
 }
 
 /* testcase.md §2 — operator corners: d$/d^/d0, postfix counts, count drop on
@@ -1105,18 +1109,18 @@ static void test_indent_corners(void) {
     fresh(); key(KV_C_GT); key(KV_C_CARET); CHECK_SEQ(KV_HOME, KV_TAB);
     fresh(); key(KV_C_GT); key(KV_H); CHECK_SEQ(KV_HOME, KV_TAB);
     fresh(); key(KV_C_LT); key(KV_H); CHECK_SEQ(KV_HOME, KV_LSFT_KC(KV_TAB));
-    /* >$ 单行同 >>；2>$ = 2 行（$ 带计数下移 N−1 行） */
+    /* >$ 单行同 >>；2>$ = 2 行（$ 带计数下移 N−1 行）。D29：与 dd/yy/cc 同一发射序。 */
     fresh(); key(KV_C_GT); key(KV_C_DLR); CHECK_SEQ(KV_HOME, KV_TAB);
     fresh(); key(KV_2); key(KV_C_GT); key(KV_C_DLR);
-    CHECK_SEQ(KV_HOME, KV_HOME, KV_LSFT_KC(KV_DOWN), KV_LSFT_KC(KV_DOWN), KV_TAB,
-              KV_ESC, KV_UP, KV_UP, KV_HOME, KV_RGHT);
+    CHECK_SEQ(KV_HOME, KV_HOME, KV_LSFT_KC(KV_DOWN), KV_LSFT_KC(KV_END), KV_LSFT_KC(KV_RGHT),
+              KV_TAB, KV_ESC, KV_UP, KV_UP, KV_HOME, KV_RGHT);
     /* >x: x is unexpected -> clear >, re-identify x */
     fresh(); key(KV_C_GT); key(KV_X); CHECK_SEQ(S_X);
     CHECK(kv_pending() == false);
     /* >234j: postfix count stops at 2 digits (34 ignored -> 23) => 24 行
-     * HOME×2 + 24×Shift+Down + TAB + ESC + UP×24 + HOME + RIGHT */
+     * HOME×2 + 23×Shift+Down + Shift+End + Shift+→ + TAB + ESC + UP×24 + HOME + RIGHT */
     fresh(); key(KV_C_GT); key(KV_2); key(KV_3); key(KV_4); key(KV_J);
-    CHECK(rec_count() == 2 + 24 + 1 + 1 + 24 + 1 + 1);
+    CHECK(rec_count() == 2 + 23 + 1 + 1 + 1 + 1 + 24 + 1 + 1);
     CHECK(kv_pending() == false);
 
     /* G2 (design §4.4 engine.c L260-276, ST_ANGCnt default): >2x clears the
@@ -1177,8 +1181,8 @@ static void test_count_drop(void) {
     CHECK_SEQ(KV_LSFT_KC(KV_END), KV_LSFT_KC(KV_DOWN), KV_LSFT_KC(KV_DOWN), KV_LSFT_KC(KV_END), KV_LCTL_KC(KV_X));
     CHECK(kv_get_mode() == KV_MODE_INSERT); CHECK(kv_pending() == false);
     fresh(); key(KV_3); key(KV_C_D);  CHECK_SEQ(KV_LSFT_KC(KV_END), KV_LSFT_KC(KV_DOWN), KV_LSFT_KC(KV_DOWN), KV_LSFT_KC(KV_END), KV_LCTL_KC(KV_X)); CHECK(kv_pending() == false);
-    /* Y ≡ yy（行级）：3Y == 3yy */
-    fresh(); key(KV_3); key(KV_C_Y);  CHECK_SEQ(KV_HOME, KV_HOME, KV_LSFT_KC(KV_DOWN), KV_LSFT_KC(KV_DOWN), KV_LSFT_KC(KV_DOWN), KV_LCTL_KC(KV_C), KV_ESC, KV_UP, KV_UP, KV_UP); CHECK(kv_pending() == false);
+    /* Y ≡ yy（行级）：3Y == 3yy（D29 新发射序） */
+    fresh(); key(KV_3); key(KV_C_Y);  CHECK_SEQ(KV_HOME, KV_HOME, KV_LSFT_KC(KV_DOWN), KV_LSFT_KC(KV_DOWN), KV_LSFT_KC(KV_END), KV_LSFT_KC(KV_RGHT), KV_LCTL_KC(KV_C), KV_ESC, KV_UP, KV_UP, KV_UP); CHECK(kv_pending() == false);
 
     /* `3.` 把录制 `x` 的计数**换成 3** ⇒ 一次 `3x`（4 键：Shift+Right×3 + Ctrl+X），
      * 不是三次裸 `x`（旧实现按"重复 3 次"= 6 键；寄存器可区分：`3x` 是 `bcd`、三次 `x` 是 `d`）。
@@ -1192,8 +1196,8 @@ static void test_count_drop(void) {
 
     /* 3S accepts the count (== 3cc), 3gg drops it */
     fresh(); key(KV_3); key(KV_C_S);
-    CHECK_SEQ(KV_HOME, KV_HOME, KV_LSFT_KC(KV_END), KV_LSFT_KC(KV_RGHT), KV_LSFT_KC(KV_DOWN),
-              KV_LSFT_KC(KV_DOWN), KV_LCTL_KC(KV_X), KV_LSFT_KC(KV_ENT), KV_LEFT);
+    CHECK_SEQ(KV_HOME, KV_HOME, KV_LSFT_KC(KV_DOWN), KV_LSFT_KC(KV_DOWN), KV_LSFT_KC(KV_END),
+              KV_LSFT_KC(KV_RGHT), KV_LCTL_KC(KV_X), KV_LSFT_KC(KV_ENT), KV_LEFT);
     CHECK(kv_get_mode() == KV_MODE_INSERT); CHECK(kv_pending() == false);
     fresh(); key(KV_3); key(KV_G); key(KV_G); CHECK_SEQ(KV_LCTL_KC(KV_HOME));
     /* 42G drops the count */
@@ -1572,7 +1576,7 @@ static void test_command_guards(void) {
     rec_start(); kv_emit_line_op(KV_D, 0); flush_emit();
     CHECK_SEQ(KV_HOME, KV_HOME, KV_LSFT_KC(KV_END), KV_LSFT_KC(KV_RGHT), KV_LCTL_KC(KV_X));
     rec_start(); kv_emit_line_op(KV_Y, 0); flush_emit();
-    CHECK_SEQ(KV_HOME, KV_HOME, KV_LSFT_KC(KV_DOWN), KV_LCTL_KC(KV_C), KV_ESC, KV_UP);
+    CHECK_SEQ(KV_HOME, KV_HOME, KV_LSFT_KC(KV_END), KV_LSFT_KC(KV_RGHT), KV_LCTL_KC(KV_C), KV_ESC, KV_UP);
     /* cc via the emitter enters Insert；**不发 BSPC**（留一个空行，同 Vim） */
     rec_start(); kv_emit_line_op(KV_C, 1); flush_emit();
     CHECK_SEQ(KV_HOME, KV_HOME, KV_LSFT_KC(KV_END), KV_LSFT_KC(KV_RGHT), KV_LCTL_KC(KV_X), KV_LSFT_KC(KV_ENT), KV_LEFT);
@@ -1580,8 +1584,8 @@ static void test_command_guards(void) {
     rec_start(); kv_emit_indent_line(KV_C_GT, 0); flush_emit();
     CHECK_SEQ(KV_HOME, KV_TAB);                       /* n=1：无选区，行首插 Tab */
     rec_start(); kv_emit_indent_line(KV_C_GT, 2); flush_emit();
-    CHECK_SEQ(KV_HOME, KV_HOME, KV_LSFT_KC(KV_DOWN), KV_LSFT_KC(KV_DOWN), KV_TAB,
-              KV_ESC, KV_UP, KV_UP, KV_HOME, KV_RGHT);
+    CHECK_SEQ(KV_HOME, KV_HOME, KV_LSFT_KC(KV_DOWN), KV_LSFT_KC(KV_END), KV_LSFT_KC(KV_RGHT),
+              KV_TAB, KV_ESC, KV_UP, KV_UP, KV_HOME, KV_RGHT);
     rec_start(); kv_emit_indent_motion(KV_C_GT, M_H, 0); flush_emit();
     CHECK_SEQ(KV_HOME, KV_TAB);                       /* M_H 恒为整行（D4） */
     rec_start(); kv_emit_indent_motion(KV_C_LT, M_NONE, 1); flush_emit();
@@ -1994,13 +1998,13 @@ static void test_count_queue_budget(void) {
     fresh(); kv_kbd(KV_9); kv_kbd(KV_9); kv_kbd(KV_C_P);
     CHECK(kv_emit_pending() == 99);    /* P 无定位 */
     fresh(); kv_kbd(KV_Y); kv_kbd(KV_Y); kv_kbd(KV_9); kv_kbd(KV_9); kv_kbd(KV_P);
-    CHECK(kv_emit_pending() == 107);   /* yy 6 键 + 定位 2 键 + Ctrl+V×99 */
+    CHECK(kv_emit_pending() == 108);   /* D29：yy 7 键（5+2×1）+ 定位 2 键 + Ctrl+V×99 */
     fresh(); kv_kbd(KV_D); kv_kbd(KV_D); kv_kbd(KV_9); kv_kbd(KV_9); kv_kbd(KV_P);
     CHECK(kv_emit_pending() == 106);
     fresh(); kv_kbd(KV_9); kv_kbd(KV_9); kv_kbd(KV_C_J);
     CHECK(kv_emit_pending() == 248);   /* 每次连接 4 键 → 98 次会被截断到 62 次 */
     fresh(); kv_kbd(KV_9); kv_kbd(KV_9); kv_kbd(KV_Y); kv_kbd(KV_Y);
-    CHECK(kv_emit_pending() == 202);   /* 既有量级不受影响 */
+    CHECK(kv_emit_pending() == 203);   /* D29：yy 成本 5+2×n ⇒ 99yy = 5+198（旧序 4+2×n = 202） */
 }
 
 /* P0-1（累积）：单条命令都在 250 预算内，但队列**没排空**时连发大计数命令会到顶
@@ -2045,10 +2049,10 @@ static void test_count_queue_accumulation(void) {
     kv_kbd(KV_V); kv_kbd(KV_9); kv_kbd(KV_9); kv_kbd(KV_W);
     budget_check(KV_LSFT_KC(KV_RGHT), 0);
 
-    /* (3) 非空队列上再压一条大计数命令（缩进：`99>j` 单条 206 键，两条即爆）。 */
+    /* (3) 非空队列上再压一条大计数命令（缩进：`99>j` 单条 207 键，两条即爆）。 */
     fresh();
     kv_kbd(KV_9); kv_kbd(KV_9); kv_kbd(KV_C_GT); kv_kbd(KV_J);
-    CHECK(kv_emit_pending() == 206);          /* 100 行缩进 */
+    CHECK(kv_emit_pending() == 207);          /* D29：100 行缩进 = 7+2×100 */
     kv_kbd(KV_9); kv_kbd(KV_9); kv_kbd(KV_C_GT); kv_kbd(KV_J);
     budget_check(KV_RGHT, KV_TAB);
 
@@ -2067,7 +2071,11 @@ static void test_count_queue_accumulation(void) {
     budget_prep(240); kv_emit_op_motion(KV_C, M_K, 99); budget_check(KV_LEFT, KV_LCTL_KC(KV_X));
     budget_prep(240); kv_emit_op_motion(KV_Y, M_L, 99); budget_check(KV_LEFT, KV_LCTL_KC(KV_C));
     budget_prep(240); kv_emit_op_motion(KV_Y, M_K, 99); budget_check(KV_UP, KV_LCTL_KC(KV_C));
-    budget_prep(240); kv_emit_indent_line(KV_C_GT, 99); budget_check(KV_RGHT, KV_TAB);
+    /* D29：缩进多行骨架成本 = 7+2n（`>`）/ 6+2n（`<`）⇒ room=10 连 n=2 的骨架 11 都放不下，
+     * `kv_emit_clamp_n` 取 1 ⇒ 退化为单行 `Home,Tab`（仍是完整命令，尾部 Tab 必在）；
+     * room=12 时 n=2，走多行选区且尾部 `Right` 必在。两条都断言完整且 ≤250。 */
+    budget_prep(240); kv_emit_indent_line(KV_C_GT, 99); budget_check(KV_TAB, 0);
+    budget_prep(238); kv_emit_indent_line(KV_C_GT, 99); budget_check(KV_RGHT, KV_TAB);
     budget_prep(240); kv_emit_indent_motion(KV_C_GT, M_K, 99); budget_check(KV_ESC, KV_TAB);
     budget_prep(240); kv_emit_indent_motion(KV_C_GT, M_W, 99); budget_check(KV_ESC, KV_TAB);
     budget_prep(240); kv_emit_visual_word_back_anchor(99);
