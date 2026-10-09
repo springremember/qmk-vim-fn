@@ -299,7 +299,10 @@ static void test_pure_shift_folding(void) {
     /* D7：X = Shift+←, Ctrl+C, Backspace（写剪贴板且列 0 不误剪整行） */
     const kv_keycode_t x_up[]  = { KV_LSFT_KC(KV_LEFT), KV_LCTL_KC(KV_C), KV_BSPC };
     const kv_keycode_t D[]     = { KV_LSFT_KC(KV_END), KV_LCTL_KC(KV_X) };
-    const kv_keycode_t Y[]     = { KV_HOME, KV_HOME, KV_LSFT_KC(KV_DOWN), KV_LCTL_KC(KV_C), KV_ESC, KV_UP }; /* Y ≡ yy */
+    /* Y ≡ yy（n=1）：新发射顺序 = Home,Home 定位 → Shift+End/Shift+→ 把行尾换行纳入选区
+     * → Ctrl+C → Esc 取消残留选区 → Up 把光标拉回原行。改序原因见 changes §7.51：
+     * 旧顺序把 Shift+End 放在下移之前，计数超过末行时会少选最后一行（99dd/99yy 真实缺陷）。 */
+    const kv_keycode_t Y[]     = { KV_HOME, KV_HOME, KV_LSFT_KC(KV_END), KV_LSFT_KC(KV_RGHT), KV_LCTL_KC(KV_C), KV_ESC, KV_UP };
     /* cc / S contract (engine test_main.c): line select + delete, NO BSPC (leaves an empty
      * line, like real Vim); dd keeps the BSPC to remove the whole line. */
     /* cc/S 现与 dd 同形：先把行尾换行纳入选区（寄存器行级），再补 Shift+Enter 造出
@@ -312,7 +315,7 @@ static void test_pure_shift_folding(void) {
     test_shift_fold(KC_6, caret, 1, "^");
     test_shift_fold(KC_X, x_up,  3, "X");
     test_shift_fold(KC_D, D,     2, "D");
-    test_shift_fold(KC_Y, Y,     6, "Y");
+    test_shift_fold(KC_Y, Y,     7, "Y");
     test_shift_fold(KC_S, S,     7, "S");
 
     /* Shift+Z enters the Z prefix (pending, no emit) */
