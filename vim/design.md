@@ -1283,3 +1283,81 @@ CAD 的触发检测+厂商调用）、底排键位与触发键**定义**、VIA�
 
 **残余（如实登记）**：`ARROWCNT`（含光标移动键的计数插入：引擎一律不重复；no-op 移动与 Vim
 的 `.` redo 语义不可复现）、`RECMAXCNT`（文本 > `REC_MAX` 的计数插入不重复且不提交）。
+
+---
+
+### 4.17 glue 层按键按住间隙（host tap gap，2026-10 新增，真机缺陷 D29）
+
+#### 4.17.1 现象（QK61 固件 V2.45，用户真机报告）
+
+```
+先 V + jjj 选中 4 行 → y 复制无效；单独 4yy 同样无效。
+现象一：4 行确实被选中，但 Ctrl+C 没有复制，粘贴得到的是上一次的 1 行剪贴板。
+现象二：随后某个字母/数字键一直在重复输出，随便按一下别的键就恢复。
+```
+
+#### 4.17.2 根因
+
+`qmk/vim_glue.c` 的 `vim_emit()` 过去是：
+
+```c
+register_code(basic);
+unregister_code(basic);   /* 与上一行背靠背，中间没有延时 */
+```
+
+`register_code()` / `unregister_code()` 各自调用一次 `send_keyboard_report()`。USB HID 全速
+设备的轮询周期是 1 ms，**同一个轮询帧内产生的两次报告只会有一份到达主机**（端点缓冲被后者
+覆盖）。于是主机观察到的是两者之一，而不是「按下 + 抬起」：
+
+| 主机看到的 | 后果 |
+| --- | --- |
+| 只看到按下 | 该键在主机侧**永久按住** → 系统自动重复 → 现象二的「卡键一直重复输出」；下一次任何按键发出新的完整报告，主机才把它清掉 → 现象二的「随便按键后恢复」 |
+| 只看到抬起 | 该键**根本没被按下** → `Ctrl+C` 不复制 → 现象一 |
+
+QMK 自身的 `tap_code()` 正是为此保留 `TAP_CODE_DELAY`（「某些主机需要按下与抬起之间的延时」）。
+**引擎的发射器绕过了 `tap_code()`，因此从来没有拿到这个间隙。**
+
+为什么模型与矩阵测不出来：宿主模型 `engine/test/host/kvhost.py` 建模的是 **Vim 语义**
+（缓冲/寄存器/光标），它下面没有「HID 轮询帧」这一层抽象；`probe.c` 的 KM 模式也是逐键同步
+调用，不存在两帧合并。**这是第五次「验证工具本身看不到」的教训**，但与前四次（宿主模型缺陷、
+probe 漏 flush、自制 HEX 解码器、`.` 覆盖缺失）性质不同：这一次不是工具写错了，而是**被测
+现象位于工具的抽象层之下**，靠改进模型无法覆盖，只能靠真机。
+
+#### 4.17.3 规则（新增，强制）
+
+**glue 层发出的每一个 tap，按下与抬起之间必须至少间隔 `VIM_TAP_GAP_MS`（默认 5 ms）。**
+
+```c
+#define VIM_TAP_GAP_MS 5
+
+if (add)  register_mods(add);
+if (drop) unregister_mods(drop);
+register_code(basic);
+s_tap_gap_total_ms += VIM_TAP_GAP_MS;   /* 可观测计数：供 glue 测试断言 */
+wait_ms(VIM_TAP_GAP_MS);                /* ← 唯一的改动 */
+unregister_code(basic);
+if (drop) register_mods(drop);
+if (add)  unregister_mods(add);
+```
+
+- 修饰键的时序不变：`add` 在按下前登记、`drop` 在按下前抬起、两者都在**抬起之后**还原。
+  间隙只插在 `register_code(basic)` 与 `unregister_code(basic)` 之间。
+- `wait_ms()` 会阻塞调用者（`matrix_scan_user` → `vim_glue_task` → `kv_task` →
+  `kv_emit_service`）。由于 `kv_emit_service()` **每次只发一个键**，一次扫描最多阻塞
+  `VIM_TAP_GAP_MS`；最坏情形 `v99w` = 250 键 ⇒ 合计 1.25 s，但中间仍穿插正常扫描。
+- **按住动作（held motion）不受影响**：裸 `h/j/k/l` 的 `register_code(arrow)` 按设计一直按住
+  到物理键抬起（§4.10），它不走 tap 路径。
+- 这不是 Vim 语义偏差，**不登记为 deviation**：它是宿主保真（host fidelity），对 Vim 行为
+  没有可观测影响。
+
+#### 4.17.4 为什么选 5 ms
+
+USB 全速轮询 1 ms：5 ms 保证按下状态跨过至少 5 个轮询帧。2.4G 无线接收器的 HID 周期通常
+1–2 ms，5 ms 同样安全。代价与 `tap_code()` 的 `TAP_CODE_DELAY` 同级。若将来某款键盘的
+接收器更慢，可提高 `VIM_TAP_GAP_MS`（宏可被键盘层覆盖）。
+
+#### 4.17.5 测试
+
+`engine/test/glue/test_modifiers.c` 新增断言：每个 tap 恰好累计一次
+`VIM_TAP_GAP_MS`（`vim_glue_tap_gap_ms()`）；held motion 与 `vim_glue_release_all()` 路径
+不累计。变异记录 `d29-no-tap-gap` 删除 `wait_ms()` 调用，必须被该断言 CAUGHT。

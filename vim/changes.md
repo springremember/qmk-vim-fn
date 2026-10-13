@@ -1291,3 +1291,51 @@ A1/A7：1 键/ms 排空节奏下大计数插入的实际接受度）。
 若将来要覆盖，应先向 Vim 社区确认该行为是否为 bug。
 
 另：`3dd.` 在 4 行缓冲上同样落在这一矛盾里（Vim 不动、引擎清空）。
+
+### 7.53 真机缺陷 D29：tap 的按下/抬起落在同一个 HID 轮询帧（已修）
+
+**报告（用户真机，QK61 V2.45，VS Code 未装 Vim 扩展）**：
+
+```
+先 V + jjj 选中 4 行 → y 复制无效；单独 4yy 同样无效。
+4 行确实被选中，但 Ctrl+C 没复制，粘贴得到上一次的 1 行剪贴板。
+随后某个字母/数字键一直重复输出，随便按一下别的键就恢复。
+```
+
+**排查过程（结论：引擎与 glue 的语义都是对的）**：
+
+1. 先确认设备跑的就是当前源码 —— `v2.45-qk61` 记录的子模块指针是 `f7e464b`，之后只有
+   一个 docs-only 提交 `ee632c0`，**引擎/glue 无差异**。故不是「设备跑着旧固件」。
+2. `4yy` 的引擎发射流经模型与真实 `vim.tiny` 双重验证正确：
+   `Home, Home, Shift+Down×3, Shift+End, Shift+Right, Ctrl+C, Esc, Up×4`（13 键）。
+3. 逐行读 `vim_emit()` 的修饰键配对，`add`/`drop` 完全平衡；`kv_emit_clear()` 只在
+   `kv_init()`/`kv_disable()` 调用，不会中途清空队列；`push()` 只在 256 溢出时丢键
+   （13 键远未溢出）；`kv_emit_service()` 每次只发一键、间隔 1 ms，13 键必能全部发出。
+   **静态分析无法解释现象。**
+4. 用户补充的两个细节是决定性的：**「存在卡键」+「某个键一直重复输出」+「随便按键后恢复」**。
+   「按键后恢复」说明**固件报告里没有这个键**，是**主机侧**把它留在了按下状态，直到下一份
+   完整报告到达才被清掉。这只能由「主机只看到了 down、没看到 up」造成。
+
+**根因**：`vim_emit()` 里 `register_code(basic); unregister_code(basic);` 背靠背，两次
+`send_keyboard_report()` 可能落在同一个 USB HID 轮询帧（1 ms）内，端点缓冲被后者覆盖，主机
+只收到其中一份。收到 down ⇒ 卡键；收到 up ⇒ 该键根本没按下（`Ctrl+C` 不复制，于是粘贴出
+上一次的 1 行剪贴板）。
+
+**为什么四条门禁全都测不出来**：这不是工具写错，而是**被测现象位于工具的抽象层之下**。宿主
+模型 `kvhost.py` 建模的是 Vim 语义（缓冲/寄存器/光标），没有「HID 轮询帧」这一层；`probe.c`
+的 KM 模式是逐键同步调用，不存在两帧合并。**第五次「验证工具本身看不到」，性质与前四次
+（宿主模型三处缺陷、probe 漏 `emit_flush()`、自制 HEX 解码器、`.` 覆盖缺失）不同 —— 改进
+模型无法覆盖它，只能靠真机。** 教训：**凡是「模型与真机不一致」的报告，先问「我的模型里有没有
+这一层抽象」，而不是先怀疑引擎语义。**
+
+**修复**：在 `register_code(basic)` 与 `unregister_code(basic)` 之间插入
+`wait_ms(VIM_TAP_GAP_MS)`（默认 5 ms），即 QMK `tap_code()` 的 `TAP_CODE_DELAY` 机制 ——
+引擎发射器绕过了 `tap_code()`，所以从未拿到这个间隙。规则、时序不变式、代价与取值理由见
+`design.md` §4.17。因为 `kv_emit_service()` 每次只发一键，一次扫描最多阻塞 5 ms。
+
+**测试**：`engine/test/glue/test_modifiers.c` 断言每个 tap 恰好累计一次 `VIM_TAP_GAP_MS`
+（`vim_glue_tap_gap_ms()`），held motion 与 `vim_glue_release_all()` 路径不累计；变异
+`d29-no-tap-gap`（删除 `wait_ms()`）必须被 CAUGHT。
+
+**备注**：这是宿主保真（host fidelity），不是 Vim 语义偏差，故**不登记为 deviation**；
+`qmk/on-device-checklist.md` 增加 A12 真机复验项（`4yy` / `Vjjjy` 复制 4 行、无卡键）。
