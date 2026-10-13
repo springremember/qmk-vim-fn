@@ -49,6 +49,20 @@ void vim_glue_task(uint32_t now_ms);
  * design §4.10). */
 void vim_glue_release_all(void);
 
+/* Host tap gap (design §4.17 / D29): the minimum time every emitted tap must
+ * hold its key down so that the host observes the press and the release in
+ * different polling frames.  Without it the host may see only the press (the
+ * key sticks and auto-repeats) or only the release (the keystroke is lost, e.g.
+ * Ctrl+C never copies).  Overridable by the keyboard layer. */
+#ifndef VIM_TAP_GAP_MS
+#    define VIM_TAP_GAP_MS 5
+#endif
+
+/* Total milliseconds spent holding taps down, i.e. the accumulated host tap gap
+ * (design §4.17 / D29).  Exposed so the glue tests can assert that every tap
+ * got its gap; reset by vim_glue_init(). */
+uint32_t vim_glue_tap_gap_ms(void);
+
 #ifdef __cplusplus
 }
 #endif

@@ -202,3 +202,10 @@ uint16_t timer_read(void);
 uint16_t timer_elapsed(uint16_t since);
 uint32_t timer_read32(void);
 uint32_t timer_elapsed32(uint32_t since);
+
+/* Host tap gap (design §4.17 / D29).  On hardware this is a real delay; host
+ * tests are time-independent, so it is a no-op here and the gap is asserted
+ * through vim_glue_tap_gap_ms() instead.  `static inline` keeps every test
+ * translation unit self-contained (vim_glue.c and the test both include this
+ * header). */
+static inline void wait_ms(uint32_t ms) { (void)ms; }

@@ -502,3 +502,16 @@ mutant p23-replay-n-leftover-record
     const int before = kv_emit_pending();
     s_replaying = true;
   end
+
+mutant d29-no-tap-gap
+  file  = qmk/vim_glue.c
+  suite = glue
+  equiv = no
+  why   = 去掉 tap 的按下/抬起间隙（D29，design §4.17）：两次 send_keyboard_report() 落进同一个 HID 轮询帧，端点缓冲被后者覆盖，主机只看到 down（卡键自动重复）或只看到 up（如 Ctrl+C 丢失）。真机 QK61 V2.45 上表现为 4yy 复制无效 + 随后卡键
+  old
+    s_tap_gap_total_ms += VIM_TAP_GAP_MS;
+    wait_ms(VIM_TAP_GAP_MS);
+  new
+    s_tap_gap_total_ms += 0;
+    wait_ms(0);
+  end

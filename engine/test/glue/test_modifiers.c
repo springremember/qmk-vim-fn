@@ -984,8 +984,39 @@ static void test_emit_packed_mods_arms(void) {
     CHECK(get_mods() == 0);
 }
 
+/* ======================================================================
+ * D29 (design §4.17): every emitted tap must hold its key down for
+ * VIM_TAP_GAP_MS, otherwise both keyboard reports can land in the same host
+ * polling frame and the host sees only the press (stuck key, auto-repeat) or
+ * only the release (lost keystroke, e.g. Ctrl+C never copies).  Non-tap paths
+ * (release_all) must not pay the gap.
+ * ====================================================================== */
+static void test_tap_gap(void) {
+    reset_engine();
+    CHECK(vim_glue_tap_gap_ms() == 0); /* vim_glue_init() clears the counter */
+
+    /* one modded tap => exactly one gap, and the modifier is restored */
+    kv_emit_tap(KV_LSFT_KC(KC_END));
+    kv_emit_flush_now();
+    CHECK(vim_glue_tap_gap_ms() == VIM_TAP_GAP_MS);
+    CHECK(s_mods == 0);
+
+    /* a plain tap and a modded tap => one gap each */
+    kv_emit_tap(KC_ESC);
+    kv_emit_tap(KV_LSFT_KC(KC_C));
+    kv_emit_flush_now();
+    CHECK(vim_glue_tap_gap_ms() == 3u * VIM_TAP_GAP_MS);
+    CHECK(s_mods == 0);
+
+    /* non-tap path: releasing held arrows must not add a gap */
+    uint32_t before = vim_glue_tap_gap_ms();
+    vim_glue_release_all();
+    CHECK(vim_glue_tap_gap_ms() == before);
+}
+
 int main(void) {
     test_shadow_bits();
+    test_tap_gap();
     test_shortcut_nomod();
     test_shortcut_shift_eql();
     test_shortcut_ctrl_fb();

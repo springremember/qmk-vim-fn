@@ -22,6 +22,22 @@
 // --------------------------------------------------------------------------
 static uint8_t s_shadow;
 
+// --------------------------------------------------------------------------
+// Host tap gap (design §4.17 / D29).
+//
+// register_code()+unregister_code() back-to-back can land in the same USB HID
+// polling frame (1 ms at full speed): the endpoint buffer is overwritten and the
+// host observes only one of the two reports — the press (=> the key sticks and
+// auto-repeats until the next report) or the release (=> the keystroke is lost,
+// e.g. Ctrl+C never copies).  QMK's tap_code() has TAP_CODE_DELAY for exactly
+// this; the engine's emitter bypasses tap_code(), so the gap is applied here.
+// VIM_TAP_GAP_MS is declared in vim_glue.h (the keyboard layer may override it).
+// --------------------------------------------------------------------------
+static uint32_t s_tap_gap_total_ms;
+
+/* Total ms spent holding taps down (design §4.17); reset by vim_glue_init(). */
+uint32_t vim_glue_tap_gap_ms(void) { return s_tap_gap_total_ms; }
+
 static uint8_t shadow_bit_of(uint16_t keycode) {
     switch (keycode) {
         case KC_LCTL: return MOD_BIT_LCTRL;
@@ -228,6 +244,12 @@ static void vim_emit(kv_keycode_t kc) {
     if (add)  register_mods(add);
     if (drop) unregister_mods(drop);
     register_code(basic);
+    // D29 (design §4.17): hold the key down across at least one host polling
+    // frame, otherwise the host may see only the press (stuck key, auto-repeat)
+    // or only the release (the keystroke is silently lost).  kv_emit_service()
+    // emits one key per call, so a scan stalls at most VIM_TAP_GAP_MS.
+    s_tap_gap_total_ms += VIM_TAP_GAP_MS;
+    wait_ms(VIM_TAP_GAP_MS);
     unregister_code(basic);
     if (drop) register_mods(drop);
     if (add)  unregister_mods(add);
@@ -245,6 +267,7 @@ void vim_glue_init(void) {
     s_shadow  = 0;
     s_pair_n  = 0;
     s_rshift_lazy = false;
+    s_tap_gap_total_ms = 0;
     for (int i = 0; i < 4; i++) {
         s_held_expect[i] = false;
         s_arrow_reg[i]   = false;
